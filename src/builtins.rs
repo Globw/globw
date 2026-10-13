@@ -37,13 +37,17 @@ pub enum Builtin {
     Box3,
     Sphere,
     Triangle3,
+    Sin,
+    Cos,
+    Sqrt,
+    Round,
 }
 
 use Builtin::*;
 
-const ALL: [Builtin; 24] = [
+const ALL: [Builtin; 28] = [
     Window, Open, Show, Clear, Rect, Circle, Line, Text, Key, MouseX, MouseY, Click, Message, Confirm, Ask, Rgb, Random,
-    Time, Camera, Rotate, Cube, Box3, Sphere, Triangle3,
+    Time, Camera, Rotate, Cube, Box3, Sphere, Triangle3, Sin, Cos, Sqrt, Round,
 ];
 
 impl Builtin {
@@ -73,6 +77,10 @@ impl Builtin {
             Box3 => "BOX",
             Sphere => "SPHERE",
             Triangle3 => "TRIANGLE3D",
+            Sin => "SIN",
+            Cos => "COS",
+            Sqrt => "SQRT",
+            Round => "ROUND",
         }
     }
 
@@ -92,6 +100,7 @@ impl Builtin {
             Cube | Sphere => &[Real, Real, Real, Real, Str],
             Box3 => &[Real, Real, Real, Real, Real, Real, Str],
             Triangle3 => &[Real, Real, Real, Real, Real, Real, Real, Real, Real, Str],
+            Sin | Cos | Sqrt | Round => &[Real],
         }
     }
 
@@ -101,7 +110,8 @@ impl Builtin {
             Open | Key | Click | Confirm => Some(Bool),
             MouseX | MouseY | Random => Some(Int),
             Ask | Rgb => Some(Str),
-            Time => Some(Real),
+            Time | Sin | Cos | Sqrt => Some(Real),
+            Round => Some(Int),
             Window | Show | Clear | Rect | Circle | Line | Text | Message | Camera | Rotate | Cube | Box3 | Sphere
             | Triangle3 => None,
         }
@@ -188,6 +198,22 @@ impl Env {
                 Value::Int((lo as i128 + (self.next_random() as u128 % span) as i128) as i64)
             }
             Time => Value::Real(self.start.elapsed().as_secs_f64()),
+            Sin => Value::Real(real(&args[0]).to_radians().sin()),
+            Cos => Value::Real(real(&args[0]).to_radians().cos()),
+            Sqrt => {
+                let x = real(&args[0]);
+                if x < 0.0 {
+                    return Err(format!("SQRT of a negative number ({})", crate::vm::format_real(x)));
+                }
+                Value::Real(x.sqrt())
+            }
+            Round => {
+                let r = real(&args[0]).round();
+                if !(-9.2e18..=9.2e18).contains(&r) {
+                    return Err("number too large: the result exceeds the integer limits".to_string());
+                }
+                Value::Int(r as i64)
+            }
             Window => {
                 let (w, h) = (int(&args[0]), int(&args[1]));
                 if w <= 0 || h <= 0 || w > 10_000 || h > 10_000 {

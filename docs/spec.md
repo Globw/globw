@@ -292,6 +292,9 @@ END LOOP
 | `RGB(r, g, b as int)` | function → `string` | the color `"#rrggbb"`; each value is clamped to 0…255 |
 | `RANDOM(min, max as int)` | function → `int` | a random integer from min to max included (run-time error if min > max) |
 | `TIME()` | function → `float` | seconds since the program started |
+| `SIN(degrees as float)`, `COS(degrees as float)` | function → `float` | sine and cosine of an angle in degrees |
+| `SQRT(x as float)` | function → `float` | square root (run-time error if x < 0) |
+| `ROUND(x as float)` | function → `int` | nearest integer, halves away from zero (`ROUND(2.5) = 3`, `ROUND(-2.5) = -3`) |
 
 Built-in procedures can only be used as statements, and built-in functions only inside expressions. Arguments follow the same rules as user functions (§6.4). All these names are reserved: they cannot be used for variables or user functions.
 
@@ -404,4 +407,4 @@ easier --check program.ez   only check for errors, do not run
 
 ## 10. Out of scope for v1
 
-File I/O, modules and imports, records/structs, math functions, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.
+File I/O, modules and imports, records/structs, other math functions, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.

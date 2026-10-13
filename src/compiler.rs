@@ -502,6 +502,16 @@ mod tests {
     }
 
     #[test]
+    fn math_functions() {
+        let src = "output(SIN(90), \" \", COS(0), \" \", SQRT(16), \" \", ROUND(2.6), \" \", ROUND(-2.5), \" \", ROUND(7))
+";
+        assert_eq!(run_src(src, ""), "1.0 1.0 4.0 3 -3 7
+");
+        assert!(run_src("output(SQRT(-1))
+", "").contains("SQRT of a negative number (-1.0)"));
+    }
+
+    #[test]
     fn graphics_need_a_window() {
         assert!(run_src("RECT(0, 0, 10, 10, \"red\")\n", "").contains("there is no window: call WINDOW(...) first"));
         assert!(run_src("CUBE(0, 0, 5, 1, \"red\")\n", "").contains("there is no window: call WINDOW(...) first"));
