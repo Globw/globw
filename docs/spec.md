@@ -295,6 +295,49 @@ END LOOP
 
 Built-in procedures can only be used as statements, and built-in functions only inside expressions. Arguments follow the same rules as user functions (§6.4). All these names are reserved: they cannot be used for variables or user functions.
 
+### 6.10 3D graphics
+
+The graphics window can also show simple 3D scenes. The 3D commands draw into the same window as the 2D ones and need `WINDOW(...)` first.
+
+```
+variables:
+    angle as float
+WINDOW(800, 600, "3D")
+CAMERA(0, 2, -6, 0, -15)
+WHILE(OPEN())
+    CLEAR("#101020")
+    ROTATE(0, angle, 0)
+    CUBE(0, 0, 0, 2, "orange")
+    ROTATE(0, 0, 0)
+    SPHERE(3, 0, 1, 0.8, "cyan")
+    BOX(0, -1.5, 0, 20, 0.2, 20, "gray")
+    angle <- angle + 1
+    SHOW()
+END LOOP
+```
+
+- **Space:** x grows to the right, y upwards and z forwards (away from the viewer). Units are arbitrary. All 3D arguments are `float` (an `int` is accepted).
+- **Camera:** `CAMERA(x, y, z, turn, tilt)` places the eye at (x, y, z).
+  - `turn` is the horizontal direction in degrees: 0 looks towards +z, 90 towards +x.
+  - `tilt` is the vertical angle in degrees: positive looks up.
+  - Before any `CAMERA` call the eye is at (0, 0, 0) looking towards +z.
+  - The field of view is 60 degrees vertically. Anything closer than 0.1 to the eye, or behind it, is cut away.
+- **Rotation:** `ROTATE(ax, ay, az)` sets the rotation, in degrees around the x, then y, then z axes, applied to every following `CUBE`, `BOX` and `SPHERE` around its own center. `ROTATE(0, 0, 0)` turns it off. It does not affect `TRIANGLE3D`.
+- **Shapes:** each is filled with one color and shaded by a fixed light.
+
+| Command | Effect |
+|---|---|
+| `CUBE(x, y, z, size, color)` | cube centered on (x, y, z) |
+| `BOX(x, y, z, width, height, depth, color)` | box centered on (x, y, z); width along x, height along y, depth along z |
+| `SPHERE(x, y, z, radius, color)` | sphere |
+| `TRIANGLE3D(x1, y1, z1, x2, y2, z2, x3, y3, z3, color)` | one triangle, visible from both sides |
+
+- **Depth:**
+  - Every pixel remembers how far its 3D surface is, so nearer surfaces hide farther ones whatever the drawing order.
+  - `CLEAR` resets this memory.
+  - 2D commands draw on top of whatever is already in the window and do not hide later 3D shapes.
+- **Errors:** the same as for the 2D commands (§6.7). The camera and the rotation are reset when `WINDOW` opens a new window.
+
 ## 7. Errors
 
 There is one format for all errors, with line, column and a marker under the offending code:
@@ -335,7 +378,8 @@ The project is a Cargo project at the repository root, with one module per phase
 | `lib.rs` | `compile` and `run` entry points | all |
 | `builtins.rs` | table of built-in procedures/functions (names, parameter and return types) and their run-time dispatch | tir, canvas, graphics, dialogs |
 | `canvas.rs` | pixel buffer: colors, shapes, text (no window, testable) | — |
-| `graphics.rs` | the window, keyboard and mouse (crate `minifb`) | canvas |
+| `graphics.rs` | the window, keyboard and mouse (crate `minifb`) | canvas, render3d |
+| `render3d.rs` | 3D camera, shapes, clipping, shading and depth buffer on a canvas | canvas |
 | `dialogs.rs` | Windows message, Yes/No and input boxes | — |
 | `main.rs` | command line | lib |
 
