@@ -1,0 +1,119 @@
+' ==================================================
+'  PONG per due giocatori
+'  Sinistra: W / S        Destra: freccia SU / GIÙ
+'  Vince chi arriva per primo a 5 punti.
+' ==================================================
+
+GLOBAL variables:
+    bx, by, vx, vy as float
+    y1, y2 as float
+    punti1, punti2 as int
+
+variables:
+    vincitore as string
+    ancora as bool
+
+
+' rimette la pallina al centro e la lancia verso destra (1) o sinistra (-1)
+PROCEDURE servi(verso as float)
+    bx <- 400
+    by <- 300
+    vx <- 5 * verso
+    vy <- RANDOM(-3, 3)
+END PROCEDURE
+
+PROCEDURE muoviRacchette()
+    IF(KEY("W") AND y1 > 0)
+        y1 <- y1 - 7
+    END IF
+    IF(KEY("S") AND y1 < 500)
+        y1 <- y1 + 7
+    END IF
+    IF(KEY("UP") AND y2 > 0)
+        y2 <- y2 - 7
+    END IF
+    IF(KEY("DOWN") AND y2 < 500)
+        y2 <- y2 + 7
+    END IF
+END PROCEDURE
+
+' la pallina accelera un po' a ogni colpo, fino a un massimo
+PROCEDURE colpo(centroRacchetta as float)
+    vx <- -vx * 1.07
+    IF(vx > 14)
+        vx <- 14
+    ELSE IF(vx < -14)
+        vx <- -14
+    END IF
+    ' più lontano dal centro della racchetta, più la pallina devia
+    vy <- (by - centroRacchetta) / 8
+END PROCEDURE
+
+PROCEDURE muoviPallina()
+    bx <- bx + vx
+    by <- by + vy
+    IF(by < 10)
+        by <- 10
+        vy <- -vy
+    ELSE IF(by > 590)
+        by <- 590
+        vy <- -vy
+    END IF
+    IF(vx < 0 AND bx - 10 <= 45 AND bx >= 30 AND by >= y1 AND by <= y1 + 100)
+        colpo(y1 + 50)
+    END IF
+    IF(vx > 0 AND bx + 10 >= 755 AND bx <= 770 AND by >= y2 AND by <= y2 + 100)
+        colpo(y2 + 50)
+    END IF
+    IF(bx < -20)
+        punti2 <- punti2 + 1
+        servi(1)
+    ELSE IF(bx > 820)
+        punti1 <- punti1 + 1
+        servi(-1)
+    END IF
+END PROCEDURE
+
+PROCEDURE disegna()
+    variables:
+        y as int
+    CLEAR("black")
+    FOR(y FROM 0 TO 600 STEP 40)
+        RECT(398, y, 4, 20, "gray")
+    END LOOP
+    RECT(30, y1, 15, 100, "white")
+    RECT(755, y2, 15, 100, "white")
+    CIRCLE(bx, by, 10, "yellow")
+    TEXT(340, 20, "" + punti1, "white")
+    TEXT(444, 20, "" + punti2, "white")
+    TEXT(10, 575, "W/S", "gray")
+    TEXT(700, 575, "SU/GIU", "gray")
+END PROCEDURE
+
+
+WINDOW(800, 600, "Pong")
+ancora <- TRUE
+WHILE(ancora AND OPEN())
+    punti1 <- 0
+    punti2 <- 0
+    y1 <- 250
+    y2 <- 250
+    servi(1)
+    WHILE(OPEN() AND punti1 < 5 AND punti2 < 5)
+        muoviRacchette()
+        muoviPallina()
+        disegna()
+        SHOW()
+    END LOOP
+    IF(OPEN())
+        IF(punti1 = 5)
+            vincitore <- "Il giocatore SINISTRO"
+        ELSE
+            vincitore <- "Il giocatore DESTRO"
+        END IF
+        disegna()
+        TEXT(160, 280, vincitore + " ha vinto!", "yellow")
+        SHOW()
+        ancora <- CONFIRM(vincitore + " ha vinto " + punti1 + " a " + punti2 + "! Giocare ancora?")
+    END IF
+END LOOP
