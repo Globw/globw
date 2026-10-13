@@ -1,13 +1,13 @@
 # Easier — Language and Interpreter Specification (v1)
 
-Date: 2026-10-13
+Date: 2026-10-13 (v1.1: explicit types)
 
 ## 1. Goal
 
 Easier turns school-style pseudocode into a real, executable language.
 
 - **Readable**: an exercise written the way it is written in class runs as-is.
-- **Fast for an interpreted language**: types are inferred statically, and programs run on a register bytecode VM with type-specialized instructions.
+- **Fast for an interpreted language**: types are declared and checked before running, and programs run on a register bytecode VM with type-specialized instructions.
 - **Clear errors**, found as much as possible *before* the program runs.
 
 Source files use the `.ez` extension. The executable is `easier.exe`. Implementation language: Rust.
@@ -23,10 +23,14 @@ A program is a sequence of lines, **one statement per line**, in this order:
 Comments run from `'` to the end of the line. Blank lines are ignored.
 
 ```
-GLOBAL variables: counter
-variables: n, grades[5]
+GLOBAL variables:
+    counter as int
 
-FUNCTION double(x)
+variables:
+    n as int
+    grades as int[5]
+
+FUNCTION double(x as int) as int
     RETURN x * 2
 END FUNCTION
 
@@ -38,7 +42,7 @@ output(double(n))
 
 - **Keywords are UPPERCASE only**: `IF`, `ELSE`, `END IF`, `WHILE`, `FOR`, `FROM`, `TO`, `STEP`, `REPEAT`, `END LOOP`, `FUNCTION`, `END FUNCTION`, `PROCEDURE`, `END PROCEDURE`, `RETURN`, `GLOBAL`, `AND`, `OR`, `NOT`, `DIV`, `MOD`, `TRUE`, `FALSE`.
   The same word in another case (`if`, `If`) is not a keyword. It is treated as a name, and the resulting error suggests the uppercase form.
-- **Declarations**: `variables:` is written in lowercase, exactly like that.
+- **Declarations**: `variables:`, `as`, `of` and the type names `int`, `float`, `string`, `bool` are written in lowercase, exactly like that.
 - **Built-in functions**: `input` and `output` are lowercase. `LENGTH`, `APPEND` and `REMOVE` are uppercase.
 - **Identifiers**: letters (accented letters included), digits and `_`. They cannot start with a digit. They are case-sensitive.
 - **Literals**: integers `42`, reals `3.14`, strings `"text"` (escapes `\"`, `\\`, `\n`), booleans `TRUE` / `FALSE`.
@@ -50,28 +54,43 @@ output(double(n))
 ### 4.1 Declarations
 
 ```
-variables: a, b, grades[10], grid[3, 4], names[]
-GLOBAL variables: total
+GLOBAL variables:
+    total as float
+
+variables:
+    price as float
+    quantity, discount as int
+    name as string
+    ok as bool
+    grades as int[10]
+    grid as float[3, 4]
+    names as list of string
 ```
 
-- Every variable used must appear in a `variables:` line. A scope may have several `variables:` lines, all at its top.
-- `name[N]` is an array of N elements, where N is an integer literal > 0. `name[N, M]` is an N×M matrix.
-- `name[]` is a dynamic list, initially empty.
-- `GLOBAL variables:` (only at the very start of the program) makes those variables visible everywhere, functions included. The main program's own `variables:` are **not** visible inside functions.
-- Inside a function or procedure, `variables:` declares local variables. A local variable with the same name as a global one hides it.
+- `variables:` stands alone on its line. Each following line, **indented** more than `variables:`, declares one or more variables (separated by commas) and their type after `as`. The block ends at the first line that is not indented more.
+- Every variable used must be declared. A scope may have several `variables:` blocks, all at its top.
+- `T[N]` is an array of N elements, where N is an integer literal > 0. `T[N, M]` is an N×M matrix. `list of T` is a dynamic list, initially empty.
+- `GLOBAL variables:` (only at the very start of the program) makes those variables visible everywhere, functions included. The main program's own variables are **not** visible inside functions.
+- Inside a function or procedure, a `variables:` block declares local variables. A local variable with the same name as a global one hides it.
 - Declaring the same name twice in a scope is an error. So is a main variable with the same name as a global, a variable named like a function, or a variable named like a built-in.
+- The old form without types (`variables: a, b` on one line) is an error whose hint shows the new form.
 
 ### 4.2 Types
 
-`integer` (64-bit), `real` (64-bit), `string`, `boolean`, `array of T`, `matrix of T`, `list of T`. Elements are always simple values (no lists of lists).
+| Type | Values |
+|---|---|
+| `int` | 64-bit integers |
+| `float` | 64-bit floating point numbers |
+| `string` | text |
+| `bool` | `TRUE` / `FALSE` |
 
-Types are **never written**. The interpreter infers them from every use of the variable in the program: assignments, operations, comparisons, arguments.
+Collections: `T[N]` (array), `T[N, M]` (matrix), `list of T` (list), where T is one of the four types above.
 
-- A variable has one type for the whole program. Incompatible uses are an error before the program runs:
-  `Error at line 9: "x" is an integer (line 3), but here it gets a string`.
-- A variable that receives both integers and reals is `real`. The integers are converted.
-- A variable whose type cannot be inferred from any use (e.g. it is only read with `input` and printed) is `string`.
-- All elements of an array, matrix or list have the same type, inferred the same way.
+- Every variable has the type it is declared with, for the whole program.
+- An `int` value can go where a `float` is expected (assignment, argument, element, return): it is converted. Every other mismatch is an error before the program runs:
+  `Error at line 9, column 6: "x" is an int, but here it gets a string`.
+- In particular a `float` cannot go into an `int` (the hint suggests `DIV` for integer division).
+- `input` converts the line it reads to the declared type of the variable.
 
 ### 4.3 Values before use
 
@@ -93,12 +112,12 @@ Precedence, from highest to lowest:
 | 6 | `AND` |
 | 7 | `OR` |
 
-- `/` always produces a `real`.
+- `/` always produces a `float`.
 - `DIV` and `MOD` work only on integers. `DIV` truncates toward zero, and `MOD` takes the sign of the first operand (`-7 DIV 2 = -3`, `-7 MOD 2 = -1`).
 - `+` between two strings concatenates them. `string + number/boolean` (or the other way round) turns the other operand into text and concatenates.
 - `=` and `!=` compare values of the same type; integers and reals can be compared with each other. `<`, `<=`, `>` and `>=` work on numbers and on strings (alphabetical order).
 - `AND` and `OR` short-circuit.
-- Integer overflow and division by zero are run-time errors.
+- `int` overflow and division by zero are run-time errors.
 - Parentheses `( )` group.
 - **The arrow inside expressions**: `<-` is always an assignment, except inside an expression, where `x<-1` means `x < -1`.
 
@@ -133,7 +152,7 @@ ELSE
     output("fail")
 END IF
 ```
-- An `ELSE` followed directly by `IF(...)` on the next line **always** forms an "else if", ignoring blank lines and comments in between. The whole chain is closed by **one** `END IF`. An extra `END IF` gives an error that explains this rule.
+- An `ELSE` followed directly by `IF(...)`, on the same line or on the next one, **always** forms an "else if", ignoring blank lines and comments in between. The whole chain is closed by **one** `END IF`. An extra `END IF` gives an error that explains this rule.
 - To get a real nested `IF` inside an `ELSE`, it must not be the first statement of the block.
 - The condition must be `boolean`.
 
@@ -156,7 +175,7 @@ REPEAT                          ' runs at least once,
 WHILE(cond)
 ```
 - In `FOR`:
-  - `i` must be a declared simple variable and is an `integer`.
+  - `i` must be a declared `int` variable.
   - `start`, `end` and `STEP` are integers, evaluated once on entry. `STEP 0` is a run-time error.
   - With a positive step the loop runs while `i <= end`; with a negative step, while `i >= end`.
   - After the loop, `i` holds the first value that failed the test, as in C. If the loop never ran, it holds `start`.
@@ -165,19 +184,21 @@ WHILE(cond)
 
 ### 6.4 Functions and procedures
 ```
-FUNCTION name(p1, p2)
-    variables: local
-    ...
-    RETURN expression
+FUNCTION area(base as float, height as float) as float
+    variables:
+        result as float
+    result <- base * height / 2
+    RETURN result
 END FUNCTION
 
-PROCEDURE name(p1)
+PROCEDURE fill(v as int[], value as int)
     ...
 END PROCEDURE
 ```
 - **Definition**:
   - Functions and procedures are defined only at top level, never nested. Recursion is allowed.
-  - Parameters are local variables and do not go in `variables:`.
+  - Parameters are local variables and do not go in `variables:`. Each parameter has a type: `name as T`, `name as T[]` (an array of any size), `name as T[,]` (a matrix of any size) or `name as list of T`.
+  - A `FUNCTION` declares its return type after the parentheses: `) as T`, where T is one of the four simple types. A `PROCEDURE` has none.
 - **Returning**:
   - A `FUNCTION` must execute `RETURN value` on every path. This is checked before the program runs.
   - A `PROCEDURE` may use a bare `RETURN` to leave early.
@@ -185,8 +206,8 @@ END PROCEDURE
   - A `PROCEDURE` cannot be used inside an expression.
   - A `FUNCTION` called as a statement on its own is allowed; its value is discarded.
 - **Types**:
-  - Parameter types are inferred per call. If a function is called with different argument types (e.g. `double(3)` and `double(2.5)`), the interpreter generates a specialized version for each combination.
-  - The return type is inferred from the `RETURN`s.
+  - Each argument must match its parameter's type; an `int` argument is accepted for a `float` parameter. For arrays, matrices and lists the element type must be exactly the same.
+  - Each `RETURN` value must match the declared return type (an `int` is accepted for `float`).
 - **Argument passing**: simple values are passed by copy. Arrays, matrices and lists are passed by reference, so changes are visible to the caller.
 
 ### 6.5 Input and output
@@ -201,7 +222,7 @@ output("Sum: ", s)
   - Booleans are printed as `TRUE` / `FALSE`.
 - **`input`**:
   - It can also read into an element: `input(grades[i])`.
-  - For a real it accepts both `3.5` and `3,5`.
+  - For a `float` it accepts both `3.5` and `3,5`.
   - For a boolean it accepts `TRUE` / `FALSE` in any case.
   - Text that cannot be converted to the required type is a run-time error that says what was expected.
 
@@ -247,7 +268,7 @@ The project is a Cargo project at the repository root, with one module per phase
 | `ast.rs` | syntax tree | errors |
 | `parser.rs` | tokens → AST; block matching (`END IF`, `END LOOP`…) | lexer, ast, errors |
 | `tir.rs` | typed IR: types, places, typed expressions/statements | ast, errors |
-| `checker/` | names and scopes, type inference, function specialization, definite assignment, return paths → typed IR | ast, tir, errors |
+| `checker/` | names and scopes, type checking, definite assignment, return paths → typed IR | ast, tir, errors |
 | `bytecode.rs` | instruction set and module layout | tir, errors |
 | `compiler.rs` | typed IR → register bytecode | tir, bytecode |
 | `vm.rs` | bytecode execution | bytecode, errors |
