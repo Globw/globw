@@ -1,14 +1,51 @@
 {
-  "comments": { "lineComment": "'" },
-  "brackets": [["(", ")"], ["[", "]"]],
-  "autoClosingPairs": [
-    { "open": "(", "close": ")" },
-    { "open": "[", "close": "]" },
-    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] }
+  "comments": {
+    "lineComment": "'"
+  },
+  "brackets": [
+    [
+      "(",
+      ")"
+    ],
+    [
+      "[",
+      "]"
+    ]
   ],
-  "surroundingPairs": [["(", ")"], ["[", "]"], ["\"", "\""]],
+  "autoClosingPairs": [
+    {
+      "open": "(",
+      "close": ")"
+    },
+    {
+      "open": "[",
+      "close": "]"
+    },
+    {
+      "open": "\"",
+      "close": "\"",
+      "notIn": [
+        "string",
+        "comment"
+      ]
+    }
+  ],
+  "surroundingPairs": [
+    [
+      "(",
+      ")"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "\"",
+      "\""
+    ]
+  ],
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(IF|ELSE|WHILE|FOR|REPEAT|FUNCTION|PROCEDURE)\\b(?!.*\\bEND\\b).*$",
+    "increaseIndentPattern": "^\\s*(((IF|ELSE|WHILE|FOR|REPEAT|FUNCTION|PROCEDURE)\\b(?!.*\\bEND\\b).*)|((GLOBAL\\s+)?variables\\s*:\\s*))$",
     "decreaseIndentPattern": "^\\s*(END\\s+(IF|LOOP|FUNCTION|PROCEDURE)|ELSE)\\b"
   },
   "wordPattern": "[\\p{L}_][\\p{L}\\p{N}_]*"

@@ -7,8 +7,11 @@
     { "include": "#string" },
     { "include": "#definition" },
     { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#calls" },
     { "include": "#numbers" },
-    { "include": "#operators" }
+    { "include": "#operators" },
+    { "include": "#variables" }
   ],
   "repository": {
     "comment": {
@@ -22,7 +25,7 @@
       "patterns": [{ "name": "constant.character.escape.easier", "match": "\\\\[n\"\\\\]" }]
     },
     "definition": {
-      "match": "\\b(FUNCTION|PROCEDURE)\\s+(\\w+)",
+      "match": "\\b(FUNCTION|PROCEDURE)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
       "captures": {
         "1": { "name": "storage.type.function.easier" },
         "2": { "name": "entity.name.function.easier" }
@@ -42,6 +45,17 @@
         { "name": "support.function.builtin.easier", "match": "\\b(input|output|LENGTH|APPEND|REMOVE)(?=\\s*\\()" }
       ]
     },
+    "types": {
+      "patterns": [
+        { "name": "keyword.other.as.easier", "match": "\\bas\\b" },
+        { "name": "storage.type.easier", "match": "\\blist\\s+of\\b" },
+        { "name": "storage.type.primitive.easier", "match": "\\b(int|float|string|bool)\\b" }
+      ]
+    },
+    "calls": {
+      "name": "entity.name.function.easier",
+      "match": "(?<![\\p{L}\\p{N}_])[\\p{L}_][\\p{L}\\p{N}_]*(?=\\s*\\()"
+    },
     "numbers": {
       "name": "constant.numeric.easier",
       "match": "\\b\\d+(\\.\\d+)?\\b"
@@ -50,8 +64,12 @@
       "patterns": [
         { "name": "keyword.operator.assignment.easier", "match": "<-|←" },
         { "name": "keyword.operator.comparison.easier", "match": "<=|>=|!=|<|>|=" },
-        { "name": "keyword.operator.arithmetic.easier", "match": "[+\\-*/]" }
+        { "name": "keyword.operator.arithmetic.easier", "match": "[+*/-]" }
       ]
+    },
+    "variables": {
+      "name": "variable.other.easier",
+      "match": "(?<![\\p{L}\\p{N}_])[\\p{L}_][\\p{L}\\p{N}_]*"
     }
   }
 }
