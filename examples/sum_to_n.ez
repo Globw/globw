@@ -1,5 +1,6 @@
 ' Sum of the numbers from 1 to n
-variables: n, i, total
+variables:
+    n, i, total as int
 input(n)
 total <- 0
 FOR(i FROM 1 TO n)

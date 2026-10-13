@@ -1,4 +1,4 @@
-Error at line 3, column 1: "if" is not a keyword
+Error at line 4, column 1: "if" is not a keyword
     if(x > 0)
     ^^
 Hint: keywords are written in UPPERCASE: write IF

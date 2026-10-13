@@ -1,4 +1,6 @@
-variables: items[], i
+variables:
+    items as list of string
+    i as int
 APPEND(items, "bread")
 APPEND(items, "milk")
 APPEND(items, "eggs")

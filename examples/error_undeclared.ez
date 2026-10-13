@@ -1,3 +1,4 @@
-variables: total
+variables:
+    total as int
 total <- 0
 count <- total + 1

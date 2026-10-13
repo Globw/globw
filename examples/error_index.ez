@@ -1,4 +1,6 @@
-variables: v[3], i
+variables:
+    v as int[3]
+    i as int
 FOR(i FROM 1 TO 4)
     v[i] <- i
 END LOOP

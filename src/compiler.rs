@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn integer_conditions_use_fused_compare_and_jump() {
-        let module = crate::compile("variables: i\ni <- 0\nWHILE(i < 3)\n    i <- i + 1\nEND LOOP\n").unwrap();
+        let module = crate::compile("variables:\n    i as int\ni <- 0\nWHILE(i < 3)\n    i <- i + 1\nEND LOOP\n").unwrap();
         let code = &module.functions[0].code;
         assert!(code.iter().any(|op| matches!(op, crate::bytecode::Op::JumpUnlessI(..))), "{:?}", code);
         assert!(!code.iter().any(|op| matches!(op, crate::bytecode::Op::CmpI(..))), "{:?}", code);
@@ -486,13 +486,19 @@ mod tests {
 
     #[test]
     fn arithmetic_and_output() {
-        let src = "variables: a, b\na <- 7\nb <- 2\noutput(a + b, \" \", a - b, \" \", a * b, \" \", a DIV b, \" \", a MOD b, \" \", a / b)\n";
+        let src = "variables:\n    a, b as int\na <- 7\nb <- 2\noutput(a + b, \" \", a - b, \" \", a * b, \" \", a DIV b, \" \", a MOD b, \" \", a / b)\n";
         assert_eq!(run_src(src, ""), "9 5 14 3 1 3.5\n");
     }
 
     #[test]
+    fn input_numbers_are_added_not_joined() {
+        let src = "variables:\n    a, b as int\n    p as float\ninput(a, b, p)\noutput(a + b, \" \", p * 2)\n";
+        assert_eq!(run_src(src, "3\n4\n9,99\n"), "7 19.98\n");
+    }
+
+    #[test]
     fn if_else_chain() {
-        let src = "variables: v\ninput(v)\nIF(v >= 8)\n    output(\"great\")\nELSE\nIF(v >= 6)\n    output(\"pass\")\nELSE\n    output(\"fail\")\nEND IF\n";
+        let src = "variables:\n    v as int\ninput(v)\nIF(v >= 8)\n    output(\"great\")\nELSE IF(v >= 6)\n    output(\"pass\")\nELSE\n    output(\"fail\")\nEND IF\n";
         assert_eq!(run_src(src, "9\n"), "great\n");
         assert_eq!(run_src(src, "6\n"), "pass\n");
         assert_eq!(run_src(src, "2\n"), "fail\n");
@@ -500,65 +506,72 @@ mod tests {
 
     #[test]
     fn while_and_repeat() {
-        let src = "variables: i, n\ni <- 1\nWHILE(i <= 3)\n    output(i)\n    i <- i + 1\nEND LOOP\nREPEAT\n    input(n)\nWHILE(n < 0)\noutput(\"ok \", n)\n";
+        let src = "variables:\n    i, n as int\ni <- 1\nWHILE(i <= 3)\n    output(i)\n    i <- i + 1\nEND LOOP\nREPEAT\n    input(n)\nWHILE(n < 0)\noutput(\"ok \", n)\n";
         assert_eq!(run_src(src, "-1\n-5\n4\n"), "1\n2\n3\nok 4\n");
     }
 
     #[test]
     fn for_loops() {
-        let src = "variables: i\nFOR(i FROM 10 TO 0 STEP -5)\n    output(i)\nEND LOOP\noutput(\"after: \", i)\n";
+        let src = "variables:\n    i as int\nFOR(i FROM 10 TO 0 STEP -5)\n    output(i)\nEND LOOP\noutput(\"after: \", i)\n";
         assert_eq!(run_src(src, ""), "10\n5\n0\nafter: -5\n");
-        let global = "GLOBAL variables: g\nvariables: s\ns <- 0\nFOR(g FROM 1 TO 4)\n    s <- s + g\nEND LOOP\noutput(s, \" \", g)\n";
+        let global = "GLOBAL variables:\n    g as int\nvariables:\n    s as int\ns <- 0\nFOR(g FROM 1 TO 4)\n    s <- s + g\nEND LOOP\noutput(s, \" \", g)\n";
         assert_eq!(run_src(global, ""), "10 5\n");
     }
 
     #[test]
     fn for_counter_changed_in_body_behaves_the_same_for_globals_and_locals() {
-        let src = "GLOBAL variables: g\nvariables: i\nFOR(g FROM 1 TO 5)\n    output(g)\n    g <- g + 10\nEND LOOP\noutput(\"after \", g)\nFOR(i FROM 1 TO 5)\n    output(i)\n    i <- i + 10\nEND LOOP\noutput(\"after \", i)\n";
+        let src = "GLOBAL variables:\n    g as int\nvariables:\n    i as int\nFOR(g FROM 1 TO 5)\n    output(g)\n    g <- g + 10\nEND LOOP\noutput(\"after \", g)\nFOR(i FROM 1 TO 5)\n    output(i)\n    i <- i + 10\nEND LOOP\noutput(\"after \", i)\n";
         assert_eq!(run_src(src, ""), "1\nafter 12\n1\nafter 12\n");
     }
 
     #[test]
     fn functions_and_recursion() {
-        let src = "variables: r\nFUNCTION fib(n)\n    IF(n < 2)\n        RETURN n\n    END IF\n    RETURN fib(n - 1) + fib(n - 2)\nEND FUNCTION\nr <- fib(20)\noutput(r)\n";
+        let src = "variables:\n    r as int\nFUNCTION fib(n as int) as int\n    IF(n < 2)\n        RETURN n\n    END IF\n    RETURN fib(n - 1) + fib(n - 2)\nEND FUNCTION\nr <- fib(20)\noutput(r)\n";
         assert_eq!(run_src(src, ""), "6765\n");
     }
 
     #[test]
+    fn int_argument_and_return_become_float() {
+        let src = "FUNCTION half(x as float) as float\n    RETURN x / 2\nEND FUNCTION\nFUNCTION one() as float\n    RETURN 1\nEND FUNCTION\noutput(half(3), \" \", one())\n";
+        assert_eq!(run_src(src, ""), "1.5 1.0\n");
+    }
+
+    #[test]
     fn arrays_by_reference_scalars_by_value() {
-        let src = "variables: v[3], i, x\nPROCEDURE fill(a, y)\n    variables: k\n    FOR(k FROM 1 TO 3)\n        a[k] <- k * k\n    END LOOP\n    y <- 100\nEND PROCEDURE\nx <- 1\nfill(v, x)\nFOR(i FROM 1 TO 3)\n    output(v[i])\nEND LOOP\noutput(x)\n";
+        let src = "variables:\n    v as int[3]\n    i, x as int\nPROCEDURE fill(a as int[], y as int)\n    variables:\n        k as int\n    FOR(k FROM 1 TO 3)\n        a[k] <- k * k\n    END LOOP\n    y <- 100\nEND PROCEDURE\nx <- 1\nfill(v, x)\nFOR(i FROM 1 TO 3)\n    output(v[i])\nEND LOOP\noutput(x)\n";
         assert_eq!(run_src(src, ""), "1\n4\n9\n1\n");
     }
 
     #[test]
     fn lists_strings_and_matrices() {
-        let src = "variables: l[], s, m[2, 3], r, c, t\nAPPEND(l, \"a\")\nAPPEND(l, \"b\")\nAPPEND(l, \"c\")\nREMOVE(l, 2)\noutput(LENGTH(l), \" \", l[1], l[2])\ns <- \"ciao\"\noutput(s[2], LENGTH(s))\nt <- 0\nFOR(r FROM 1 TO 2)\n    FOR(c FROM 1 TO 3)\n        m[r, c] <- r * c\n        t <- t + m[r, c]\n    END LOOP\nEND LOOP\noutput(t)\n";
+        let src = "variables:\n    l as list of string\n    s as string\n    m as int[2, 3]\n    r, c, t as int\nAPPEND(l, \"a\")\nAPPEND(l, \"b\")\nAPPEND(l, \"c\")\nREMOVE(l, 2)\noutput(LENGTH(l), \" \", l[1], l[2])\ns <- \"ciao\"\noutput(s[2], LENGTH(s))\nt <- 0\nFOR(r FROM 1 TO 2)\n    FOR(c FROM 1 TO 3)\n        m[r, c] <- r * c\n        t <- t + m[r, c]\n    END LOOP\nEND LOOP\noutput(t)\n";
         assert_eq!(run_src(src, ""), "2 ac\ni4\n18\n");
     }
 
     #[test]
     fn short_circuit_and_logic_into_variable() {
-        let src = "variables: n, b, c\nn <- 0\nIF(n != 0 AND 10 DIV n > 1)\n    output(\"no\")\nELSE\n    output(\"safe\")\nEND IF\nb <- FALSE\nc <- TRUE\nb <- c AND b\noutput(b)\n";
+        let src = "variables:\n    n as int\n    b, c as bool\nn <- 0\nIF(n != 0 AND 10 DIV n > 1)\n    output(\"no\")\nELSE\n    output(\"safe\")\nEND IF\nb <- FALSE\nc <- TRUE\nb <- c AND b\noutput(b)\n";
         assert_eq!(run_src(src, ""), "safe\nFALSE\n");
     }
 
     #[test]
     fn reals_and_conversions() {
-        let src = "variables: x\nx <- 1\nx <- x / 4\noutput(x, \" \", 2 * 1.5, \" \", \"n=\" + 3 + TRUE)\n";
+        let src = "variables:\n    x as float\nx <- 1\nx <- x / 4\noutput(x, \" \", 2 * 1.5, \" \", \"n=\" + 3 + TRUE)\n";
         assert_eq!(run_src(src, ""), "0.25 3.0 n=3TRUE\n");
     }
 
     #[test]
     fn runtime_errors_point_at_the_code() {
         assert_eq!(
-            run_src("variables: v[3]\nv[4] <- 1\n", ""),
-            "Error at line 2, column 1: index 4 is out of range: valid positions are 1 to 3\n    v[4] <- 1\n    ^\n"
+            run_src("variables:\n    v as int[3]\nv[4] <- 1\n", ""),
+            "Error at line 3, column 1: index 4 is out of range: valid positions are 1 to 3\n    v[4] <- 1\n    ^\n"
         );
         assert_eq!(
-            run_src("variables: x\nx <- 0\noutput(1 / x)\n", ""),
-            "Error at line 3, column 10: division by zero\n    output(1 / x)\n             ^\n"
+            run_src("variables:\n    x as int\nx <- 0\noutput(1 / x)\n", ""),
+            "Error at line 4, column 10: division by zero\n    output(1 / x)\n             ^\n"
         );
-        let global = run_src("GLOBAL variables: g\nPROCEDURE show()\n    output(g)\nEND PROCEDURE\nshow()\ng <- 1\n", "");
-        assert!(global.starts_with("Error at line 3, column 12: variable \"g\" has no value yet"), "{}", global);
+        let global = run_src("GLOBAL variables:\n    g as int\nPROCEDURE show()\n    output(g)\nEND PROCEDURE\nshow()\ng <- 1\n", "");
+        assert!(global.starts_with("Error at line 4, column 12: variable \"g\" has no value yet"), "{}", global);
+        assert!(run_src("variables:\n    n as int\ninput(n)\n", "9,99\n").contains("expected an integer, read \"9,99\""));
     }
 }

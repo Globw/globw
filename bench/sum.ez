@@ -1,4 +1,5 @@
-variables: i, s
+variables:
+    i, s as int
 s <- 0
 FOR(i FROM 1 TO 100000000)
     s <- s + i MOD 7

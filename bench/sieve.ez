@@ -1,4 +1,6 @@
-variables: prime[10000000], i, j, n, count
+variables:
+    prime as bool[10000000]
+    i, j, n, count as int
 n <- 10000000
 FOR(i FROM 2 TO n)
     prime[i] <- TRUE

@@ -1,5 +1,6 @@
-variables: r
-FUNCTION fib(n)
+variables:
+    r as int
+FUNCTION fib(n as int) as int
     IF(n < 2)
         RETURN n
     END IF

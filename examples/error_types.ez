@@ -1,0 +1,3 @@
+variables:
+    quantità as int
+quantità <- 2.5

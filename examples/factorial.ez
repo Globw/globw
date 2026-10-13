@@ -1,5 +1,6 @@
-variables: n
-FUNCTION factorial(k)
+variables:
+    n as int
+FUNCTION factorial(k as int) as int
     IF(k <= 1)
         RETURN 1
     END IF

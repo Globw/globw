@@ -29,7 +29,7 @@ fn check_mode() {
 fn runtime_error_exit_code() {
     let (code, _, stderr) = easier(&["examples/error_index.ez"]);
     assert_eq!(code, 2);
-    assert!(stderr.starts_with("Error at line 3"), "{}", stderr);
+    assert!(stderr.starts_with("Error at line 5"), "{}", stderr);
 }
 
 #[test]

@@ -1,4 +1,5 @@
-GLOBAL variables: count
+GLOBAL variables:
+    count as int
 PROCEDURE tick()
     count <- count + 1
 END PROCEDURE

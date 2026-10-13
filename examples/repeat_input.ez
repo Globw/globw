@@ -1,4 +1,5 @@
-variables: n
+variables:
+    n as int
 REPEAT
     output("Enter a positive number:")
     input(n)
