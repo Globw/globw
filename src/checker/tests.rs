@@ -243,3 +243,22 @@ fn uncalled_subprograms_are_checked_for_names_only() {
     );
     assert!(check_src("FUNCTION unused(x)\n    RETURN x * \"a\"\nEND FUNCTION\n").is_ok());
 }
+
+#[test]
+fn guesses_never_override_a_later_real_type() {
+    // y's real type (string) comes from a function return known only after a round
+    let src = "variables: y\nFUNCTION f()\n    RETURN \"a\"\nEND FUNCTION\ny <- f()\noutput(y + 1)\n";
+    assert_eq!(main_types(src), vec![t("y", Type::Base(Str))]);
+}
+
+#[test]
+fn chained_functions_and_string_concatenation() {
+    let src = "variables: res\nFUNCTION square(k)\n    RETURN k * k\nEND FUNCTION\nFUNCTION compute(k)\n    RETURN square(k) + 1\nEND FUNCTION\nPROCEDURE show(x)\n    output(\"Result: \" + x)\nEND PROCEDURE\nres <- compute(3)\nshow(res)\n";
+    assert_eq!(main_types(src), vec![t("res", Type::Base(Int))]);
+}
+
+#[test]
+fn concatenation_says_nothing_about_the_other_operand() {
+    let src = "variables: a, b\ninput(a)\ninput(b)\noutput(\"sum: \" + a + b)\noutput(a * 2)\n";
+    assert_eq!(main_types(src), vec![t("a", Type::Base(Int)), t("b", Type::Base(Str))]);
+}

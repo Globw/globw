@@ -205,6 +205,7 @@ impl<'p> Checker<'p> {
                 self.hint(&a, t);
                 self.hint(&b, t);
             }
+            Add if a.ty == Type::Base(Str) || b.ty == Type::Base(Str) => {}
             _ => {
                 if let Some(t) = b.ty.base() {
                     self.hint(&a, t);

@@ -66,6 +66,8 @@ pub(crate) struct Checker<'p> {
     pub(crate) is_final: bool,
     /// true while checking a never-called subprogram: only structural errors count
     pub(crate) names_only: bool,
+    /// true only in a guessing round: operator hints may give types to unknown variables
+    pub(crate) hints: bool,
     pub(crate) errors: Vec<Error>,
     pub(crate) current: usize,
     pub(crate) queue: Vec<usize>,
@@ -81,6 +83,9 @@ pub fn check(prog: &Program) -> Result<TProgram, Vec<Error>> {
     if !c.errors.is_empty() {
         return Err(c.errors);
     }
+    // Real types (literals, assignments, returns) settle first. Only then do
+    // guesses from how unknown variables are used fill the gaps, one round at
+    // a time, and only then does anything still unknown become a string.
     let mut rounds = 0;
     loop {
         loop {
@@ -91,6 +96,13 @@ pub fn check(prog: &Program) -> Result<TProgram, Vec<Error>> {
             if !c.changed {
                 break;
             }
+        }
+        c.hints = true;
+        c.changed = false;
+        c.round();
+        c.hints = false;
+        if c.changed {
+            continue;
         }
         if !c.default_unknowns() {
             break;
@@ -123,6 +135,7 @@ impl<'p> Checker<'p> {
             changed: false,
             is_final: false,
             names_only: false,
+            hints: false,
             errors: Vec::new(),
             current: 0,
             queue: Vec::new(),
@@ -367,13 +380,15 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// If `e` is a variable (or an element) whose type is still unknown, gives it type `t`.
+    /// A guess: if `e` is a variable (or an element) whose type is still
+    /// unknown, gives it type `t`. Guesses only apply in guessing rounds and
+    /// never change a type that is already known.
     pub(crate) fn hint(&mut self, e: &TExpr, t: BaseType) {
-        if e.ty != Type::Unknown {
+        if !self.hints || e.ty != Type::Unknown {
             return;
         }
         match &e.kind {
-            TExprKind::Load(p) | TExprKind::Elem(p, _) => self.widen(*p, t, e.pos),
+            TExprKind::Load(p) | TExprKind::Elem(p, _) if self.var(*p).ty.is_none() => self.widen(*p, t, e.pos),
             _ => {}
         }
     }

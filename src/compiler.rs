@@ -448,6 +448,9 @@ impl<'a> FnCompiler<'a> {
             self.emit(Op::SetGlobal(g, counter), pos);
         }
         self.block(body);
+        if let Place::Global(g) = var {
+            self.emit(Op::GetGlobal(counter, g), pos);
+        }
         self.emit(Op::ForStep { var: counter, end, step: step_reg, body: top }, pos);
         let exit = self.here();
         self.patch(init, exit);
@@ -507,6 +510,12 @@ mod tests {
         assert_eq!(run_src(src, ""), "10\n5\n0\nafter: -5\n");
         let global = "GLOBAL variables: g\nvariables: s\ns <- 0\nFOR(g FROM 1 TO 4)\n    s <- s + g\nEND LOOP\noutput(s, \" \", g)\n";
         assert_eq!(run_src(global, ""), "10 5\n");
+    }
+
+    #[test]
+    fn for_counter_changed_in_body_behaves_the_same_for_globals_and_locals() {
+        let src = "GLOBAL variables: g\nvariables: i\nFOR(g FROM 1 TO 5)\n    output(g)\n    g <- g + 10\nEND LOOP\noutput(\"after \", g)\nFOR(i FROM 1 TO 5)\n    output(i)\n    i <- i + 10\nEND LOOP\noutput(\"after \", i)\n";
+        assert_eq!(run_src(src, ""), "1\nafter 12\n1\nafter 12\n");
     }
 
     #[test]
