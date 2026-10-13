@@ -58,6 +58,8 @@ pub enum Tok {
 pub struct Token {
     pub tok: Tok,
     pub pos: Pos,
+    /// indentation of the token's line, with tabs stopping every 4 columns
+    pub indent: u32,
 }
 
 /// Single-word keywords. `END ...` and `variables:` are handled by the scanner.
@@ -112,16 +114,27 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, Error> {
         line: 1,
         col: 1,
         out: Vec::new(),
+        indent: 0,
+        at_line_start: true,
     };
     while let Some(c) = s.peek(0) {
         match c {
             ' ' | '\t' | '\r' => {
+                if s.at_line_start {
+                    s.indent = match c {
+                        '\t' => (s.indent / 4 + 1) * 4,
+                        ' ' => s.indent + 1,
+                        _ => s.indent,
+                    };
+                }
                 s.bump();
             }
             '\n' => {
                 let (line, col) = (s.line, s.col);
                 s.bump();
                 s.newline(line, col);
+                s.indent = 0;
+                s.at_line_start = true;
             }
             '\'' => {
                 while s.peek(0).map_or(false, |c| c != '\n') {
@@ -146,6 +159,8 @@ struct Scanner {
     line: u32,
     col: u32,
     out: Vec<Token>,
+    indent: u32,
+    at_line_start: bool,
 }
 
 impl Scanner {
@@ -166,7 +181,8 @@ impl Scanner {
     }
 
     fn push(&mut self, tok: Tok, line: u32, col: u32, len: u32) {
-        self.out.push(Token { tok, pos: Pos::new(line, col, len) });
+        self.out.push(Token { tok, pos: Pos::new(line, col, len), indent: self.indent });
+        self.at_line_start = false;
     }
 
     /// Emits a newline token unless the previous token already is one.
@@ -252,7 +268,8 @@ impl Scanner {
         } else {
             Tok::Int(text.parse().map_err(|_| Error::new(pos, "integer too large"))?)
         };
-        self.out.push(Token { tok, pos });
+        self.out.push(Token { tok, pos, indent: self.indent });
+        self.at_line_start = false;
         Ok(())
     }
 

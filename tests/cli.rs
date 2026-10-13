@@ -41,3 +41,12 @@ fn usage_errors() {
     assert_eq!(code, 3);
     assert!(stderr.starts_with("cannot read \"missing.gw\""), "{}", stderr);
 }
+
+#[test]
+fn non_utf8_file_is_explained() {
+    let path = std::env::temp_dir().join("globw_cp1252_test.gw");
+    std::fs::write(&path, b"output(\"perch\xe8\")\n").unwrap();
+    let (code, _, stderr) = globw(&[path.to_str().unwrap()]);
+    assert_eq!(code, 3);
+    assert!(stderr.contains("is not saved as UTF-8"), "{}", stderr);
+}

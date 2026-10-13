@@ -48,7 +48,7 @@ fn int_goes_into_float() {
 fn float_into_int_is_an_error() {
     let e = first_error("variables:\n    n as int\nn = 2.5\n");
     assert_eq!(e.message, "\"n\" is an int, but here it gets a float");
-    assert_eq!(e.hint.as_deref(), Some("use div for integer division"));
+    assert_eq!(e.hint.as_deref(), Some("use round(x) to turn a float into an int, or div to divide integers"));
     assert_eq!(e.pos.line, 3);
 }
 
@@ -322,4 +322,13 @@ fn font_builtins_are_typed() {
         first_error("font(24, \"Arial\")\n").message,
         "argument 1 of \"font\" must be a string, here it is an int"
     );
+}
+
+#[test]
+fn float_argument_for_int_parameter_suggests_round() {
+    let e = first_error("variables:\n    r as int\nfunction sq(x as int) as int\n    return x * x\nend function\nr = sq(2.5)\n");
+    assert_eq!(e.message, "argument 1 of \"sq\" must be an int, here it is a float");
+    assert_eq!(e.hint.as_deref(), Some("use round(x) to turn a float into an int, or div to divide integers"));
+    let e = first_error("variables:\n    r as int\nfunction f() as int\n    return 2.5\nend function\nr = f()\n");
+    assert_eq!(e.hint.as_deref(), Some("use round(x) to turn a float into an int, or div to divide integers"));
 }

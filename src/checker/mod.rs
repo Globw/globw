@@ -1,6 +1,6 @@
-//! Semantic analysis: name resolution, type inference, specialization of
-//! functions per argument types, definite assignment and return checks.
-//! Produces the typed program consumed by the compiler.
+//! Semantic analysis: name resolution, checking of the declared types,
+//! definite assignment and return checks. Produces the typed program
+//! consumed by the compiler.
 
 mod calls;
 mod exprs;
@@ -13,6 +13,8 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{Decl, Program, Shape, Stmt, StmtKind};
 use crate::errors::{Error, Pos};
 use crate::tir::*;
+
+pub(crate) const FLOAT_TO_INT_HINT: &str = "use round(x) to turn a float into an int, or div to divide integers";
 
 pub const BUILTINS: [&str; 5] = ["input", "output", "length", "append", "remove"];
 
@@ -49,8 +51,7 @@ impl Var {
     }
 }
 
-/// One specialization: the main program (`sub == None`) or a subprogram
-/// checked for one combination of argument types.
+/// The main program (`sub == None`) or one subprogram, with its variables.
 pub(crate) struct Instance {
     pub(crate) sub: Option<usize>,
     pub(crate) locals: Vec<Var>,
@@ -393,7 +394,7 @@ fn conflict_error(v: &Var, declared: BaseType, new: BaseType, pos: Pos) -> Error
     };
     let e = Error::new(pos, message);
     if declared == BaseType::Int && new == BaseType::Real {
-        e.with_hint("use div for integer division")
+        e.with_hint(FLOAT_TO_INT_HINT)
     } else {
         e
     }

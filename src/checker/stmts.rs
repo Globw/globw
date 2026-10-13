@@ -348,10 +348,8 @@ impl<'p> Checker<'p> {
     fn widen_return(&mut self, t: BaseType, pos: Pos) {
         if let Some(declared) = self.instances[self.current].ret {
             if join(declared, t) != Some(declared) {
-                self.report(Error::new(
-                    pos,
-                    format!("this function returns {}, here it returns {}", declared.name(), t.name()),
-                ));
+                let e = Error::new(pos, format!("this function returns {}, here it returns {}", declared.name(), t.name()));
+                self.report(super::calls::float_hint(e, Type::Base(declared), Type::Base(t)));
             }
         }
     }

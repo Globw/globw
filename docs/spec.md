@@ -67,9 +67,9 @@ variables:
     names as list of string
 ```
 
-- `variables:` stands alone on its line. Each following line, **indented** more than the line where the block starts (the one with `variables:` or `global variables:`), declares one or more variables (separated by commas) and their type after `as`. The block ends at the first line that is not indented more.
+- `variables:` stands alone on its line. Each following line, **indented** more than the line where the block starts (the one with `variables:` or `global variables:`), declares one or more variables (separated by commas) and their type after `as`. The block ends at the first line that is not indented more, or that is not a declaration (an indented `x = 1` is simply the first statement). For indentation a tab counts as moving to the next multiple of 4 columns.
 - Every variable used must be declared. A scope may have several `variables:` blocks, all at its top.
-- `T[N]` is an array of N elements, where N is an integer literal > 0. `T[N, M]` is an N×M matrix. `list of T` is a dynamic list, initially empty.
+- `T[N]` is an array of N elements, where N is an integer literal > 0. An array or matrix has at most 10,000,000 elements. `T[N, M]` is an N×M matrix. `list of T` is a dynamic list, initially empty.
 - `global variables:` (only at the very start of the program) makes those variables visible everywhere, functions included. The main program's own variables are **not** visible inside functions.
 - Inside a function or procedure, a `variables:` block declares local variables. A local variable with the same name as a global one hides it.
 - Declaring the same name twice in a scope is an error. So is a main variable with the same name as a global, a variable named like a function, or a variable named like a built-in.
@@ -221,7 +221,7 @@ output("Sum: ", s)
   - Booleans are printed as `true` / `false`.
 - **`input`**:
   - It can also read into an element: `input(grades[i])`.
-  - For a `float` it accepts both `3.5` and `3,5`.
+  - For a `float` it accepts both `3.5` and `3,5`, but not `nan` or infinite values.
   - For a boolean it accepts `true` / `false` in any case.
   - Text that cannot be converted to the required type is a run-time error that says what was expected.
 
@@ -357,7 +357,7 @@ Error at line 7, column 5: variable "total" is not declared
     ^^^^^
 Hint: add it to "variables:" at the top of the program
 ```
-- **Before running**: syntax, names, types, value before use, missing `return`.
+- **Before running**: syntax, names, types, value before use, missing `return`, and programs nested more than 100 levels deep or with a statement of more than 1000 operations.
   - The lexer and the parser stop at the first error.
   - The checker reports every error it finds, up to 20, sorted by position.
   - The program does not start.

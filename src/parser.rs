@@ -7,7 +7,17 @@ use crate::lexer::{miscased_statement_keyword, Tok, Token};
 pub(crate) struct Parser {
     pub(crate) t: Vec<Token>,
     pub(crate) i: usize,
+    /// how deeply blocks and expressions are nested right now
+    pub(crate) depth: u32,
+    /// operators in the current statement's expressions
+    pub(crate) ops: u32,
 }
+
+/// Deeper nesting would overflow the stack of the later phases.
+const MAX_DEPTH: u32 = 100;
+const MAX_OPS: u32 = 1000;
+const MAX_ELEMENTS: usize = 10_000_000;
+const TOO_BIG: &str = "an array can have at most 10000000 elements";
 
 /// Human-readable description of a token, for error messages.
 pub fn describe(t: &Tok) -> String {
@@ -68,12 +78,10 @@ fn text(t: &Tok) -> &'static str {
     }
 }
 
-fn binary(op: BinOp, a: Expr, b: Expr, pos: Pos) -> Expr {
-    Expr { kind: ExprKind::Binary(op, Box::new(a), Box::new(b)), pos }
-}
+
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
-    Parser { t: tokens, i: 0 }.program()
+    Parser { t: tokens, i: 0, depth: 0, ops: 0 }.program()
 }
 
 impl Parser {
@@ -140,11 +148,11 @@ impl Parser {
         let mut p = Program::default();
         self.skip_newlines();
         while self.is(&Tok::Global) {
-            let line_col = self.advance().pos.col;
+            self.advance();
             if !self.is(&Tok::Variables) {
                 return self.fail("global must be followed by \"variables:\"");
             }
-            let decls = self.decl_block(Some(line_col))?;
+            let decls = self.decl_block()?;
             p.globals.extend(decls);
             self.skip_newlines();
         }
@@ -165,7 +173,7 @@ impl Parser {
     fn local_decls(&mut self) -> Result<Vec<Decl>, Error> {
         let mut v = Vec::new();
         while self.is(&Tok::Variables) {
-            v.extend(self.decl_block(None)?);
+            v.extend(self.decl_block()?);
             self.skip_newlines();
         }
         Ok(v)
@@ -176,17 +184,20 @@ impl Parser {
     }
 
     /// `variables:` on its own line, then lines `a, b as TYPE` indented more
-    /// than the line where the block starts (`line_col`: where GLOBAL is).
-    fn decl_block(&mut self, line_col: Option<u32>) -> Result<Vec<Decl>, Error> {
-        let variables_col = self.advance().pos.col;
-        let col = line_col.unwrap_or(variables_col);
+    /// than the line where the block starts. An indented line that is not a
+    /// declaration (like `x = 1`) ends the block and is read as a statement.
+    fn decl_block(&mut self) -> Result<Vec<Decl>, Error> {
+        let block_indent = self.advance().indent;
         if !self.is(&Tok::Newline) {
             return Err(Error::new(self.pos(), "\"variables:\" must be followed by a new line with the declarations")
                 .with_hint("put each declaration on its own indented line below, like \"    a as int\""));
         }
         self.skip_newlines();
         let mut v = Vec::new();
-        while matches!(self.tok(), Tok::Name(_)) && self.pos().col > col {
+        while matches!(self.tok(), Tok::Name(_))
+            && self.t[self.i].indent > block_indent
+            && (matches!(self.peek_tok(1), Tok::Comma) || matches!(self.peek_tok(1), Tok::Name(n) if n == "as"))
+        {
             v.extend(self.decl_line()?);
             self.skip_newlines();
         }
@@ -267,6 +278,9 @@ impl Parser {
         let a = self.dimension()?;
         let shape = if self.accept(&Tok::Comma) {
             let b = self.dimension()?;
+            if a * b > MAX_ELEMENTS {
+                return self.fail(TOO_BIG);
+            }
             Shape::Matrix(a, b)
         } else {
             Shape::Array(a)
@@ -277,6 +291,7 @@ impl Parser {
 
     fn dimension(&mut self) -> Result<usize, Error> {
         match *self.tok() {
+            Tok::Int(n) if n > MAX_ELEMENTS as i64 => self.fail(TOO_BIG),
             Tok::Int(n) if n > 0 => {
                 self.advance();
                 Ok(n as usize)
@@ -324,7 +339,15 @@ impl Parser {
                 return self.fail("a function must declare its return type, like ) as int");
             }
             self.advance();
-            Some(self.base_type()?)
+            const SIMPLE_ONLY: &str = "a function can only return int, float, string or bool";
+            if self.is_name("list") {
+                return self.fail(SIMPLE_ONLY);
+            }
+            let ty = self.base_type()?;
+            if self.is(&Tok::LBracket) {
+                return self.fail(SIMPLE_ONLY);
+            }
+            Some(ty)
         } else {
             if self.is_name("as") {
                 return self.fail("a procedure does not return a value, so it has no return type");
@@ -345,16 +368,30 @@ impl Parser {
         Ok(Subprogram { name, is_function, params, ret, locals, body, pos })
     }
 
-    /// Parses statements until one of `ends` (left unconsumed). For a REPEAT
-    /// body, `repeat_col` is the column of REPEAT: a WHILE at that column or
-    /// less closes the block.
+    /// Parses statements until one of `ends` (left unconsumed). For a repeat
+    /// body, `repeat_indent` is the indentation of its line: a while indented
+    /// that much or less closes the block.
     fn block(
         &mut self,
         ends: &[Tok],
         opened: Pos,
         what: &str,
         closer: &str,
-        repeat_col: Option<u32>,
+        repeat_indent: Option<u32>,
+    ) -> Result<Vec<Stmt>, Error> {
+        self.enter()?;
+        let body = self.block_body(ends, opened, what, closer, repeat_indent);
+        self.depth -= 1;
+        body
+    }
+
+    fn block_body(
+        &mut self,
+        ends: &[Tok],
+        opened: Pos,
+        what: &str,
+        closer: &str,
+        repeat_indent: Option<u32>,
     ) -> Result<Vec<Stmt>, Error> {
         let mut body = Vec::new();
         self.skip_newlines();
@@ -362,8 +399,8 @@ impl Parser {
             if ends.contains(self.tok()) {
                 return Ok(body);
             }
-            if let Some(col) = repeat_col {
-                if self.is(&Tok::While) && self.pos().col <= col {
+            if let Some(indent) = repeat_indent {
+                if self.is(&Tok::While) && self.t[self.i].indent <= indent {
                     return Ok(body);
                 }
             }
@@ -395,6 +432,7 @@ impl Parser {
     }
 
     fn stmt(&mut self) -> Result<Stmt, Error> {
+        self.ops = 0;
         let pos = self.pos();
         let kind = match self.tok().clone() {
             Tok::If => self.if_stmt()?,
@@ -411,7 +449,7 @@ impl Parser {
             Tok::Repeat => {
                 self.advance();
                 self.end_stmt()?;
-                let body = self.block(&[], pos, "repeat", "while(condition)", Some(pos.col))?;
+                let body = self.block(&[], pos, "repeat", "while(condition)", Some(self.t[self.i - 1].indent))?;
                 self.advance();
                 let cond = self.condition()?;
                 self.end_stmt()?;
@@ -526,8 +564,27 @@ impl Parser {
         Ok(StmtKind::Assign(Target { name, indices, pos }, value))
     }
 
+    fn enter(&mut self) -> Result<(), Error> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return self.fail(format!("the program is nested too deeply (more than {} levels)", MAX_DEPTH));
+        }
+        Ok(())
+    }
+
+    fn binary(&mut self, op: BinOp, a: Expr, b: Expr, pos: Pos) -> Result<Expr, Error> {
+        self.ops += 1;
+        if self.ops > MAX_OPS {
+            return self.fail(format!("this expression is too long (more than {} operations)", MAX_OPS));
+        }
+        Ok(Expr { kind: ExprKind::Binary(op, Box::new(a), Box::new(b)), pos })
+    }
+
     pub(crate) fn expr(&mut self) -> Result<Expr, Error> {
-        self.or()
+        self.enter()?;
+        let e = self.or();
+        self.depth -= 1;
+        e
     }
 
     fn or(&mut self) -> Result<Expr, Error> {
@@ -535,7 +592,7 @@ impl Parser {
         while self.is(&Tok::Or) {
             let pos = self.advance().pos;
             let b = self.and()?;
-            a = binary(BinOp::Or, a, b, pos);
+            a = self.binary(BinOp::Or, a, b, pos)?;
         }
         Ok(a)
     }
@@ -545,7 +602,7 @@ impl Parser {
         while self.is(&Tok::And) {
             let pos = self.advance().pos;
             let b = self.comparison()?;
-            a = binary(BinOp::And, a, b, pos);
+            a = self.binary(BinOp::And, a, b, pos)?;
         }
         Ok(a)
     }
@@ -563,7 +620,7 @@ impl Parser {
             return Err(Error::new(self.pos(), "comparisons cannot be chained")
                 .with_hint("write for example a < b and b < c"));
         }
-        Ok(binary(op, a, b, pos))
+        self.binary(op, a, b, pos)
     }
 
     fn comparison_op(&mut self) -> Option<BinOp> {
@@ -588,7 +645,7 @@ impl Parser {
             };
             let pos = self.advance().pos;
             let b = self.multiplicative()?;
-            a = binary(op, a, b, pos);
+            a = self.binary(op, a, b, pos)?;
         }
     }
 
@@ -604,7 +661,7 @@ impl Parser {
             };
             let pos = self.advance().pos;
             let b = self.unary()?;
-            a = binary(op, a, b, pos);
+            a = self.binary(op, a, b, pos)?;
         }
     }
 
@@ -615,8 +672,10 @@ impl Parser {
             _ => return self.primary(),
         };
         let pos = self.advance().pos;
-        let x = self.unary()?;
-        Ok(Expr { kind: ExprKind::Unary(op, Box::new(x)), pos })
+        self.enter()?;
+        let x = self.unary();
+        self.depth -= 1;
+        Ok(Expr { kind: ExprKind::Unary(op, Box::new(x?)), pos })
     }
 
     fn primary(&mut self) -> Result<Expr, Error> {
@@ -698,7 +757,7 @@ mod tests {
     }
 
     fn expr_of(src: &str) -> Result<String, Error> {
-        let mut p = Parser { t: tokenize(src).unwrap(), i: 0 };
+        let mut p = Parser { t: tokenize(src).unwrap(), i: 0, depth: 0, ops: 0 };
         p.expr().map(|e| sx(&e))
     }
 
@@ -939,5 +998,47 @@ mod tests {
             err("if(a)\nfunction f()\nend function\nend if\n").message,
             "function and procedure cannot be defined inside another block"
         );
+    }
+
+    #[test]
+    fn statements_after_declarations_may_be_indented() {
+        let p = parse_src("variables:\n    r as int\n    r = 1\n    output(r)\n").unwrap();
+        assert_eq!(p.locals.len(), 1);
+        assert_eq!(p.body.len(), 2);
+    }
+
+    #[test]
+    fn function_returns_only_simple_types() {
+        let msg = "a function can only return int, float, string or bool";
+        assert_eq!(err("function f() as int[]\n    return 1\nend function\n").message, msg);
+        assert_eq!(err("function f() as list of int\n    return 1\nend function\n").message, msg);
+    }
+
+    #[test]
+    fn tabs_count_as_four_columns() {
+        let p = parse_src("\trepeat\n\t\tx = 1\n    while(x > 1)\n").unwrap();
+        match &p.body[0].kind {
+            StmtKind::Repeat(body, _) => assert_eq!(body.len(), 1),
+            other => panic!("{:?}", other),
+        }
+        assert_eq!(parse_src("  variables:\n\tx as int\n").unwrap().locals.len(), 1);
+    }
+
+    #[test]
+    fn nesting_and_length_have_limits() {
+        let deep = "if(true)\n".repeat(150) + &"end if\n".repeat(150);
+        assert_eq!(err(&deep).message, "the program is nested too deeply (more than 100 levels)");
+        let parens = format!("x = {}1{}\n", "(".repeat(3000), ")".repeat(3000));
+        assert_eq!(err(&parens).message, "the program is nested too deeply (more than 100 levels)");
+        let long = format!("x = {}1\n", "1 + ".repeat(5000));
+        assert_eq!(err(&long).message, "this expression is too long (more than 1000 operations)");
+    }
+
+    #[test]
+    fn huge_arrays_are_rejected() {
+        let msg = "an array can have at most 10000000 elements";
+        assert_eq!(err("variables:\n    v as int[4294967297]\n").message, msg);
+        assert_eq!(err("variables:\n    m as int[100000, 100000]\n").message, msg);
+        assert!(parse_src("variables:\n    v as bool[10000000]\n").is_ok());
     }
 }

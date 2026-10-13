@@ -70,12 +70,11 @@ fn cell(i: i64, j: i64, m: &Matrix) -> Result<usize, String> {
 fn parse_input(text: &str, ty: BaseType) -> Result<Value, String> {
     let t = text.trim();
     match ty {
-        BaseType::Int => t.parse().map(Value::Int).map_err(|_| format!("expected an integer, read \"{}\"", text)),
-        BaseType::Real => t
-            .replace(',', ".")
-            .parse()
-            .map(Value::Real)
-            .map_err(|_| format!("expected a number (like 3.5), read \"{}\"", text)),
+        BaseType::Int => t.parse().map(Value::Int).map_err(|_| format!("expected an int, read \"{}\"", text)),
+        BaseType::Real => match t.replace(',', ".").parse::<f64>() {
+            Ok(r) if r.is_finite() => Ok(Value::Real(r)),
+            _ => Err(format!("expected a float (like 3.5), read \"{}\"", text)),
+        },
         BaseType::Bool => match t.to_lowercase().as_str() {
             "true" => Ok(Value::Bool(true)),
             "false" => Ok(Value::Bool(false)),
@@ -739,10 +738,18 @@ mod tests {
         ];
         assert_eq!(run_code(code, 4, &[], "  42 \r\n3,5\nhello world\r\ntrue\n").unwrap(), "423.5hello worldtrue\n");
         let bad = vec![Read(0, BaseType::Int), RetNone];
-        assert_eq!(run_code(bad.clone(), 1, &[], "abc\n").unwrap_err().message, "expected an integer, read \"abc\"");
+        assert_eq!(run_code(bad.clone(), 1, &[], "abc\n").unwrap_err().message, "expected an int, read \"abc\"");
         assert_eq!(
             run_code(bad, 1, &[], "").unwrap_err().message,
             "the input is over: the program expected another value"
         );
+    }
+
+    #[test]
+    fn float_input_must_be_a_real_number() {
+        for text in ["nan\n", "inf\n", "1e400\n"] {
+            let e = run_code(vec![Read(0, BaseType::Real), RetNone], 1, &[], text).unwrap_err();
+            assert!(e.message.starts_with("expected a float (like 3.5)"), "{}: {}", text, e.message);
+        }
     }
 }

@@ -1,5 +1,4 @@
-//! Calls to user-defined functions and procedures: one instance (specialized
-//! copy) per combination of argument types.
+//! Calls to user-defined functions and procedures, and to built-ins.
 
 use crate::ast::{Decl, Expr, Shape};
 use crate::builtins::Builtin;
@@ -9,6 +8,15 @@ use crate::tir::*;
 
 use super::exprs::{convert, unknown};
 use super::{Checker, Instance, Var, BUILTINS};
+
+/// Adds the round/div hint when a float is given where an int is expected.
+pub(crate) fn float_hint(e: Error, expected: Type, actual: Type) -> Error {
+    if expected == Type::Base(BaseType::Int) && actual == Type::Base(BaseType::Real) {
+        e.with_hint(super::FLOAT_TO_INT_HINT)
+    } else {
+        e
+    }
+}
 
 /// The type a declaration gives to its variable.
 pub(crate) fn declared_type(d: &Decl) -> Type {
@@ -56,7 +64,7 @@ impl<'p> Checker<'p> {
                 (a, p) => a == p,
             };
             if !fits {
-                self.report(Error::new(
+                let e = Error::new(
                     t.pos,
                     format!(
                         "argument {} of \"{}\" must be {}, here it is {}",
@@ -65,7 +73,8 @@ impl<'p> Checker<'p> {
                         expected.full_name(),
                         t.ty.full_name()
                     ),
-                ));
+                );
+                self.report(float_hint(e, expected, t.ty));
             }
             out.push(if d.shape == Shape::Scalar { convert(t, Some(d.ty)) } else { t });
         }
@@ -131,10 +140,11 @@ impl<'p> Checker<'p> {
                 _ => false,
             };
             if !fits {
-                self.report(Error::new(
+                let e = Error::new(
                     t.pos,
                     format!("argument {} of \"{}\" must be {}, here it is {}", k + 1, name, p.name(), t.ty.full_name()),
-                ));
+                );
+                self.report(float_hint(e, Type::Base(p), t.ty));
             }
             out.push(convert(t, Some(p)));
         }

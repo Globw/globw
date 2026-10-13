@@ -13,6 +13,14 @@ fn main() -> ExitCode {
     };
     let source = match std::fs::read_to_string(file) {
         Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            eprintln!(
+                "cannot read \"{}\": it is not saved as UTF-8\nHint: in VS Code click the encoding in the status bar \
+                 (bottom right), choose \"Save with Encoding\" and then UTF-8",
+                file
+            );
+            return ExitCode::from(3);
+        }
         Err(e) => {
             eprintln!("cannot read \"{}\": {}", file, e);
             return ExitCode::from(3);

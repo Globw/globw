@@ -623,6 +623,6 @@ output(a, \" \", b)
         );
         let global = run_src("global variables:\n    g as int\nprocedure display()\n    output(g)\nend procedure\ndisplay()\ng = 1\n", "");
         assert!(global.starts_with("Error at line 4, column 12: variable \"g\" has no value yet"), "{}", global);
-        assert!(run_src("variables:\n    n as int\ninput(n)\n", "9,99\n").contains("expected an integer, read \"9,99\""));
+        assert!(run_src("variables:\n    n as int\ninput(n)\n", "9,99\n").contains("expected an int, read \"9,99\""));
     }
 }

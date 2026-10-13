@@ -1,4 +1,4 @@
 Error at line 3, column 12: "quantità" is an int, but here it gets a float
     quantità = 2.5
                ^^^
-Hint: use div for integer division
+Hint: use round(x) to turn a float into an int, or div to divide integers
