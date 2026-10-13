@@ -41,11 +41,13 @@ pub struct Canvas {
     pub w: usize,
     pub h: usize,
     pub pixels: Vec<u32>,
+    /// distance of the 3D surface drawn at each pixel; infinity where there is none
+    pub depth: Vec<f32>,
 }
 
 impl Canvas {
     pub fn new(w: usize, h: usize) -> Canvas {
-        Canvas { w, h, pixels: vec![0; w * h] }
+        Canvas { w, h, pixels: vec![0; w * h], depth: vec![f32::INFINITY; w * h] }
     }
 
     pub fn get(&self, x: usize, y: usize) -> u32 {
@@ -60,6 +62,7 @@ impl Canvas {
 
     pub fn clear(&mut self, c: u32) {
         self.pixels.iter_mut().for_each(|p| *p = c);
+        self.depth.iter_mut().for_each(|d| *d = f32::INFINITY);
     }
 
     pub fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, c: u32) {
