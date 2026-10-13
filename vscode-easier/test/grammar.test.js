@@ -72,6 +72,8 @@ test('functions: definition, parameters, calls', () => {
     assert.strictEqual(scope('output("hi " + name)', 'output'), 'support.function.builtin.easier');
     assert.strictEqual(scope('RECT(x, 1, 2, 3, RGB(1, 2, 3))', 'RECT'), 'support.function.builtin.easier');
     assert.strictEqual(scope('IF(KEY("A") AND MOUSE_X() > 3)', 'MOUSE_X'), 'support.function.builtin.easier');
+    assert.strictEqual(scope('TRIANGLE3D(0, 0, 0, 1, 0, 0, 0, 1, 0, c)', 'TRIANGLE3D'), 'support.function.builtin.easier');
+    assert.strictEqual(scope('x <- SIN(a) + ROUND(b)', 'SIN'), 'support.function.builtin.easier');
 });
 
 test('keywords, constants, strings and comments are not variables', () => {

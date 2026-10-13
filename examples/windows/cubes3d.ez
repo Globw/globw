@@ -1,0 +1,16 @@
+' 3D demo: a rotating cube, a sphere and a floor.
+variables:
+    angle as float
+angle <- 0
+WINDOW(800, 600, "3D")
+CAMERA(0, 2, -6, 0, -15)
+WHILE(OPEN())
+    CLEAR("#101020")
+    ROTATE(0, angle, 0)
+    CUBE(0, 0, 0, 2, "orange")
+    ROTATE(0, 0, 0)
+    SPHERE(3, 0, 1, 0.8, "cyan")
+    BOX(0, -1.5, 0, 20, 0.2, 20, "gray")
+    angle <- angle + 1
+    SHOW()
+END LOOP
