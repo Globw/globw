@@ -2,7 +2,7 @@
   "name": "easier",
   "displayName": "Easier",
   "description": "Syntax colors, run button and live errors for the Easier pseudocode language (.ez)",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "local",
   "engines": { "vscode": "^1.80.0" },
   "categories": ["Programming Languages"],
@@ -38,7 +38,13 @@
       ]
     },
     "keybindings": [
-      { "command": "easier.run", "key": "f5", "when": "editorLangId == easier" }
+      { "command": "easier.run", "key": "f5", "when": "editorLangId == easier" },
+      {
+        "command": "type",
+        "args": { "text": "<- " },
+        "key": "ctrl+[Slash] ctrl+[IntlBackslash]",
+        "when": "editorTextFocus && editorLangId == easier"
+      }
     ],
     "configuration": {
       "title": "Easier",
