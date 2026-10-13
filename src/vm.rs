@@ -76,10 +76,10 @@ fn parse_input(text: &str, ty: BaseType) -> Result<Value, String> {
             .parse()
             .map(Value::Real)
             .map_err(|_| format!("expected a number (like 3.5), read \"{}\"", text)),
-        BaseType::Bool => match t.to_uppercase().as_str() {
-            "TRUE" => Ok(Value::Bool(true)),
-            "FALSE" => Ok(Value::Bool(false)),
-            _ => Err(format!("expected TRUE or FALSE, read \"{}\"", text)),
+        BaseType::Bool => match t.to_lowercase().as_str() {
+            "true" => Ok(Value::Bool(true)),
+            "false" => Ok(Value::Bool(false)),
+            _ => Err(format!("expected true or false, read \"{}\"", text)),
         },
         BaseType::Str => Ok(Value::Str(text.into())),
     }
@@ -99,8 +99,8 @@ fn display(v: &Value) -> String {
     match v {
         Value::Int(n) => n.to_string(),
         Value::Real(r) => format_real(*r),
-        Value::Bool(true) => "TRUE".to_string(),
-        Value::Bool(false) => "FALSE".to_string(),
+        Value::Bool(true) => "true".to_string(),
+        Value::Bool(false) => "false".to_string(),
         Value::Str(s) => s.to_string(),
         Value::Null | Value::Seq(_) | Value::Matrix(_) => panic!("internal error: cannot display {:?}", v),
     }
@@ -310,7 +310,7 @@ impl<'m> Vm<'m> {
                 Op::ForInit { var, end, step, exit } => {
                     let s = int(&reg!(step));
                     if s == 0 {
-                        fail!("STEP cannot be 0");
+                        fail!("step cannot be 0");
                     }
                     let (v, e) = (int(&reg!(var)), int(&reg!(end)));
                     if (s > 0 && v > e) || (s < 0 && v < e) {
@@ -415,7 +415,7 @@ impl<'m> Vm<'m> {
                     let n = match &reg!(s) {
                         Value::Seq(q) => q.borrow().len(),
                         Value::Str(t) => t.chars().count(),
-                        other => panic!("internal error: LENGTH of {:?}", other),
+                        other => panic!("internal error: length of {:?}", other),
                     };
                     reg!(d) = Value::Int(n as i64);
                 }
@@ -599,7 +599,7 @@ mod tests {
         ];
         assert_eq!(run_code(skip, 3, &[], "").unwrap(), "");
         let zero = vec![LoadInt(0, 1), LoadInt(1, 5), LoadInt(2, 0), ForInit { var: 0, end: 1, step: 2, exit: 4 }, RetNone];
-        assert_eq!(run_code(zero, 3, &[], "").unwrap_err().message, "STEP cannot be 0");
+        assert_eq!(run_code(zero, 3, &[], "").unwrap_err().message, "step cannot be 0");
     }
 
     #[test]
@@ -611,7 +611,7 @@ mod tests {
             LoadBool(6, true), CmpB(Cmp::Eq, 7, 5, 6), Print(7), PrintLn,
             RetNone,
         ];
-        assert_eq!(run_code(code, 8, &["Grade: ", "Z"], "").unwrap(), "Grade: 7.5\nTRUE\nFALSE\nFALSE\n");
+        assert_eq!(run_code(code, 8, &["Grade: ", "Z"], "").unwrap(), "Grade: 7.5\ntrue\nfalse\nfalse\n");
     }
 
     #[test]
@@ -737,7 +737,7 @@ mod tests {
             Print(0), Print(1), Print(2), Print(3), PrintLn,
             RetNone,
         ];
-        assert_eq!(run_code(code, 4, &[], "  42 \r\n3,5\nhello world\r\ntrue\n").unwrap(), "423.5hello worldTRUE\n");
+        assert_eq!(run_code(code, 4, &[], "  42 \r\n3,5\nhello world\r\ntrue\n").unwrap(), "423.5hello worldtrue\n");
         let bad = vec![Read(0, BaseType::Int), RetNone];
         assert_eq!(run_code(bad.clone(), 1, &[], "abc\n").unwrap_err().message, "expected an integer, read \"abc\"");
         assert_eq!(

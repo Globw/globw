@@ -8,7 +8,7 @@ pub enum Tok {
     Real(f64),
     Str(String),
     Name(String),
-    // keywords (uppercase only)
+    // keywords (lowercase only)
     If,
     Else,
     EndIf,
@@ -34,7 +34,7 @@ pub enum Tok {
     True,
     False,
     // symbols
-    Arrow,
+    Assign,
     Eq,
     NotEq,
     Lt,
@@ -63,46 +63,46 @@ pub struct Token {
 /// Single-word keywords. `END ...` and `variables:` are handled by the scanner.
 pub fn keyword(word: &str) -> Option<Tok> {
     Some(match word {
-        "IF" => Tok::If,
-        "ELSE" => Tok::Else,
-        "WHILE" => Tok::While,
-        "FOR" => Tok::For,
-        "FROM" => Tok::From,
-        "TO" => Tok::To,
-        "STEP" => Tok::Step,
-        "REPEAT" => Tok::Repeat,
-        "FUNCTION" => Tok::Function,
-        "PROCEDURE" => Tok::Procedure,
-        "RETURN" => Tok::Return,
-        "GLOBAL" => Tok::Global,
-        "AND" => Tok::And,
-        "OR" => Tok::Or,
-        "NOT" => Tok::Not,
-        "DIV" => Tok::Div,
-        "MOD" => Tok::Mod,
-        "TRUE" => Tok::True,
-        "FALSE" => Tok::False,
+        "if" => Tok::If,
+        "else" => Tok::Else,
+        "while" => Tok::While,
+        "for" => Tok::For,
+        "from" => Tok::From,
+        "to" => Tok::To,
+        "step" => Tok::Step,
+        "repeat" => Tok::Repeat,
+        "function" => Tok::Function,
+        "procedure" => Tok::Procedure,
+        "return" => Tok::Return,
+        "global" => Tok::Global,
+        "and" => Tok::And,
+        "or" => Tok::Or,
+        "not" => Tok::Not,
+        "div" => Tok::Div,
+        "mod" => Tok::Mod,
+        "true" => Tok::True,
+        "false" => Tok::False,
         _ => return None,
     })
 }
 
 fn miscased(name: &str, words: &[&str]) -> Option<String> {
-    let upper = name.to_uppercase();
-    if upper != name && words.contains(&upper.as_str()) {
-        Some(upper)
+    let lower = name.to_lowercase();
+    if lower != name && words.contains(&lower.as_str()) {
+        Some(lower)
     } else {
         None
     }
 }
 
-/// `if` → `IF`: a keyword that starts a statement, written in the wrong case.
+/// `IF` → `if`: a keyword that starts a statement, written in the wrong case.
 pub fn miscased_statement_keyword(name: &str) -> Option<String> {
-    miscased(name, &["IF", "ELSE", "WHILE", "FOR", "REPEAT", "END", "FUNCTION", "PROCEDURE", "RETURN", "GLOBAL"])
+    miscased(name, &["if", "else", "while", "for", "repeat", "end", "function", "procedure", "return", "global"])
 }
 
-/// `true` → `TRUE`: a keyword used inside expressions, written in the wrong case.
+/// `TRUE` → `true`: a keyword used inside expressions, written in the wrong case.
 pub fn miscased_value_keyword(name: &str) -> Option<String> {
-    miscased(name, &["TRUE", "FALSE", "NOT", "DIV", "MOD"])
+    miscased(name, &["true", "false", "not", "div", "mod"])
 }
 
 pub fn tokenize(source: &str) -> Result<Vec<Token>, Error> {
@@ -259,19 +259,19 @@ impl Scanner {
     fn word(&mut self) -> Result<(), Error> {
         let (line, col) = (self.line, self.col);
         let w = self.read_word();
-        if w == "END" {
+        if w == "end" {
             self.skip_blanks();
             let tok = match self.read_word().as_str() {
-                "IF" => Tok::EndIf,
-                "LOOP" => Tok::EndLoop,
-                "FUNCTION" => Tok::EndFunction,
-                "PROCEDURE" => Tok::EndProcedure,
+                "if" => Tok::EndIf,
+                "loop" => Tok::EndLoop,
+                "function" => Tok::EndFunction,
+                "procedure" => Tok::EndProcedure,
                 _ => {
                     return Err(Error::new(
                         Pos::new(line, col, 3),
-                        "END must be followed by IF, LOOP, FUNCTION or PROCEDURE",
+                        "end must be followed by if, loop, function or procedure",
                     )
-                    .with_hint("for example: END IF or END LOOP"))
+                    .with_hint("for example: end if or end loop"))
                 }
             };
             let len = self.col - col;
@@ -300,9 +300,9 @@ impl Scanner {
         let c = self.bump();
         let next = self.peek(0);
         let (tok, len) = match (c, next) {
-            ('<', Some('-')) => {
+            ('=', Some('=')) => {
                 self.bump();
-                (Tok::Arrow, 2)
+                (Tok::Eq, 2)
             }
             ('<', Some('=')) => {
                 self.bump();
@@ -320,10 +320,9 @@ impl Scanner {
                 self.bump();
                 (Tok::NotEq, 2)
             }
-            ('←', _) => (Tok::Arrow, 1),
             ('<', _) => (Tok::Lt, 1),
             ('>', _) => (Tok::Gt, 1),
-            ('=', _) => (Tok::Eq, 1),
+            ('=', _) => (Tok::Assign, 1),
             ('+', _) => (Tok::Plus, 1),
             ('-', _) => (Tok::Minus, 1),
             ('*', _) => (Tok::Star, 1),
@@ -355,26 +354,26 @@ mod tests {
 
     #[test]
     fn keywords_and_names() {
-        assert_eq!(toks("IF(x)\nEND IF"), vec![If, LParen, name("x"), RParen, Newline, EndIf, Newline, Eof]);
+        assert_eq!(toks("if(x)\nend if"), vec![If, LParen, name("x"), RParen, Newline, EndIf, Newline, Eof]);
     }
 
     #[test]
     fn all_end_forms() {
         assert_eq!(
-            toks("END LOOP\nEND FUNCTION\nEND   PROCEDURE"),
+            toks("end loop\nend function\nend   procedure"),
             vec![EndLoop, Newline, EndFunction, Newline, EndProcedure, Newline, Eof]
         );
     }
 
     #[test]
-    fn lowercase_words_are_names() {
-        assert_eq!(toks("if while")[..2], [name("if"), name("while")]);
+    fn uppercase_words_are_names() {
+        assert_eq!(toks("IF WHILE")[..2], [name("IF"), name("WHILE")]);
     }
 
     #[test]
     fn variables_declaration() {
         assert_eq!(toks("variables: a, b")[..4], [Variables, name("a"), Comma, name("b")]);
-        assert_eq!(toks("variables <- 1")[0], name("variables"));
+        assert_eq!(toks("variables = 1")[0], name("variables"));
     }
 
     #[test]
@@ -385,8 +384,8 @@ mod tests {
     #[test]
     fn operators() {
         assert_eq!(
-            toks("<- ← <= >= != < > = + - * / ( ) [ ] ,")[..17],
-            [Arrow, Arrow, LtEq, GtEq, NotEq, Lt, Gt, Eq, Plus, Minus, Star, Slash, LParen, RParen, LBracket, RBracket, Comma]
+            toks("= = <= >= != < > == + - * / ( ) [ ] ,")[..17],
+            [Assign, Assign, LtEq, GtEq, NotEq, Lt, Gt, Eq, Plus, Minus, Star, Slash, LParen, RParen, LBracket, RBracket, Comma]
         );
     }
 
@@ -403,22 +402,22 @@ mod tests {
     #[test]
     fn crlf_and_bom_are_accepted() {
         assert_eq!(
-            toks("\u{feff}a <- 1\r\nb\r\n"),
-            vec![name("a"), Arrow, Int(1), Newline, name("b"), Newline, Eof]
+            toks("\u{feff}a = 1\r\nb\r\n"),
+            vec![name("a"), Assign, Int(1), Newline, name("b"), Newline, Eof]
         );
     }
 
     #[test]
     fn accented_identifiers_and_strings() {
-        assert_eq!(toks("città <- \"perché\"")[..3], [name("città"), Arrow, Str("perché".to_string())]);
-        assert_eq!(tokenize("città <- 1").unwrap()[1].pos, Pos::new(1, 7, 2));
+        assert_eq!(toks("città = \"perché\"")[..3], [name("città"), Assign, Str("perché".to_string())]);
+        assert_eq!(tokenize("città = 1").unwrap()[1].pos, Pos::new(1, 7, 1));
     }
 
     #[test]
     fn positions() {
-        let t = tokenize("x <- 1\n  y").unwrap();
+        let t = tokenize("x = 1\n  y").unwrap();
         assert_eq!(t[0].pos, Pos::new(1, 1, 1));
-        assert_eq!(t[1].pos, Pos::new(1, 3, 2));
+        assert_eq!(t[1].pos, Pos::new(1, 3, 1));
         assert_eq!(t[4].pos, Pos::new(2, 3, 1));
     }
 
@@ -426,7 +425,7 @@ mod tests {
     fn errors() {
         let msg = |s: &str| tokenize(s).unwrap_err().message;
         assert_eq!(msg("\"abc"), "unterminated string");
-        assert_eq!(msg("END x"), "END must be followed by IF, LOOP, FUNCTION or PROCEDURE");
+        assert_eq!(msg("end x"), "end must be followed by if, loop, function or procedure");
         assert_eq!(msg("a # b"), "invalid character '#'");
         assert_eq!(msg("a <> b"), "invalid operator <>");
         assert_eq!(msg("99999999999999999999"), "integer too large");
@@ -435,11 +434,11 @@ mod tests {
 
     #[test]
     fn miscased_keywords() {
-        assert_eq!(miscased_statement_keyword("if"), Some("IF".to_string()));
-        assert_eq!(miscased_statement_keyword("End"), Some("END".to_string()));
-        assert_eq!(miscased_statement_keyword("IF"), None);
+        assert_eq!(miscased_statement_keyword("IF"), Some("if".to_string()));
+        assert_eq!(miscased_statement_keyword("End"), Some("end".to_string()));
+        assert_eq!(miscased_statement_keyword("if"), None);
         assert_eq!(miscased_statement_keyword("x"), None);
-        assert_eq!(miscased_value_keyword("true"), Some("TRUE".to_string()));
+        assert_eq!(miscased_value_keyword("TRUE"), Some("true".to_string()));
         assert_eq!(miscased_value_keyword("a"), None);
     }
 }

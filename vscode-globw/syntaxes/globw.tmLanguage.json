@@ -1,0 +1,138 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Globw",
+  "scopeName": "source.globw",
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#definition"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#calls"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#variables"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.quote.globw",
+      "match": "'.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.globw",
+      "begin": "\"",
+      "end": "\"|$",
+      "patterns": [
+        {
+          "name": "constant.character.escape.globw",
+          "match": "\\\\[n\"\\\\]"
+        }
+      ]
+    },
+    "definition": {
+      "match": "\\b(function|procedure)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
+      "captures": {
+        "1": {
+          "name": "storage.type.function.globw"
+        },
+        "2": {
+          "name": "entity.name.function.globw"
+        }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.globw",
+          "match": "\\b(if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure)\\b"
+        },
+        {
+          "name": "storage.type.function.globw",
+          "match": "\\b(function|procedure)\\b"
+        },
+        {
+          "name": "storage.modifier.globw",
+          "match": "\\bglobal\\b"
+        },
+        {
+          "name": "keyword.other.declaration.globw",
+          "match": "\\bvariables\\s*:"
+        },
+        {
+          "name": "keyword.operator.word.globw",
+          "match": "\\b(and|or|not|div|mod)\\b"
+        },
+        {
+          "name": "constant.language.boolean.globw",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "support.function.builtin.globw",
+          "match": "\\b(input|output|length|append|remove|window|open|show|clear|rect|circle|line|text|key|mouse_x|mouse_y|click|message|confirm|ask|rgb|random|time|camera|rotate|cube|box|sphere|triangle3d|sin|cos|sqrt|round)(?=\\s*\\()"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "keyword.other.as.globw",
+          "match": "\\bas\\b"
+        },
+        {
+          "name": "storage.type.globw",
+          "match": "\\blist\\s+of\\b"
+        },
+        {
+          "name": "storage.type.primitive.globw",
+          "match": "\\b(int|float|string|bool)\\b"
+        }
+      ]
+    },
+    "calls": {
+      "name": "entity.name.function.globw",
+      "match": "(?<![\\p{L}\\p{N}_])[\\p{L}_][\\p{L}\\p{N}_]*(?=\\s*\\()"
+    },
+    "numbers": {
+      "name": "constant.numeric.globw",
+      "match": "\\b\\d+(\\.\\d+)?\\b"
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.globw",
+          "match": "=(?!=)"
+        },
+        {
+          "name": "keyword.operator.comparison.globw",
+          "match": "<=|>=|!=|==|<|>"
+        },
+        {
+          "name": "keyword.operator.arithmetic.globw",
+          "match": "[+*/-]"
+        }
+      ]
+    },
+    "variables": {
+      "name": "variable.other.globw",
+      "match": "(?<![\\p{L}\\p{N}_])[\\p{L}_][\\p{L}\\p{N}_]*"
+    }
+  }
+}

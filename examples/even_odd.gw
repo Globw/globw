@@ -1,10 +1,10 @@
 variables:
     n, i as int
 input(n)
-FOR(i FROM 1 TO n)
-    IF(i MOD 2 = 0)
+for(i from 1 to n)
+    if(i mod 2 == 0)
         output(i, " is even")
-    ELSE
+    else
         output(i, " is odd")
-    END IF
-END LOOP
+    end if
+end loop

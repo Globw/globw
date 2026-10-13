@@ -1,0 +1,26 @@
+' Graphics demo: shapes, text, a moving ball and the mouse.
+' Close the window to end the program.
+variables:
+    x, dx as float
+    i as int
+x = 50
+dx = 3
+window(640, 400, "Easier demo")
+while(open())
+    clear("#202040")
+    for(i from 0 to 9)
+        rect(20 + i * 60, 300, 50, 80, rgb(i * 25, 120, 255 - i * 25))
+    end loop
+    line(0, 290, 640, 290, "white")
+    circle(x, 150, 30, "orange")
+    x = x + dx
+    if(x > 610 or x < 30)
+        dx = -dx
+    end if
+    text(20, 20, "Ciao da Easier! perché no?", "yellow")
+    text(20, 50, "Mouse: " + mouse_x() + ", " + mouse_y(), "white")
+    if(key("SPACE"))
+        text(20, 80, "SPACE premuto", "pink")
+    end if
+    show()
+end loop

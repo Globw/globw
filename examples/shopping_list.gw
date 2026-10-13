@@ -1,0 +1,11 @@
+variables:
+    items as list of string
+    i as int
+append(items, "bread")
+append(items, "milk")
+append(items, "eggs")
+remove(items, 2)
+output("Items: ", length(items))
+for(i from 1 to length(items))
+    output("- ", items[i])
+end loop

@@ -1,0 +1,16 @@
+' 3D demo: a rotating cube, a sphere and a floor.
+variables:
+    angle as float
+angle = 0
+window(800, 600, "3D")
+camera(0, 2, -6, 0, -15)
+while(open())
+    clear("#101020")
+    rotate(0, angle, 0)
+    cube(0, 0, 0, 2, "orange")
+    rotate(0, 0, 0)
+    sphere(3, 0, 1, 0.8, "cyan")
+    box(0, -1.5, 0, 20, 0.2, 20, "gray")
+    angle = angle + 1
+    show()
+end loop

@@ -1,4 +1,4 @@
-//! Easier: an interpreter for school-style pseudocode.
+//! Globw: an interpreter for school-style pseudocode.
 
 pub mod ast;
 pub mod builtins;

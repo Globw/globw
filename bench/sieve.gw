@@ -1,0 +1,24 @@
+variables:
+    prime as bool[10000000]
+    i, j, n, count as int
+n = 10000000
+for(i from 2 to n)
+    prime[i] = true
+end loop
+prime[1] = false
+for(i from 2 to n)
+    if(prime[i])
+        j = i * i
+        while(j <= n)
+            prime[j] = false
+            j = j + i
+        end loop
+    end if
+end loop
+count = 0
+for(i from 1 to n)
+    if(prime[i])
+        count = count + 1
+    end if
+end loop
+output(count)

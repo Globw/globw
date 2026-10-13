@@ -1,0 +1,11 @@
+variables:
+    n as int
+function factorial(k as int) as int
+    if(k <= 1)
+        return 1
+    end if
+    return k * factorial(k - 1)
+end function
+for(n from 1 to 5)
+    output(n, "! = ", factorial(n))
+end loop

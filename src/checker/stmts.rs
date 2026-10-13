@@ -81,7 +81,7 @@ impl<'p> Checker<'p> {
                 self.assigned[i] = true; // report once
                 self.report_structural(
                     Error::new(pos, format!("variable \"{}\" might not have a value yet", name))
-                        .with_hint("give it a value (with <- or input) before using it"),
+                        .with_hint("give it a value (with = or input) before using it"),
                 );
             }
         }
@@ -123,7 +123,7 @@ impl<'p> Checker<'p> {
             }
             (Shape::Scalar, _) => Error::new(t.pos, format!("\"{}\" is not an array: [ ] cannot be used on it", t.name)),
             (_, 0) => Error::new(t.pos, "a whole array or list cannot be assigned at once")
-                .with_hint(format!("assign one element at a time, like {}[i] <- ...", t.name)),
+                .with_hint(format!("assign one element at a time, like {}[i] = ...", t.name)),
             (Shape::Matrix(..), _) => {
                 Error::new(t.pos, format!("\"{}\" is a matrix: it needs 2 indices, like {}[i, j]", t.name, t.name))
             }
@@ -143,7 +143,7 @@ impl<'p> Checker<'p> {
             }
             other => self.report(
                 Error::new(v.pos, format!("cannot assign {} to a variable", other.name()))
-                    .with_hint("assign one element at a time, like v[i] <- ..."),
+                    .with_hint("assign one element at a time, like v[i] = ..."),
             ),
         }
         self.mark_assigned(&t);
@@ -164,15 +164,15 @@ impl<'p> Checker<'p> {
     ) -> Option<TStmt> {
         let from = {
             let e = self.expr(from);
-            self.int_expr(e, "the start of FOR")
+            self.int_expr(e, "the start of for")
         };
         let to = {
             let e = self.expr(to);
-            self.int_expr(e, "the end of FOR")
+            self.int_expr(e, "the end of for")
         };
         let step = step.map(|s| {
             let e = self.expr(s);
-            self.int_expr(e, "the STEP")
+            self.int_expr(e, "the step")
         });
         let Some(p) = self.lookup(var) else {
             let err = self.undeclared(var, var_pos);
@@ -180,7 +180,7 @@ impl<'p> Checker<'p> {
             return None;
         };
         if self.var(p).shape != Shape::Scalar {
-            self.report(Error::new(var_pos, "the FOR variable must be a simple variable"));
+            self.report(Error::new(var_pos, "the for variable must be a simple variable"));
             return None;
         }
         if self.var(p).ty.is_none() {
@@ -190,7 +190,7 @@ impl<'p> Checker<'p> {
             if t != BaseType::Int {
                 self.report(Error::new(
                     var_pos,
-                    format!("the FOR variable must be an int, \"{}\" is {}", var, t.name()),
+                    format!("the for variable must be an int, \"{}\" is {}", var, t.name()),
                 ));
             }
         }
@@ -212,7 +212,7 @@ impl<'p> Checker<'p> {
                     if !matches!(t.ty, Type::Base(_) | Type::Unknown) {
                         self.report(
                             Error::new(t.pos, "output prints only simple values")
-                                .with_hint("to print an array use a FOR loop"),
+                                .with_hint("to print an array use a for loop"),
                         );
                     }
                     out.push(t);
@@ -244,9 +244,9 @@ impl<'p> Checker<'p> {
                 }
                 Some(TStmt::Input(targets))
             }
-            "APPEND" | "REMOVE" => {
+            "append" | "remove" => {
                 if args.len() != 2 {
-                    let what = if name == "APPEND" { "the list and the value" } else { "the list and the position" };
+                    let what = if name == "append" { "the list and the value" } else { "the list and the position" };
                     self.report_structural(Error::new(pos, format!("{} takes 2 values: {}", name, what)));
                     return None;
                 }
@@ -258,7 +258,7 @@ impl<'p> Checker<'p> {
                     }
                     return None;
                 };
-                if name == "REMOVE" {
+                if name == "remove" {
                     let i = self.int_expr(second, "the position");
                     return Some(TStmt::Remove(list, i, pos));
                 }
@@ -281,10 +281,10 @@ impl<'p> Checker<'p> {
                 };
                 Some(TStmt::Append(list, convert(second, elem)))
             }
-            "LENGTH" => {
+            "length" => {
                 self.report_structural(Error::new(
                     pos,
-                    "LENGTH returns a value: use it in an expression, like n <- LENGTH(v)",
+                    "length returns a value: use it in an expression, like n = length(v)",
                 ));
                 None
             }
@@ -312,17 +312,17 @@ impl<'p> Checker<'p> {
         let is_function = self.instances[cur].sub.map(|s| prog.subprograms[s].is_function);
         let out = match (is_function, value) {
             (None, _) => {
-                self.report_structural(Error::new(pos, "RETURN can only be used inside a FUNCTION or PROCEDURE"));
+                self.report_structural(Error::new(pos, "return can only be used inside a function or procedure"));
                 None
             }
             (Some(false), Some(_)) => {
                 self.report_structural(
-                    Error::new(pos, "a PROCEDURE does not return values").with_hint("use FUNCTION, or write just RETURN"),
+                    Error::new(pos, "a procedure does not return values").with_hint("use function, or write just return"),
                 );
                 None
             }
             (Some(true), None) => {
-                self.report_structural(Error::new(pos, "in a FUNCTION, RETURN needs a value"));
+                self.report_structural(Error::new(pos, "in a function, return needs a value"));
                 None
             }
             (Some(false), None) => Some(TStmt::Return(None, pos)),
@@ -333,7 +333,7 @@ impl<'p> Checker<'p> {
                     Type::Unknown => {}
                     other => self.report(Error::new(
                         v.pos,
-                        format!("a FUNCTION can only return a simple value, not {}", other.name()),
+                        format!("a function can only return a simple value, not {}", other.name()),
                     )),
                 }
                 let ret = self.instances[cur].ret;

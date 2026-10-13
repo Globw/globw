@@ -51,16 +51,16 @@ fn symbol(op: BinOp) -> &'static str {
         BinOp::Sub => "-",
         BinOp::Mul => "*",
         BinOp::Div => "/",
-        BinOp::IntDiv => "DIV",
-        BinOp::Mod => "MOD",
-        BinOp::Eq => "=",
+        BinOp::IntDiv => "div",
+        BinOp::Mod => "mod",
+        BinOp::Eq => "==",
         BinOp::NotEq => "!=",
         BinOp::Lt => "<",
         BinOp::LtEq => "<=",
         BinOp::Gt => ">",
         BinOp::GtEq => ">=",
-        BinOp::And => "AND",
-        BinOp::Or => "OR",
+        BinOp::And => "and",
+        BinOp::Or => "or",
     }
 }
 
@@ -100,7 +100,7 @@ impl<'p> Checker<'p> {
     pub(crate) fn undeclared(&self, name: &str, pos: Pos) -> Error {
         let e = Error::new(pos, format!("variable \"{}\" is not declared", name));
         if let Some(k) = miscased_value_keyword(name) {
-            return e.with_hint(format!("keywords are written in UPPERCASE: write {}", k));
+            return e.with_hint(format!("keywords are written in lowercase: write {}", k));
         }
         if self.sub_by_name.contains_key(name) {
             return e.with_hint(format!("\"{}\" is a function: call it with {}(...)", name, name));
@@ -108,7 +108,7 @@ impl<'p> Checker<'p> {
         let in_sub = self.instances[self.current].sub.is_some();
         if in_sub && self.prog.locals.iter().any(|d| d.name == name) {
             return e.with_hint(format!(
-                "\"{}\" belongs to the main program: to use it here declare it with GLOBAL variables:",
+                "\"{}\" belongs to the main program: to use it here declare it with global variables:",
                 name
             ));
         }
@@ -133,8 +133,8 @@ impl<'p> Checker<'p> {
         self.hint(&t, BaseType::Bool);
         if t.ty != Type::Base(BaseType::Bool) && t.ty != Type::Unknown {
             self.report(
-                Error::new(t.pos, format!("the condition must be TRUE or FALSE, here it is {}", t.ty.name()))
-                    .with_hint("to compare values use =, !=, <, >, <= or >="),
+                Error::new(t.pos, format!("the condition must be true or false, here it is {}", t.ty.name()))
+                    .with_hint("to compare values use ==, !=, <, >, <= or >="),
             );
         }
         t
@@ -251,7 +251,7 @@ impl<'p> Checker<'p> {
                 if ta == Int && tb == Int {
                     typed(op, Int, a, b, Int)
                 } else {
-                    self.report(Error::new(pos, "DIV and MOD only work with integers"));
+                    self.report(Error::new(pos, "div and mod only work with integers"));
                     unknown(pos)
                 }
             }
@@ -270,7 +270,7 @@ impl<'p> Checker<'p> {
                 if ta == Bool && tb == Bool {
                     typed(op, Bool, a, b, Bool)
                 } else {
-                    self.report(Error::new(pos, format!("{} needs conditions (TRUE/FALSE) on both sides", symbol(op))));
+                    self.report(Error::new(pos, format!("{} needs conditions (true/false) on both sides", symbol(op))));
                     unknown(pos)
                 }
             }
@@ -305,7 +305,7 @@ impl<'p> Checker<'p> {
                     Type::Base(BaseType::Bool) => base(TExprKind::Not(Box::new(x)), BaseType::Bool, pos),
                     Type::Unknown => unknown(pos),
                     other => {
-                        self.report(Error::new(pos, format!("NOT needs a condition (TRUE/FALSE), here it is {}", other.name())));
+                        self.report(Error::new(pos, format!("not needs a condition (true/false), here it is {}", other.name())));
                         unknown(pos)
                     }
                 }
@@ -315,9 +315,9 @@ impl<'p> Checker<'p> {
 
     fn call_expr(&mut self, name: &str, args: &[Expr], pos: Pos) -> TExpr {
         match name {
-            "LENGTH" => {
+            "length" => {
                 if args.len() != 1 {
-                    self.report_structural(Error::new(pos, format!("LENGTH takes 1 value, here it gets {}", args.len())));
+                    self.report_structural(Error::new(pos, format!("length takes 1 value, here it gets {}", args.len())));
                     return unknown(pos);
                 }
                 let x = self.expr(&args[0]);
@@ -331,7 +331,7 @@ impl<'p> Checker<'p> {
                     }
                     Type::Matrix(_) => {
                         self.report(
-                            Error::new(pos, "LENGTH cannot be used on a matrix")
+                            Error::new(pos, "length cannot be used on a matrix")
                                 .with_hint("use the sizes written in \"variables:\""),
                         );
                         unknown(pos)
@@ -339,13 +339,13 @@ impl<'p> Checker<'p> {
                     other => {
                         self.report(Error::new(
                             pos,
-                            format!("LENGTH works with arrays, lists and strings, not with {}", other.name()),
+                            format!("length works with arrays, lists and strings, not with {}", other.name()),
                         ));
                         unknown(pos)
                     }
                 }
             }
-            "input" | "output" | "APPEND" | "REMOVE" => {
+            "input" | "output" | "append" | "remove" => {
                 self.report_structural(Error::new(
                     pos,
                     format!("{} does not return a value: use it as a statement on its own line", name),

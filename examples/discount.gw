@@ -1,0 +1,16 @@
+' Total with a discount that grows with the quantity
+variables:
+    prezzo, totale, sconto as float
+    quantità as int
+input(prezzo, quantità)
+totale = prezzo*quantità
+
+if(quantità>10)
+    sconto = totale*20/100
+else if(quantità>5)
+    sconto = totale*10/100
+else
+    sconto = 0
+end if
+totale = totale-sconto
+output(totale)

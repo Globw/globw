@@ -1,0 +1,16 @@
+variables:
+    t as int[3, 3]
+    r, c as int
+    row as string
+for(r from 1 to 3)
+    for(c from 1 to 3)
+        t[r, c] = r * c
+    end loop
+end loop
+for(r from 1 to 3)
+    row = ""
+    for(c from 1 to 3)
+        row = row + t[r, c] + " "
+    end loop
+    output(row)
+end loop

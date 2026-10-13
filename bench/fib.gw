@@ -1,0 +1,10 @@
+variables:
+    r as int
+function fib(n as int) as int
+    if(n < 2)
+        return n
+    end if
+    return fib(n - 1) + fib(n - 2)
+end function
+r = fib(30)
+output(r)

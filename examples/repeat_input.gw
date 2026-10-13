@@ -1,7 +1,7 @@
 variables:
     n as int
-REPEAT
+repeat
     output("Enter a positive number:")
     input(n)
-WHILE(n <= 0)
+while(n <= 0)
 output("Thanks, ", n)

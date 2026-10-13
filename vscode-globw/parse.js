@@ -1,4 +1,4 @@
-// Reads the errors printed by `easier --check` into plain objects.
+// Reads the errors printed by `globw --check` into plain objects.
 // Lines and columns are 0-based, ready for a VS Code Range.
 
 const HEADER = /^Error at line (\d+)(?:, column (\d+))?: (.*)$/;

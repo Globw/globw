@@ -1,4 +1,4 @@
 Error at line 4, column 1: variable "count" is not declared
-    count <- total + 1
+    count = total + 1
     ^^^^^
 Hint: add it to "variables:" at the top of the program

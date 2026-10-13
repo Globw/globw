@@ -1,0 +1,76 @@
+{
+  "name": "globw",
+  "displayName": "Globw",
+  "description": "Syntax colors, run button and live errors for the Globw language (.gw)",
+  "version": "1.0.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:globw"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "globw",
+        "aliases": [
+          "Globw",
+          "globw"
+        ],
+        "extensions": [
+          ".gw"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "globw",
+        "scopeName": "source.globw",
+        "path": "./syntaxes/globw.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "globw.run",
+        "title": "Run Globw program",
+        "category": "Globw",
+        "icon": "$(play)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "globw.run",
+          "when": "editorLangId == globw",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "globw.run",
+        "key": "f5",
+        "when": "editorLangId == globw"
+      }
+    ],
+    "configuration": {
+      "title": "Globw",
+      "properties": {
+        "globw.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to globw.exe. Empty: use the build in C:\\Users\\Utente\\easier, or `globw` from PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test test/parse.test.js test/grammar.test.js"
+  }
+}

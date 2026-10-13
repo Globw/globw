@@ -14,7 +14,7 @@ use crate::ast::{Decl, Program, Shape, Stmt, StmtKind};
 use crate::errors::{Error, Pos};
 use crate::tir::*;
 
-pub const BUILTINS: [&str; 5] = ["input", "output", "LENGTH", "APPEND", "REMOVE"];
+pub const BUILTINS: [&str; 5] = ["input", "output", "length", "append", "remove"];
 
 /// Names of all built-ins, which cannot be used for variables or functions.
 pub(crate) fn is_builtin_name(name: &str) -> bool {
@@ -193,7 +193,7 @@ impl<'p> Checker<'p> {
             } else if functions.contains(name) {
                 format!("\"{}\" is already the name of a function", name)
             } else if globals.iter().any(|(g, _)| *g == name) {
-                format!("\"{}\" is already declared as GLOBAL", name)
+                format!("\"{}\" is already declared as global", name)
             } else {
                 continue;
             };
@@ -245,8 +245,8 @@ impl<'p> Checker<'p> {
             let sub = &prog.subprograms[s];
             if sub.is_function && !always_returns(&sub.body) {
                 self.report_structural(
-                    Error::new(sub.pos, format!("function \"{}\" can reach END FUNCTION without RETURN", sub.name))
-                        .with_hint("add RETURN value at the end"),
+                    Error::new(sub.pos, format!("function \"{}\" can reach end function without return", sub.name))
+                        .with_hint("add return value at the end"),
                 );
             }
         }
@@ -393,7 +393,7 @@ fn conflict_error(v: &Var, declared: BaseType, new: BaseType, pos: Pos) -> Error
     };
     let e = Error::new(pos, message);
     if declared == BaseType::Int && new == BaseType::Real {
-        e.with_hint("use DIV for integer division")
+        e.with_hint("use div for integer division")
     } else {
         e
     }

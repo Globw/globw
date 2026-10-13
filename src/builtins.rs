@@ -53,34 +53,34 @@ const ALL: [Builtin; 28] = [
 impl Builtin {
     pub fn name(self) -> &'static str {
         match self {
-            Window => "WINDOW",
-            Open => "OPEN",
-            Show => "SHOW",
-            Clear => "CLEAR",
-            Rect => "RECT",
-            Circle => "CIRCLE",
-            Line => "LINE",
-            Text => "TEXT",
-            Key => "KEY",
-            MouseX => "MOUSE_X",
-            MouseY => "MOUSE_Y",
-            Click => "CLICK",
-            Message => "MESSAGE",
-            Confirm => "CONFIRM",
-            Ask => "ASK",
-            Rgb => "RGB",
-            Random => "RANDOM",
-            Time => "TIME",
-            Camera => "CAMERA",
-            Rotate => "ROTATE",
-            Cube => "CUBE",
-            Box3 => "BOX",
-            Sphere => "SPHERE",
-            Triangle3 => "TRIANGLE3D",
-            Sin => "SIN",
-            Cos => "COS",
-            Sqrt => "SQRT",
-            Round => "ROUND",
+            Window => "window",
+            Open => "open",
+            Show => "show",
+            Clear => "clear",
+            Rect => "rect",
+            Circle => "circle",
+            Line => "line",
+            Text => "text",
+            Key => "key",
+            MouseX => "mouse_x",
+            MouseY => "mouse_y",
+            Click => "click",
+            Message => "message",
+            Confirm => "confirm",
+            Ask => "ask",
+            Rgb => "rgb",
+            Random => "random",
+            Time => "time",
+            Camera => "camera",
+            Rotate => "rotate",
+            Cube => "cube",
+            Box3 => "box",
+            Sphere => "sphere",
+            Triangle3 => "triangle3d",
+            Sin => "sin",
+            Cos => "cos",
+            Sqrt => "sqrt",
+            Round => "round",
         }
     }
 
@@ -130,7 +130,7 @@ pub fn lookup(name: &str) -> Option<Builtin> {
     ALL.iter().copied().find(|b| b.name() == name)
 }
 
-const NO_WINDOW: &str = "there is no window: call WINDOW(...) first";
+const NO_WINDOW: &str = "there is no window: call window(...) first";
 
 fn int(v: &Value) -> i64 {
     match v {
@@ -192,7 +192,7 @@ impl Env {
             Random => {
                 let (lo, hi) = (int(&args[0]), int(&args[1]));
                 if lo > hi {
-                    return Err(format!("RANDOM: the minimum ({}) is greater than the maximum ({})", lo, hi));
+                    return Err(format!("random: the minimum ({}) is greater than the maximum ({})", lo, hi));
                 }
                 let span = (hi as i128 - lo as i128 + 1) as u128;
                 Value::Int((lo as i128 + (self.next_random() as u128 % span) as i128) as i64)
@@ -203,7 +203,7 @@ impl Env {
             Sqrt => {
                 let x = real(&args[0]);
                 if x < 0.0 {
-                    return Err(format!("SQRT of a negative number ({})", crate::vm::format_real(x)));
+                    return Err(format!("sqrt of a negative number ({})", crate::vm::format_real(x)));
                 }
                 Value::Real(x.sqrt())
             }

@@ -72,12 +72,12 @@ mod tests {
 
     #[test]
     fn renders_line_caret_and_hint() {
-        let src = "variables: a\n    total <- 0\n";
+        let src = "variables: a\n    total = 0\n";
         let e = Error::new(Pos::new(2, 5, 5), "variable \"total\" is not declared")
             .with_hint("add it to \"variables:\" at the top of the program");
         let expected = concat!(
             "Error at line 2, column 5: variable \"total\" is not declared\n",
-            "        total <- 0\n",
+            "        total = 0\n",
             "        ^^^^^\n",
             "Hint: add it to \"variables:\" at the top of the program\n",
         );

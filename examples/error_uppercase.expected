@@ -1,0 +1,4 @@
+Error at line 4, column 1: "IF" is not a keyword
+    IF(x > 0)
+    ^^
+Hint: keywords are written in lowercase: write if

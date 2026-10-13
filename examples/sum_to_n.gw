@@ -2,8 +2,8 @@
 variables:
     n, i, total as int
 input(n)
-total <- 0
-FOR(i FROM 1 TO n)
-    total <- total + i
-END LOOP
+total = 0
+for(i from 1 to n)
+    total = total + i
+end loop
 output("The sum is ", total)

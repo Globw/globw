@@ -1,0 +1,10 @@
+global variables:
+    count as int
+procedure tick()
+    count = count + 1
+end procedure
+count = 0
+tick()
+tick()
+tick()
+output("count = ", count)

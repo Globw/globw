@@ -1,0 +1,6 @@
+variables:
+    v as int[3]
+    i as int
+for(i from 1 to 4)
+    v[i] = i
+end loop

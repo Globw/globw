@@ -6,11 +6,11 @@ use std::path::Path;
 fn run_example(path: &Path) -> String {
     let src = fs::read_to_string(path).unwrap();
     let input = fs::read_to_string(path.with_extension("input")).unwrap_or_default();
-    match easier::compile(&src) {
+    match globw::compile(&src) {
         Err(errors) => errors.iter().map(|e| e.render(&src)).collect::<Vec<_>>().join("\n"),
         Ok(module) => {
             let mut out = Vec::new();
-            let result = easier::run(&module, &mut input.as_bytes(), &mut out);
+            let result = globw::run(&module, &mut input.as_bytes(), &mut out);
             let mut text = String::from_utf8(out).unwrap();
             if let Err(e) = result {
                 text.push_str(&e.render(&src));
@@ -26,7 +26,7 @@ fn all_examples() {
     let mut count = 0;
     for entry in fs::read_dir("examples").unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().map_or(true, |e| e != "ez") {
+        if path.extension().map_or(true, |e| e != "gw") {
             continue;
         }
         count += 1;

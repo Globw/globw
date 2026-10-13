@@ -41,7 +41,7 @@ impl<'p> Checker<'p> {
             return unknown(pos);
         }
         if in_expr && !sub.is_function {
-            self.report_structural(Error::new(pos, format!("PROCEDURE \"{}\" does not return a value", name)));
+            self.report_structural(Error::new(pos, format!("procedure \"{}\" does not return a value", name)));
             return unknown(pos);
         }
         let targs: Vec<TExpr> = args.iter().map(|a| self.expr(a)).collect();
@@ -109,7 +109,7 @@ impl<'p> Checker<'p> {
         if !in_expr && b.ret().is_some() {
             self.report_structural(Error::new(
                 pos,
-                format!("{} returns a value: use it in an expression, like v <- {}(...)", name, name),
+                format!("{} returns a value: use it in an expression, like v = {}(...)", name, name),
             ));
             return unknown(pos);
         }
@@ -144,12 +144,12 @@ impl<'p> Checker<'p> {
     pub(crate) fn unknown_function(&self, name: &str, pos: Pos) -> Error {
         let e = Error::new(pos, format!("function \"{}\" does not exist", name));
         if let Some(k) = miscased_statement_keyword(name) {
-            return e.with_hint(format!("keywords are written in UPPERCASE: write {}", k));
+            return e.with_hint(format!("keywords are written in lowercase: write {}", k));
         }
         if let Some(b) = BUILTINS.iter().find(|b| b.eq_ignore_ascii_case(name)) {
             return e.with_hint(format!("did you mean {}?", b));
         }
-        if let Some(b) = crate::builtins::lookup(&name.to_uppercase()) {
+        if let Some(b) = crate::builtins::lookup(&name.to_lowercase()) {
             return e.with_hint(format!("did you mean {}?", b.name()));
         }
         e

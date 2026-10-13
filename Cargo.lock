@@ -62,14 +62,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
-name = "easier"
-version = "0.1.0"
-dependencies = [
- "font8x8",
- "minifb",
-]
-
-[[package]]
 name = "errno"
 version = "0.3.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -194,6 +186,14 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
+]
+
+[[package]]
+name = "globw"
+version = "0.1.0"
+dependencies = [
+ "font8x8",
+ "minifb",
 ]
 
 [[package]]

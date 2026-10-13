@@ -24,32 +24,32 @@ pub fn describe(t: &Tok) -> String {
 
 fn text(t: &Tok) -> &'static str {
     match t {
-        Tok::If => "IF",
-        Tok::Else => "ELSE",
-        Tok::EndIf => "END IF",
-        Tok::While => "WHILE",
-        Tok::For => "FOR",
-        Tok::From => "FROM",
-        Tok::To => "TO",
-        Tok::Step => "STEP",
-        Tok::Repeat => "REPEAT",
-        Tok::EndLoop => "END LOOP",
-        Tok::Function => "FUNCTION",
-        Tok::EndFunction => "END FUNCTION",
-        Tok::Procedure => "PROCEDURE",
-        Tok::EndProcedure => "END PROCEDURE",
-        Tok::Return => "RETURN",
-        Tok::Global => "GLOBAL",
+        Tok::If => "if",
+        Tok::Else => "else",
+        Tok::EndIf => "end if",
+        Tok::While => "while",
+        Tok::For => "for",
+        Tok::From => "from",
+        Tok::To => "to",
+        Tok::Step => "step",
+        Tok::Repeat => "repeat",
+        Tok::EndLoop => "end loop",
+        Tok::Function => "function",
+        Tok::EndFunction => "end function",
+        Tok::Procedure => "procedure",
+        Tok::EndProcedure => "end procedure",
+        Tok::Return => "return",
+        Tok::Global => "global",
         Tok::Variables => "variables:",
-        Tok::And => "AND",
-        Tok::Or => "OR",
-        Tok::Not => "NOT",
-        Tok::Div => "DIV",
-        Tok::Mod => "MOD",
-        Tok::True => "TRUE",
-        Tok::False => "FALSE",
-        Tok::Arrow => "<-",
-        Tok::Eq => "=",
+        Tok::And => "and",
+        Tok::Or => "or",
+        Tok::Not => "not",
+        Tok::Div => "div",
+        Tok::Mod => "mod",
+        Tok::True => "true",
+        Tok::False => "false",
+        Tok::Assign => "=",
+        Tok::Eq => "==",
         Tok::NotEq => "!=",
         Tok::Lt => "<",
         Tok::LtEq => "<=",
@@ -142,7 +142,7 @@ impl Parser {
         while self.is(&Tok::Global) {
             let line_col = self.advance().pos.col;
             if !self.is(&Tok::Variables) {
-                return self.fail("GLOBAL must be followed by \"variables:\"");
+                return self.fail("global must be followed by \"variables:\"");
             }
             let decls = self.decl_block(Some(line_col))?;
             p.globals.extend(decls);
@@ -321,13 +321,13 @@ impl Parser {
         }
         let ret = if is_function {
             if !self.is_name("as") {
-                return self.fail("a FUNCTION must declare its return type, like ) as int");
+                return self.fail("a function must declare its return type, like ) as int");
             }
             self.advance();
             Some(self.base_type()?)
         } else {
             if self.is_name("as") {
-                return self.fail("a PROCEDURE does not return a value, so it has no return type");
+                return self.fail("a procedure does not return a value, so it has no return type");
             }
             None
         };
@@ -335,9 +335,9 @@ impl Parser {
         self.skip_newlines();
         let locals = self.local_decls()?;
         let (end, what, closer) = if is_function {
-            (Tok::EndFunction, "FUNCTION", "END FUNCTION")
+            (Tok::EndFunction, "function", "end function")
         } else {
-            (Tok::EndProcedure, "PROCEDURE", "END PROCEDURE")
+            (Tok::EndProcedure, "procedure", "end procedure")
         };
         let body = self.block(&[end], pos, what, closer, None)?;
         self.advance();
@@ -385,7 +385,7 @@ impl Parser {
                     .with_hint(format!("close it first with {}", closer)))
                 }
                 Tok::Function | Tok::Procedure => {
-                    return self.fail("FUNCTION and PROCEDURE cannot be defined inside another block")
+                    return self.fail("function and procedure cannot be defined inside another block")
                 }
                 _ => {}
             }
@@ -402,7 +402,7 @@ impl Parser {
                 self.advance();
                 let cond = self.condition()?;
                 self.end_stmt()?;
-                let body = self.block(&[Tok::EndLoop], pos, "WHILE", "END LOOP", None)?;
+                let body = self.block(&[Tok::EndLoop], pos, "while", "end loop", None)?;
                 self.advance();
                 self.end_stmt()?;
                 StmtKind::While(cond, body)
@@ -411,7 +411,7 @@ impl Parser {
             Tok::Repeat => {
                 self.advance();
                 self.end_stmt()?;
-                let body = self.block(&[], pos, "REPEAT", "WHILE(condition)", Some(pos.col))?;
+                let body = self.block(&[], pos, "repeat", "while(condition)", Some(pos.col))?;
                 self.advance();
                 let cond = self.condition()?;
                 self.end_stmt()?;
@@ -428,10 +428,10 @@ impl Parser {
                 return self.fail("variable declarations must come at the start of the program or function")
             }
             Tok::EndIf => {
-                return Err(Error::new(pos, "END IF without a matching IF")
-                    .with_hint("an ELSE followed directly by IF(...) is closed by a single END IF"))
+                return Err(Error::new(pos, "end if without a matching if")
+                    .with_hint("an else followed directly by if(...) is closed by a single end if"))
             }
-            Tok::EndLoop => return self.fail("END LOOP without a matching WHILE or FOR"),
+            Tok::EndLoop => return self.fail("end loop without a matching while or for"),
             other => return self.fail(format!("a statement cannot start with {}", describe(&other))),
         };
         Ok(Stmt { kind, pos })
@@ -450,7 +450,7 @@ impl Parser {
         let ends = [Tok::Else, Tok::EndIf];
         let cond = self.condition()?;
         self.end_stmt()?;
-        let body = self.block(&ends, opened, "IF", "END IF", None)?;
+        let body = self.block(&ends, opened, "if", "end if", None)?;
         let mut branches = vec![(cond, body)];
         let mut else_body = None;
         while self.accept(&Tok::Else) {
@@ -462,14 +462,14 @@ impl Parser {
             if self.accept(&Tok::If) {
                 let cond = self.condition()?;
                 self.end_stmt()?;
-                let body = self.block(&ends, opened, "IF", "END IF", None)?;
+                let body = self.block(&ends, opened, "if", "end if", None)?;
                 branches.push((cond, body));
             } else {
-                else_body = Some(self.block(&[Tok::EndIf], opened, "IF", "END IF", None)?);
+                else_body = Some(self.block(&[Tok::EndIf], opened, "if", "end if", None)?);
                 break;
             }
         }
-        self.expect(&Tok::EndIf, "END IF")?;
+        self.expect(&Tok::EndIf, "end if")?;
         self.end_stmt()?;
         Ok(StmtKind::If { branches, else_body })
     }
@@ -485,14 +485,14 @@ impl Parser {
             }
             other => return self.fail(format!("expected the loop variable name, found {}", describe(&other))),
         };
-        self.expect(&Tok::From, "FROM")?;
+        self.expect(&Tok::From, "from")?;
         let from = self.expr()?;
-        self.expect(&Tok::To, "TO")?;
+        self.expect(&Tok::To, "to")?;
         let to = self.expr()?;
         let step = if self.accept(&Tok::Step) { Some(self.expr()?) } else { None };
         self.expect(&Tok::RParen, "\")\"")?;
         self.end_stmt()?;
-        let body = self.block(&[Tok::EndLoop], opened, "FOR", "END LOOP", None)?;
+        let body = self.block(&[Tok::EndLoop], opened, "for", "end loop", None)?;
         self.advance();
         self.end_stmt()?;
         Ok(StmtKind::For { var, var_pos, from, to, step, body })
@@ -500,11 +500,11 @@ impl Parser {
 
     /// A statement starting with a name: an assignment or a call.
     fn name_stmt(&mut self, name: String, pos: Pos) -> Result<StmtKind, Error> {
-        let is_assignment = matches!(self.peek_tok(1), Tok::Arrow | Tok::LBracket);
+        let is_assignment = matches!(self.peek_tok(1), Tok::Assign | Tok::LBracket);
         if !is_assignment {
             if let Some(kw) = miscased_statement_keyword(&name) {
                 return Err(Error::new(pos, format!("\"{}\" is not a keyword", name))
-                    .with_hint(format!("keywords are written in UPPERCASE: write {}", kw)));
+                    .with_hint(format!("keywords are written in lowercase: write {}", kw)));
             }
         }
         self.advance();
@@ -514,12 +514,12 @@ impl Parser {
             return Ok(StmtKind::Call(name, args));
         }
         let indices = if self.is(&Tok::LBracket) { self.indices()? } else { Vec::new() };
-        if !self.accept(&Tok::Arrow) {
+        if !self.accept(&Tok::Assign) {
             if self.is(&Tok::Eq) {
-                return Err(Error::new(self.pos(), "assignment uses the arrow <-")
-                    .with_hint(format!("write {} <- value", name)));
+                return Err(Error::new(self.pos(), "== compares two values, it does not assign")
+                    .with_hint(format!("to assign write {} = value", name)));
             }
-            return self.fail(format!("expected <- or ( after \"{}\"", name));
+            return self.fail(format!("expected = or ( after \"{}\"", name));
         }
         let value = self.expr()?;
         self.end_stmt()?;
@@ -552,20 +552,21 @@ impl Parser {
 
     fn comparison(&mut self) -> Result<Expr, Error> {
         let a = self.additive()?;
+        if self.is(&Tok::Assign) {
+            return Err(Error::new(self.pos(), "a single = assigns a value")
+                .with_hint("to compare two values use =="));
+        }
         let Some(op) = self.comparison_op() else { return Ok(a) };
         let pos = self.advance().pos;
         let b = self.additive()?;
         if self.comparison_op().is_some() {
             return Err(Error::new(self.pos(), "comparisons cannot be chained")
-                .with_hint("write for example a < b AND b < c"));
+                .with_hint("write for example a < b and b < c"));
         }
         Ok(binary(op, a, b, pos))
     }
 
     fn comparison_op(&mut self) -> Option<BinOp> {
-        if self.is(&Tok::Arrow) {
-            self.split_arrow();
-        }
         Some(match self.tok() {
             Tok::Eq => BinOp::Eq,
             Tok::NotEq => BinOp::NotEq,
@@ -575,13 +576,6 @@ impl Parser {
             Tok::GtEq => BinOp::GtEq,
             _ => return None,
         })
-    }
-
-    /// Inside an expression `<-` means `<` followed by `-`: `x<-1` is `x < -1`.
-    fn split_arrow(&mut self) {
-        let p = self.pos();
-        self.t[self.i] = Token { tok: Tok::Lt, pos: Pos::new(p.line, p.col, 1) };
-        self.t.insert(self.i + 1, Token { tok: Tok::Minus, pos: Pos::new(p.line, p.col + 1, 1) });
     }
 
     fn additive(&mut self) -> Result<Expr, Error> {
@@ -712,9 +706,9 @@ mod tests {
     fn precedence() {
         assert_eq!(expr_of("1 + 2 * 3").unwrap(), "(Add 1 (Mul 2 3))");
         assert_eq!(expr_of("(1 + 2) * 3").unwrap(), "(Mul (Add 1 2) 3)");
-        assert_eq!(expr_of("a < b AND NOT c OR d = 1").unwrap(), "(Or (And (Lt a b) (Not c)) (Eq d 1))");
-        assert_eq!(expr_of("-a MOD 2 DIV b").unwrap(), "(IntDiv (Mod (Neg a) 2) b)");
-        assert_eq!(expr_of("2.5 / x - TRUE").unwrap(), "(Sub (Div 2.5 x) true)");
+        assert_eq!(expr_of("a < b and not c or d == 1").unwrap(), "(Or (And (Lt a b) (Not c)) (Eq d 1))");
+        assert_eq!(expr_of("-a mod 2 div b").unwrap(), "(IntDiv (Mod (Neg a) 2) b)");
+        assert_eq!(expr_of("2.5 / x - true").unwrap(), "(Sub (Div 2.5 x) true)");
     }
 
     #[test]
@@ -724,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn arrow_inside_expression_is_less_than_minus() {
+    fn less_than_minus_needs_no_spaces() {
         assert_eq!(expr_of("x<-1").unwrap(), "(Lt x (Neg 1))");
     }
 
@@ -732,7 +726,7 @@ mod tests {
     fn comparisons_cannot_be_chained() {
         let e = expr_of("a < b < c").unwrap_err();
         assert_eq!(e.message, "comparisons cannot be chained");
-        assert_eq!(e.hint.as_deref(), Some("write for example a < b AND b < c"));
+        assert_eq!(e.hint.as_deref(), Some("write for example a < b and b < c"));
     }
 
     #[test]
@@ -752,7 +746,7 @@ mod tests {
     #[test]
     fn typed_declarations() {
         use crate::tir::BaseType::*;
-        let src = "GLOBAL variables:\n    g as float\nvariables:\n    price as float\n    q, d as int\n    ok as bool\n    v as int[3]\n    m as float[2, 4]\n    l as list of string\na <- 1\n";
+        let src = "global variables:\n    g as float\nvariables:\n    price as float\n    q, d as int\n    ok as bool\n    v as int[3]\n    m as float[2, 4]\n    l as list of string\na = 1\n";
         let p = parse_src(src).unwrap();
         assert_eq!((p.globals[0].name.as_str(), p.globals[0].ty), ("g", Real));
         let got: Vec<(&str, Shape, crate::tir::BaseType)> =
@@ -775,7 +769,7 @@ mod tests {
     #[test]
     fn typed_signatures() {
         use crate::tir::BaseType::*;
-        let src = "FUNCTION area(b as float, h as float) as float\n    RETURN b * h\nEND FUNCTION\nPROCEDURE fill(v as int[], m as float[,], l as list of int)\nEND PROCEDURE\n";
+        let src = "function area(b as float, h as float) as float\n    return b * h\nend function\nprocedure fill(v as int[], m as float[,], l as list of int)\nend procedure\n";
         let p = parse_src(src).unwrap();
         let params = |i: usize| -> Vec<(String, Shape, crate::tir::BaseType)> {
             p.subprograms[i].params.iter().map(|d| (d.name.clone(), d.shape.clone(), d.ty)).collect()
@@ -791,7 +785,7 @@ mod tests {
 
     #[test]
     fn else_if_on_one_line() {
-        let src = "IF(a)\n    x <- 1\nELSE IF(b)\n    x <- 2\nELSE\n    x <- 3\nEND IF\n";
+        let src = "if(a)\n    x = 1\nelse if(b)\n    x = 2\nelse\n    x = 3\nend if\n";
         match &parse_src(src).unwrap().body[0].kind {
             StmtKind::If { branches, else_body } => {
                 assert_eq!(branches.len(), 2);
@@ -815,15 +809,15 @@ mod tests {
             "an array needs its size, like int[10]"
         );
         assert_eq!(
-            err("FUNCTION f(x as int)\n    RETURN x\nEND FUNCTION\n").message,
-            "a FUNCTION must declare its return type, like ) as int"
+            err("function f(x as int)\n    return x\nend function\n").message,
+            "a function must declare its return type, like ) as int"
         );
-        assert_eq!(err("PROCEDURE p(x)\nEND PROCEDURE\n").message, "parameter \"x\" needs a type, like x as int");
+        assert_eq!(err("procedure p(x)\nend procedure\n").message, "parameter \"x\" needs a type, like x as int");
     }
 
     #[test]
     fn else_if_chain_needs_one_end_if() {
-        let src = "IF(v >= 8)\n    output(1)\nELSE\nIF(v >= 6)\n    output(2)\nELSE\n    output(3)\nEND IF\n";
+        let src = "if(v >= 8)\n    output(1)\nelse\nif(v >= 6)\n    output(2)\nelse\n    output(3)\nend if\n";
         match &parse_src(src).unwrap().body[0].kind {
             StmtKind::If { branches, else_body } => {
                 assert_eq!(branches.len(), 2);
@@ -835,7 +829,7 @@ mod tests {
 
     #[test]
     fn nested_if_inside_else_is_not_else_if() {
-        let src = "IF(a)\n    x <- 1\nELSE\n    x <- 2\n    IF(b)\n        x <- 3\n    END IF\nEND IF\n";
+        let src = "if(a)\n    x = 1\nelse\n    x = 2\n    if(b)\n        x = 3\n    end if\nend if\n";
         match &parse_src(src).unwrap().body[0].kind {
             StmtKind::If { branches, else_body } => {
                 assert_eq!(branches.len(), 1);
@@ -847,7 +841,7 @@ mod tests {
 
     #[test]
     fn loops() {
-        let src = "WHILE(i < 3)\n    i <- i + 1\nEND LOOP\nFOR(i FROM 10 TO 0 STEP -2)\n    output(i)\nEND LOOP\nREPEAT\n    input(n)\nWHILE(n < 0)\n";
+        let src = "while(i < 3)\n    i = i + 1\nend loop\nfor(i from 10 to 0 step -2)\n    output(i)\nend loop\nrepeat\n    input(n)\nwhile(n < 0)\n";
         let p = parse_src(src).unwrap();
         assert!(matches!(p.body[0].kind, StmtKind::While(..)));
         assert!(matches!(&p.body[1].kind, StmtKind::For { step: Some(_), .. }));
@@ -856,7 +850,7 @@ mod tests {
 
     #[test]
     fn while_indented_inside_repeat_is_a_loop() {
-        let src = "REPEAT\n    WHILE(a < 3)\n        a <- a + 1\n    END LOOP\nWHILE(a < 10)\n";
+        let src = "repeat\n    while(a < 3)\n        a = a + 1\n    end loop\nwhile(a < 10)\n";
         match &parse_src(src).unwrap().body[0].kind {
             StmtKind::Repeat(body, _) => assert!(matches!(body[0].kind, StmtKind::While(..))),
             other => panic!("{:?}", other),
@@ -865,7 +859,7 @@ mod tests {
 
     #[test]
     fn functions_and_procedures() {
-        let src = "FUNCTION add(a as int, b as int) as int\n    variables:\n        r as int\n    r <- a + b\n    RETURN r\nEND FUNCTION\nPROCEDURE hello()\n    output(\"hi\")\nEND PROCEDURE\nhello()\n";
+        let src = "function add(a as int, b as int) as int\n    variables:\n        r as int\n    r = a + b\n    return r\nend function\nprocedure hello()\n    output(\"hi\")\nend procedure\nhello()\n";
         let p = parse_src(src).unwrap();
         assert_eq!(p.subprograms.len(), 2);
         let add = &p.subprograms[0];
@@ -879,8 +873,8 @@ mod tests {
     }
 
     #[test]
-    fn arrow_inside_condition_means_less_than_minus() {
-        match &parse_src("IF(x<-1)\nEND IF\n").unwrap().body[0].kind {
+    fn less_than_minus_inside_a_condition() {
+        match &parse_src("if(x<-1)\nend if\n").unwrap().body[0].kind {
             StmtKind::If { branches, .. } => assert_eq!(sx(&branches[0].0), "(Lt x (Neg 1))"),
             other => panic!("{:?}", other),
         }
@@ -888,45 +882,45 @@ mod tests {
 
     #[test]
     fn unclosed_if() {
-        let e = err("IF(a)\n    x <- 1\n");
-        assert_eq!(e.message, "this IF is never closed");
+        let e = err("if(a)\n    x = 1\n");
+        assert_eq!(e.message, "this if is never closed");
         assert_eq!(e.pos.line, 1);
-        assert_eq!(e.hint.as_deref(), Some("add END IF at the end of the block"));
+        assert_eq!(e.hint.as_deref(), Some("add end if at the end of the block"));
     }
 
     #[test]
     fn wrong_closer() {
-        let e = err("IF(a)\n    x <- 1\nEND LOOP\n");
-        assert_eq!(e.message, "found \"END LOOP\", but the IF on line 1 is not closed yet");
-        assert_eq!(e.hint.as_deref(), Some("close it first with END IF"));
+        let e = err("if(a)\n    x = 1\nend loop\n");
+        assert_eq!(e.message, "found \"end loop\", but the if on line 1 is not closed yet");
+        assert_eq!(e.hint.as_deref(), Some("close it first with end if"));
     }
 
     #[test]
     fn extra_end_if_after_else_if_chain() {
-        let e = err("IF(a)\n    b <- 1\nELSE\nIF(c)\n    b <- 2\nEND IF\nEND IF\n");
-        assert_eq!(e.message, "END IF without a matching IF");
+        let e = err("if(a)\n    b = 1\nelse\nif(c)\n    b = 2\nend if\nend if\n");
+        assert_eq!(e.message, "end if without a matching if");
         assert_eq!(e.pos.line, 7);
-        assert_eq!(e.hint.as_deref(), Some("an ELSE followed directly by IF(...) is closed by a single END IF"));
+        assert_eq!(e.hint.as_deref(), Some("an else followed directly by if(...) is closed by a single end if"));
     }
 
     #[test]
     fn lowercase_keyword() {
-        let e = err("if(x)\nEND IF\n");
-        assert_eq!(e.message, "\"if\" is not a keyword");
-        assert_eq!(e.hint.as_deref(), Some("keywords are written in UPPERCASE: write IF"));
+        let e = err("IF(x)\nend if\n");
+        assert_eq!(e.message, "\"IF\" is not a keyword");
+        assert_eq!(e.hint.as_deref(), Some("keywords are written in lowercase: write if"));
     }
 
     #[test]
     fn equals_is_not_assignment() {
-        let e = err("x = 5\n");
-        assert_eq!(e.message, "assignment uses the arrow <-");
-        assert_eq!(e.hint.as_deref(), Some("write x <- value"));
+        let e = err("x == 5\n");
+        assert_eq!(e.message, "== compares two values, it does not assign");
+        assert_eq!(e.hint.as_deref(), Some("to assign write x = value"));
     }
 
     #[test]
     fn declarations_must_come_first() {
         assert_eq!(
-            err("x <- 1\nvariables:\n    y as int\n").message,
+            err("x = 1\nvariables:\n    y as int\n").message,
             "variable declarations must come at the start of the program or function"
         );
     }
@@ -934,7 +928,7 @@ mod tests {
     #[test]
     fn one_statement_per_line() {
         assert_eq!(
-            err("a <- 1 b <- 2\n").message,
+            err("a = 1 b = 2\n").message,
             "unexpected \"b\" after the statement: each statement goes on its own line"
         );
     }
@@ -942,8 +936,8 @@ mod tests {
     #[test]
     fn no_nested_definitions() {
         assert_eq!(
-            err("IF(a)\nFUNCTION f()\nEND FUNCTION\nEND IF\n").message,
-            "FUNCTION and PROCEDURE cannot be defined inside another block"
+            err("if(a)\nfunction f()\nend function\nend if\n").message,
+            "function and procedure cannot be defined inside another block"
         );
     }
 }

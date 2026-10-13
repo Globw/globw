@@ -7,7 +7,7 @@ fn main() -> ExitCode {
         [f] if f != "--check" => (false, f),
         [flag, f] if flag == "--check" => (true, f),
         _ => {
-            eprintln!("Usage: easier program.ez\n       easier --check program.ez");
+            eprintln!("Usage: globw program.gw\n       globw --check program.gw");
             return ExitCode::from(3);
         }
     };
@@ -18,7 +18,7 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
-    let module = match easier::compile(&source) {
+    let module = match globw::compile(&source) {
         Ok(m) => m,
         Err(errors) => {
             let text: Vec<String> = errors.iter().map(|e| e.render(&source)).collect();
@@ -34,7 +34,7 @@ fn main() -> ExitCode {
     let mut input = stdin.lock();
     let stdout = io::stdout();
     let mut output = BufWriter::new(stdout.lock());
-    let result = easier::run(&module, &mut input, &mut output);
+    let result = globw::run(&module, &mut input, &mut output);
     let _ = output.flush();
     match result {
         Ok(()) => ExitCode::SUCCESS,

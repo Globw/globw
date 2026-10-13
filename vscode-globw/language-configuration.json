@@ -45,8 +45,8 @@
     ]
   ],
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(((IF|ELSE|WHILE|FOR|REPEAT|FUNCTION|PROCEDURE)\\b(?!.*\\bEND\\b).*)|((GLOBAL\\s+)?variables\\s*:\\s*))$",
-    "decreaseIndentPattern": "^\\s*(END\\s+(IF|LOOP|FUNCTION|PROCEDURE)|ELSE)\\b"
+    "increaseIndentPattern": "^\\s*(((if|else|while|for|repeat|function|procedure)\\b(?!.*\\bend\\b).*)|((global\\s+)?variables\\s*:\\s*))$",
+    "decreaseIndentPattern": "^\\s*(end\\s+(if|loop|function|procedure)|else)\\b"
   },
   "wordPattern": "[\\p{L}_][\\p{L}\\p{N}_]*"
 }
