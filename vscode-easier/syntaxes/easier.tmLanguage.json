@@ -42,7 +42,7 @@
         { "name": "keyword.other.declaration.easier", "match": "\\bvariables\\s*:" },
         { "name": "keyword.operator.word.easier", "match": "\\b(AND|OR|NOT|DIV|MOD)\\b" },
         { "name": "constant.language.boolean.easier", "match": "\\b(TRUE|FALSE)\\b" },
-        { "name": "support.function.builtin.easier", "match": "\\b(input|output|LENGTH|APPEND|REMOVE)(?=\\s*\\()" }
+        { "name": "support.function.builtin.easier", "match": "\\b(input|output|LENGTH|APPEND|REMOVE|WINDOW|OPEN|SHOW|CLEAR|RECT|CIRCLE|LINE|TEXT|KEY|MOUSE_X|MOUSE_Y|CLICK|MESSAGE|CONFIRM|ASK|RGB|RANDOM|TIME)(?=\\s*\\()" }
       ]
     },
     "types": {
