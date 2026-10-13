@@ -59,6 +59,33 @@ pub enum Op {
     /// print without newline
     Print(Reg),
     PrintLn,
+    GetGlobal(Reg, u16),
+    SetGlobal(u16, Reg),
+    /// new array of n empty elements
+    NewArray(Reg, u32),
+    /// new rows × cols matrix
+    NewMatrix(Reg, u32, u32),
+    NewList(Reg),
+    /// dst, collection, index (1-based)
+    GetElem(Reg, Reg, Reg),
+    /// collection, index, src
+    SetElem(Reg, Reg, Reg),
+    /// dst, matrix, row, column
+    GetElem2(Reg, Reg, Reg, Reg),
+    /// matrix, row, column, src
+    SetElem2(Reg, Reg, Reg, Reg),
+    /// dst, string, index
+    CharAt(Reg, Reg, Reg),
+    /// dst, array/list/string
+    Length(Reg, Reg),
+    /// list, src
+    Append(Reg, Reg),
+    /// list, index
+    Remove(Reg, Reg),
+    /// copies `argc` registers from `first` into the callee's registers 0..argc
+    Call { func: u32, first: Reg, argc: u16, dst: Reg },
+    Ret(Reg),
+    Read(Reg, BaseType),
     RetNone,
 }
 

@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use crate::bytecode::{Cmp, Module, Op};
 use crate::errors::Error;
+use crate::tir::BaseType;
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -28,6 +29,60 @@ pub struct Matrix {
 }
 
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
+const MAX_CALL_DEPTH: usize = 100_000;
+
+fn seq(v: &Value) -> &Rc<RefCell<Vec<Value>>> {
+    match v {
+        Value::Seq(s) => s,
+        other => panic!("internal error: expected an array or list, found {:?}", other),
+    }
+}
+
+fn matrix(v: &Value) -> &Rc<RefCell<Matrix>> {
+    match v {
+        Value::Matrix(m) => m,
+        other => panic!("internal error: expected a matrix, found {:?}", other),
+    }
+}
+
+/// 1-based index → 0-based position, or the error message.
+fn position(i: i64, len: usize) -> Result<usize, String> {
+    if i >= 1 && (i as u64) <= len as u64 {
+        Ok(i as usize - 1)
+    } else if len == 0 {
+        Err(format!("index {} is out of range: the list is empty", i))
+    } else {
+        Err(format!("index {} is out of range: valid positions are 1 to {}", i, len))
+    }
+}
+
+fn cell(i: i64, j: i64, m: &Matrix) -> Result<usize, String> {
+    if i < 1 || i as u64 > m.rows as u64 {
+        return Err(format!("row {} is out of range: valid rows are 1 to {}", i, m.rows));
+    }
+    if j < 1 || j as u64 > m.cols as u64 {
+        return Err(format!("column {} is out of range: valid columns are 1 to {}", j, m.cols));
+    }
+    Ok((i as usize - 1) * m.cols + (j as usize - 1))
+}
+
+fn parse_input(text: &str, ty: BaseType) -> Result<Value, String> {
+    let t = text.trim();
+    match ty {
+        BaseType::Int => t.parse().map(Value::Int).map_err(|_| format!("expected an integer, read \"{}\"", text)),
+        BaseType::Real => t
+            .replace(',', ".")
+            .parse()
+            .map(Value::Real)
+            .map_err(|_| format!("expected a number (like 3.5), read \"{}\"", text)),
+        BaseType::Bool => match t.to_uppercase().as_str() {
+            "TRUE" => Ok(Value::Bool(true)),
+            "FALSE" => Ok(Value::Bool(false)),
+            _ => Err(format!("expected TRUE or FALSE, read \"{}\"", text)),
+        },
+        BaseType::Str => Ok(Value::Str(text.into())),
+    }
+}
 
 /// Shortest representation of a real, always with a decimal point.
 pub fn format_real(r: f64) -> String {
@@ -269,6 +324,131 @@ impl<'m> Vm<'m> {
                 Op::PrintLn => {
                     let _ = output.write_all(b"\n");
                 }
+                Op::GetGlobal(d, g) => {
+                    let v = self.globals[g as usize].clone();
+                    if let Value::Null = v {
+                        fail!(format!("variable \"{}\" has no value yet", m.globals[g as usize]));
+                    }
+                    reg!(d) = v;
+                }
+                Op::SetGlobal(g, s) => {
+                    let v = reg!(s).clone();
+                    self.globals[g as usize] = v;
+                }
+                Op::NewArray(d, n) => reg!(d) = Value::Seq(Rc::new(RefCell::new(vec![Value::Null; n as usize]))),
+                Op::NewMatrix(d, r, c) => {
+                    let (rows, cols) = (r as usize, c as usize);
+                    let data = vec![Value::Null; rows * cols];
+                    reg!(d) = Value::Matrix(Rc::new(RefCell::new(Matrix { rows, cols, data })));
+                }
+                Op::NewList(d) => reg!(d) = Value::Seq(Rc::new(RefCell::new(Vec::new()))),
+                Op::GetElem(d, c, i) => {
+                    let i = int(&reg!(i));
+                    let v = {
+                        let s = seq(&reg!(c)).borrow();
+                        match position(i, s.len()) {
+                            Ok(k) => s[k].clone(),
+                            Err(msg) => fail!(msg),
+                        }
+                    };
+                    if let Value::Null = v {
+                        fail!("this element has no value yet");
+                    }
+                    reg!(d) = v;
+                }
+                Op::SetElem(c, i, s) => {
+                    let i = int(&reg!(i));
+                    let v = reg!(s).clone();
+                    let mut q = seq(&reg!(c)).borrow_mut();
+                    match position(i, q.len()) {
+                        Ok(k) => q[k] = v,
+                        Err(msg) => fail!(msg),
+                    }
+                }
+                Op::GetElem2(d, c, i, j) => {
+                    let (i, j) = (int(&reg!(i)), int(&reg!(j)));
+                    let v = {
+                        let mx = matrix(&reg!(c)).borrow();
+                        match cell(i, j, &mx) {
+                            Ok(k) => mx.data[k].clone(),
+                            Err(msg) => fail!(msg),
+                        }
+                    };
+                    if let Value::Null = v {
+                        fail!("this element has no value yet");
+                    }
+                    reg!(d) = v;
+                }
+                Op::SetElem2(c, i, j, s) => {
+                    let (i, j) = (int(&reg!(i)), int(&reg!(j)));
+                    let v = reg!(s).clone();
+                    let mut mx = matrix(&reg!(c)).borrow_mut();
+                    match cell(i, j, &mx) {
+                        Ok(k) => mx.data[k] = v,
+                        Err(msg) => fail!(msg),
+                    }
+                }
+                Op::CharAt(d, s, i) => {
+                    let i = int(&reg!(i));
+                    let ch = {
+                        let text = string(&reg!(s));
+                        let n = text.chars().count();
+                        match position(i, n) {
+                            Ok(k) => text.chars().nth(k).expect("index checked").to_string(),
+                            Err(_) => fail!(format!("index {} is out of range: the string has {} characters", i, n)),
+                        }
+                    };
+                    reg!(d) = Value::Str(ch.into());
+                }
+                Op::Length(d, s) => {
+                    let n = match &reg!(s) {
+                        Value::Seq(q) => q.borrow().len(),
+                        Value::Str(t) => t.chars().count(),
+                        other => panic!("internal error: LENGTH of {:?}", other),
+                    };
+                    reg!(d) = Value::Int(n as i64);
+                }
+                Op::Append(l, s) => {
+                    let v = reg!(s).clone();
+                    seq(&reg!(l)).borrow_mut().push(v);
+                }
+                Op::Remove(l, i) => {
+                    let i = int(&reg!(i));
+                    let mut q = seq(&reg!(l)).borrow_mut();
+                    match position(i, q.len()) {
+                        Ok(k) => {
+                            q.remove(k);
+                        }
+                        Err(msg) => fail!(msg),
+                    }
+                }
+                Op::Call { func: f, first, argc, dst } => {
+                    if self.frames.len() >= MAX_CALL_DEPTH {
+                        fail!("too many nested calls (maybe a recursion that never ends)");
+                    }
+                    let callee = &m.functions[f as usize];
+                    let new_base = self.regs.len();
+                    self.regs.resize(new_base + callee.n_regs as usize, Value::Null);
+                    for k in 0..argc as usize {
+                        let v = self.regs[base + first as usize + k].clone();
+                        self.regs[new_base + k] = v;
+                    }
+                    self.frames.push(Frame { func, ip, base, dst });
+                    func = f as usize;
+                    code = &callee.code;
+                    ip = 0;
+                    base = new_base;
+                }
+                Op::Ret(s) => {
+                    let v = std::mem::replace(&mut reg!(s), Value::Null);
+                    let Some(fr) = self.frames.pop() else { return Ok(()) };
+                    self.regs.truncate(base);
+                    func = fr.func;
+                    code = &m.functions[func].code;
+                    ip = fr.ip;
+                    base = fr.base;
+                    reg!(fr.dst) = v;
+                }
                 Op::RetNone => {
                     let Some(fr) = self.frames.pop() else { return Ok(()) };
                     self.regs.truncate(base);
@@ -276,7 +456,19 @@ impl<'m> Vm<'m> {
                     code = &m.functions[func].code;
                     ip = fr.ip;
                     base = fr.base;
-                    let _ = fr.dst;
+                }
+                Op::Read(d, ty) => {
+                    let _ = output.flush();
+                    let mut line = String::new();
+                    match input.read_line(&mut line) {
+                        Ok(0) | Err(_) => fail!("the input is over: the program expected another value"),
+                        Ok(_) => {}
+                    }
+                    let text = line.trim_end_matches(|c| c == '\n' || c == '\r');
+                    match parse_input(text, ty) {
+                        Ok(v) => reg!(d) = v,
+                        Err(msg) => fail!(msg),
+                    }
                 }
             }
         }
@@ -402,5 +594,129 @@ mod tests {
         assert_eq!(format_real(2.5), "2.5");
         assert_eq!(format_real(-0.25), "-0.25");
         assert_eq!(format_real(0.1 + 0.2), "0.30000000000000004");
+    }
+
+    use crate::tir::BaseType;
+
+    #[test]
+    fn arrays_and_lengths() {
+        let code = vec![
+            NewArray(0, 3), LoadInt(1, 2), LoadInt(2, 42),
+            SetElem(0, 1, 2), GetElem(3, 0, 1), Print(3), PrintLn,
+            Length(4, 0), Print(4), PrintLn,
+            RetNone,
+        ];
+        assert_eq!(run_code(code, 5, &[], "").unwrap(), "42\n3\n");
+    }
+
+    #[test]
+    fn element_errors() {
+        let out_of_range = vec![NewArray(0, 3), LoadInt(1, 4), GetElem(2, 0, 1), RetNone];
+        let e = run_code(out_of_range, 3, &[], "").unwrap_err();
+        assert_eq!(e.message, "index 4 is out of range: valid positions are 1 to 3");
+        assert_eq!(e.pos.line, 3);
+        let unset = vec![NewArray(0, 3), LoadInt(1, 1), GetElem(2, 0, 1), RetNone];
+        assert_eq!(run_code(unset, 3, &[], "").unwrap_err().message, "this element has no value yet");
+    }
+
+    #[test]
+    fn matrices() {
+        let code = vec![
+            NewMatrix(0, 2, 3), LoadInt(1, 2), LoadInt(2, 3), LoadInt(3, 9),
+            SetElem2(0, 1, 2, 3), GetElem2(4, 0, 1, 2), Print(4), PrintLn,
+            LoadInt(1, 3), GetElem2(4, 0, 1, 2),
+            RetNone,
+        ];
+        let e = run_code(code, 5, &[], "").unwrap_err();
+        assert_eq!(e.message, "row 3 is out of range: valid rows are 1 to 2");
+    }
+
+    #[test]
+    fn lists() {
+        let code = vec![
+            NewList(0), LoadStr(1, 0), Append(0, 1), LoadStr(1, 1), Append(0, 1), LoadStr(1, 2), Append(0, 1),
+            LoadInt(2, 2), Remove(0, 2),
+            Length(3, 0), Print(3), PrintLn,
+            GetElem(4, 0, 2), Print(4), PrintLn,
+            LoadInt(2, 9), Remove(0, 2),
+            RetNone,
+        ];
+        let e = run_code(code, 5, &["a", "b", "c"], "").unwrap_err();
+        assert_eq!(e.message, "index 9 is out of range: valid positions are 1 to 2");
+        let empty = vec![NewList(0), LoadInt(1, 1), GetElem(2, 0, 1), RetNone];
+        assert_eq!(run_code(empty, 3, &[], "").unwrap_err().message, "index 1 is out of range: the list is empty");
+    }
+
+    #[test]
+    fn list_output_before_error() {
+        let code = vec![
+            NewList(0), LoadStr(1, 0), Append(0, 1), Length(2, 0), Print(2), PrintLn, RetNone,
+        ];
+        assert_eq!(run_code(code, 3, &["x"], "").unwrap(), "1\n");
+    }
+
+    #[test]
+    fn characters_of_strings() {
+        let code = vec![LoadStr(0, 0), LoadInt(1, 2), CharAt(2, 0, 1), Print(2), Length(3, 0), Print(3), PrintLn, RetNone];
+        assert_eq!(run_code(code, 4, &["città"], "").unwrap(), "i5\n");
+    }
+
+    fn two_functions(main: Vec<Op>, main_regs: u16, f: Vec<Op>, f_regs: u16) -> Module {
+        let pos = |n: usize| (0..n).map(|k| Pos::new(k as u32 + 1, 0, 0)).collect();
+        Module {
+            functions: vec![
+                Function { name: "main".into(), n_params: 0, n_regs: main_regs, positions: pos(main.len()), code: main },
+                Function { name: "f".into(), n_params: 1, n_regs: f_regs, positions: pos(f.len()), code: f },
+            ],
+            strings: vec![],
+            globals: vec!["g".into()],
+        }
+    }
+
+    fn run_module(m: &Module, input: &str) -> Result<String, Error> {
+        let mut out = Vec::new();
+        run(m, &mut input.as_bytes(), &mut out)?;
+        Ok(String::from_utf8(out).unwrap())
+    }
+
+    #[test]
+    fn calls_and_returns() {
+        // f(x) = x * 2
+        let f = vec![LoadInt(1, 2), MulI(1, 0, 1), Ret(1)];
+        let main = vec![LoadInt(1, 21), Call { func: 1, first: 1, argc: 1, dst: 0 }, Print(0), PrintLn, RetNone];
+        assert_eq!(run_module(&two_functions(main, 2, f, 2), "").unwrap(), "42\n");
+    }
+
+    #[test]
+    fn runaway_recursion_is_an_error() {
+        let f = vec![Call { func: 1, first: 0, argc: 1, dst: 0 }, RetNone];
+        let main = vec![LoadInt(0, 1), Call { func: 1, first: 0, argc: 1, dst: 0 }, RetNone];
+        let e = run_module(&two_functions(main, 1, f, 1), "").unwrap_err();
+        assert_eq!(e.message, "too many nested calls (maybe a recursion that never ends)");
+    }
+
+    #[test]
+    fn globals() {
+        let main = vec![LoadInt(0, 5), SetGlobal(0, 0), GetGlobal(1, 0), Print(1), PrintLn, RetNone];
+        assert_eq!(run_module(&two_functions(main, 2, vec![RetNone], 1), "").unwrap(), "5\n");
+        let unset = vec![GetGlobal(0, 0), RetNone];
+        let e = run_module(&two_functions(unset, 1, vec![RetNone], 1), "").unwrap_err();
+        assert_eq!(e.message, "variable \"g\" has no value yet");
+    }
+
+    #[test]
+    fn read_converts_and_trims() {
+        let code = vec![
+            Read(0, BaseType::Int), Read(1, BaseType::Real), Read(2, BaseType::Str), Read(3, BaseType::Bool),
+            Print(0), Print(1), Print(2), Print(3), PrintLn,
+            RetNone,
+        ];
+        assert_eq!(run_code(code, 4, &[], "  42 \r\n3,5\nhello world\r\ntrue\n").unwrap(), "423.5hello worldTRUE\n");
+        let bad = vec![Read(0, BaseType::Int), RetNone];
+        assert_eq!(run_code(bad.clone(), 1, &[], "abc\n").unwrap_err().message, "expected an integer, read \"abc\"");
+        assert_eq!(
+            run_code(bad, 1, &[], "").unwrap_err().message,
+            "the input is over: the program expected another value"
+        );
     }
 }
