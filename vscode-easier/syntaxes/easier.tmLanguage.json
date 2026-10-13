@@ -1,0 +1,57 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Easier",
+  "scopeName": "source.easier",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#definition" },
+    { "include": "#keywords" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.quote.easier",
+      "match": "'.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.easier",
+      "begin": "\"",
+      "end": "\"|$",
+      "patterns": [{ "name": "constant.character.escape.easier", "match": "\\\\[n\"\\\\]" }]
+    },
+    "definition": {
+      "match": "\\b(FUNCTION|PROCEDURE)\\s+(\\w+)",
+      "captures": {
+        "1": { "name": "storage.type.function.easier" },
+        "2": { "name": "entity.name.function.easier" }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.easier",
+          "match": "\\b(IF|ELSE|END\\s+IF|WHILE|END\\s+LOOP|FOR|FROM|TO|STEP|REPEAT|RETURN|END\\s+FUNCTION|END\\s+PROCEDURE)\\b"
+        },
+        { "name": "storage.type.function.easier", "match": "\\b(FUNCTION|PROCEDURE)\\b" },
+        { "name": "storage.modifier.easier", "match": "\\bGLOBAL\\b" },
+        { "name": "keyword.other.declaration.easier", "match": "\\bvariables\\s*:" },
+        { "name": "keyword.operator.word.easier", "match": "\\b(AND|OR|NOT|DIV|MOD)\\b" },
+        { "name": "constant.language.boolean.easier", "match": "\\b(TRUE|FALSE)\\b" },
+        { "name": "support.function.builtin.easier", "match": "\\b(input|output|LENGTH|APPEND|REMOVE)(?=\\s*\\()" }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.easier",
+      "match": "\\b\\d+(\\.\\d+)?\\b"
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.assignment.easier", "match": "<-|←" },
+        { "name": "keyword.operator.comparison.easier", "match": "<=|>=|!=|<|>|=" },
+        { "name": "keyword.operator.arithmetic.easier", "match": "[+\\-*/]" }
+      ]
+    }
+  }
+}
