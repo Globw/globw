@@ -283,8 +283,22 @@ impl<'p> Checker<'p> {
         TProgram { globals: self.globals.iter().map(slot).collect(), functions }
     }
 
-    /// Never-called subprograms are filled in by Task 7.
-    fn check_uncalled(&mut self) {}
+    /// Visits every subprogram that the final round never reached, so that
+    /// names are checked even in code that is not called yet.
+    fn check_uncalled(&mut self) {
+        let prog = self.prog;
+        for s in 0..prog.subprograms.len() {
+            let reached = self.instances.iter().any(|i| i.sub == Some(s) && i.final_index.is_some());
+            if reached {
+                continue;
+            }
+            let key = vec![Type::Unknown; prog.subprograms[s].params.len()];
+            let inst = self.instance(s, key);
+            self.names_only = true;
+            self.visit(inst);
+            self.names_only = false;
+        }
+    }
 
     fn function(&self, i: usize, body: Vec<TStmt>) -> TFunction {
         let inst = &self.instances[i];

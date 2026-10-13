@@ -164,3 +164,82 @@ fn declaration_errors() {
     assert_eq!(first_error("variables: LENGTH\n").message, "\"LENGTH\" is a built-in name: choose another one");
     assert_eq!(first_error("GLOBAL variables: g\nvariables: g\n").message, "\"g\" is already declared as GLOBAL");
 }
+
+#[test]
+fn function_return_type_is_inferred() {
+    let src = "variables: r\nFUNCTION double(x)\n    RETURN x * 2\nEND FUNCTION\nr <- double(4)\n";
+    let p = check_src(src).unwrap();
+    assert_eq!(p.functions[0].locals[0].ty, Type::Base(Int));
+    assert_eq!(p.functions.len(), 2);
+    assert_eq!(p.functions[1].name, "double");
+    assert_eq!(p.functions[1].ret, Some(Int));
+}
+
+#[test]
+fn functions_are_specialized_per_argument_types() {
+    let src = "variables: a, b\nFUNCTION double(x)\n    RETURN x * 2\nEND FUNCTION\na <- double(4)\nb <- double(1.5)\n";
+    let p = check_src(src).unwrap();
+    assert_eq!(main_types(src), vec![t("a", Type::Base(Int)), t("b", Type::Base(Real))]);
+    assert_eq!(p.functions.len(), 3);
+}
+
+#[test]
+fn recursion() {
+    let src = "variables: r\nFUNCTION fib(n)\n    IF(n < 2)\n        RETURN n\n    END IF\n    RETURN fib(n - 1) + fib(n - 2)\nEND FUNCTION\nr <- fib(10)\n";
+    assert_eq!(main_types(src), vec![t("r", Type::Base(Int))]);
+}
+
+#[test]
+fn parameter_types_flow_back_to_arguments() {
+    let src = "variables: n, r\nFUNCTION square(x)\n    RETURN x * x\nEND FUNCTION\ninput(n)\nr <- square(n)\n";
+    assert_eq!(main_types(src), vec![t("n", Type::Base(Int)), t("r", Type::Base(Int))]);
+}
+
+#[test]
+fn array_element_type_flows_back_from_procedure() {
+    let src = "variables: v[3]\nPROCEDURE fill(a)\n    variables: i\n    FOR(i FROM 1 TO 3)\n        a[i] <- i * 1.5\n    END LOOP\nEND PROCEDURE\nfill(v)\n";
+    let p = check_src(src).unwrap();
+    assert_eq!(p.functions[0].locals[0].ty, Type::Array(Some(Real)));
+    assert_eq!(p.functions.len(), 2);
+}
+
+#[test]
+fn call_errors() {
+    let double = "FUNCTION double(x)\n    RETURN x * 2\nEND FUNCTION\n";
+    assert_eq!(
+        first_error(&format!("variables: r\n{}r <- double(1, 2)\n", double)).message,
+        "\"double\" takes 1 value, here it gets 2"
+    );
+    assert_eq!(
+        first_error("variables: r\nPROCEDURE p()\nEND PROCEDURE\nr <- p()\n").message,
+        "PROCEDURE \"p\" does not return a value"
+    );
+    assert_eq!(
+        first_error("variables: r\nFUNCTION f(x)\n    IF(x > 0)\n        RETURN 1\n    END IF\nEND FUNCTION\nr <- f(2)\n").message,
+        "function \"f\" can reach END FUNCTION without RETURN"
+    );
+    assert_eq!(
+        first_error("PROCEDURE p()\n    RETURN 1\nEND PROCEDURE\np()\n").message,
+        "a PROCEDURE does not return values"
+    );
+}
+
+#[test]
+fn main_variables_are_not_visible_in_functions() {
+    let e = first_error("variables: x\nPROCEDURE p()\n    x <- 1\nEND PROCEDURE\np()\n");
+    assert_eq!(e.message, "variable \"x\" is not declared");
+    assert_eq!(
+        e.hint.as_deref(),
+        Some("\"x\" belongs to the main program: to use it here declare it with GLOBAL variables:")
+    );
+    assert!(check_src("GLOBAL variables: x\nPROCEDURE p()\n    x <- 1\nEND PROCEDURE\np()\n").is_ok());
+}
+
+#[test]
+fn uncalled_subprograms_are_checked_for_names_only() {
+    assert_eq!(
+        first_error("PROCEDURE never()\n    y <- 1\nEND PROCEDURE\n").message,
+        "variable \"y\" is not declared"
+    );
+    assert!(check_src("FUNCTION unused(x)\n    RETURN x * \"a\"\nEND FUNCTION\n").is_ok());
+}
