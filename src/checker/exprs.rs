@@ -352,7 +352,10 @@ impl<'p> Checker<'p> {
                 ));
                 unknown(pos)
             }
-            _ => self.call(name, args, pos, true),
+            _ => match crate::builtins::lookup(name) {
+                Some(b) => self.builtin_call(b, args, pos, true),
+                None => self.call(name, args, pos, true),
+            },
         }
     }
 }

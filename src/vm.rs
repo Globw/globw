@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::io::{BufRead, Write};
 use std::rc::Rc;
 
+use crate::builtins::{Builtin, Env};
 use crate::bytecode::{Cmp, Module, Op};
 use crate::errors::Error;
 use crate::tir::BaseType;
@@ -161,9 +162,13 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
+        env: Env::default(),
     };
     let result = vm.execute(input, output);
     let _ = output.flush();
+    if result.is_ok() {
+        vm.env.finish();
+    }
     result
 }
 
@@ -172,6 +177,7 @@ struct Vm<'m> {
     regs: Vec<Value>,
     globals: Vec<Value>,
     frames: Vec<Frame>,
+    env: Env,
 }
 
 impl<'m> Vm<'m> {
@@ -461,6 +467,21 @@ impl<'m> Vm<'m> {
                     code = &m.functions[func].code;
                     ip = fr.ip;
                     base = fr.base;
+                }
+                Op::Builtin { id, first, argc, dst } => {
+                    let b = Builtin::from_id(id);
+                    if matches!(b, Builtin::Message | Builtin::Confirm | Builtin::Ask) {
+                        let _ = output.flush();
+                    }
+                    let start = base + first as usize;
+                    match self.env.call(b, &self.regs[start..start + argc as usize]) {
+                        Ok(v) => {
+                            if b.ret().is_some() {
+                                reg!(dst) = v;
+                            }
+                        }
+                        Err(msg) => fail!(msg),
+                    }
                 }
                 Op::Read(d, ty) => {
                     let _ = output.flush();

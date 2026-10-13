@@ -2,6 +2,7 @@
 //! copy) per combination of argument types.
 
 use crate::ast::{Decl, Expr, Shape};
+use crate::builtins::Builtin;
 use crate::errors::{Error, Pos};
 use crate::lexer::miscased_statement_keyword;
 use crate::tir::*;
@@ -95,6 +96,51 @@ impl<'p> Checker<'p> {
         i
     }
 
+    /// A call of a built-in procedure or function: arity, use and argument types.
+    pub(crate) fn builtin_call(&mut self, b: Builtin, args: &[Expr], pos: Pos, in_expr: bool) -> TExpr {
+        let name = b.name();
+        if in_expr && b.ret().is_none() {
+            self.report_structural(Error::new(
+                pos,
+                format!("{} does not return a value: use it as a statement on its own line", name),
+            ));
+            return unknown(pos);
+        }
+        if !in_expr && b.ret().is_some() {
+            self.report_structural(Error::new(
+                pos,
+                format!("{} returns a value: use it in an expression, like v <- {}(...)", name, name),
+            ));
+            return unknown(pos);
+        }
+        let params = b.params();
+        if args.len() != params.len() {
+            let n = params.len();
+            self.report_structural(Error::new(
+                pos,
+                format!("\"{}\" takes {} value{}, here it gets {}", name, n, if n == 1 { "" } else { "s" }, args.len()),
+            ));
+            return unknown(pos);
+        }
+        let mut out = Vec::with_capacity(args.len());
+        for (k, (a, &p)) in args.iter().zip(params).enumerate() {
+            let t = self.expr(a);
+            let fits = match t.ty {
+                Type::Unknown => true,
+                Type::Base(x) => join(p, x) == Some(p),
+                _ => false,
+            };
+            if !fits {
+                self.report(Error::new(
+                    t.pos,
+                    format!("argument {} of \"{}\" must be {}, here it is {}", k + 1, name, p.name(), t.ty.full_name()),
+                ));
+            }
+            out.push(convert(t, Some(p)));
+        }
+        TExpr { kind: TExprKind::Builtin(b, out), ty: b.ret().map_or(Type::Unknown, Type::Base), pos }
+    }
+
     pub(crate) fn unknown_function(&self, name: &str, pos: Pos) -> Error {
         let e = Error::new(pos, format!("function \"{}\" does not exist", name));
         if let Some(k) = miscased_statement_keyword(name) {
@@ -102,6 +148,9 @@ impl<'p> Checker<'p> {
         }
         if let Some(b) = BUILTINS.iter().find(|b| b.eq_ignore_ascii_case(name)) {
             return e.with_hint(format!("did you mean {}?", b));
+        }
+        if let Some(b) = crate::builtins::lookup(&name.to_uppercase()) {
+            return e.with_hint(format!("did you mean {}?", b.name()));
         }
         e
     }

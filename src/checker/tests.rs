@@ -280,3 +280,23 @@ fn uncalled_subprograms_are_fully_checked() {
         "cannot use * between an int and a string"
     );
 }
+
+#[test]
+fn builtin_calls_are_typed() {
+    let ok = "variables:\n    c as string\n    n as int\n    t as float\n    ok as bool\nc <- RGB(255, 128, 0)\nn <- RANDOM(1, 6)\nt <- TIME()\nWINDOW(400, 300, \"x\")\nRECT(1, 2.5, 10, 10, c)\nok <- KEY(\"A\")\nMESSAGE(\"hi\")\n";
+    assert!(check_src(ok).is_ok(), "{:?}", check_src(ok).err());
+    assert_eq!(first_error("RECT(1, 2, 3, \"red\")\n").message, "\"RECT\" takes 5 values, here it gets 4");
+    assert_eq!(
+        first_error("variables:\n    n as int\nn <- SHOW()\n").message,
+        "SHOW does not return a value: use it as a statement on its own line"
+    );
+    assert_eq!(
+        first_error("RANDOM(1, 2)\n").message,
+        "RANDOM returns a value: use it in an expression, like v <- RANDOM(...)"
+    );
+    assert_eq!(
+        first_error("WINDOW(\"a\", 2, \"t\")\n").message,
+        "argument 1 of \"WINDOW\" must be an int, here it is a string"
+    );
+    assert_eq!(first_error("variables:\n    RECT as int\n").message, "\"RECT\" is a built-in name: choose another one");
+}

@@ -1,11 +1,14 @@
 //! Easier: an interpreter for school-style pseudocode.
 
 pub mod ast;
+pub mod builtins;
 pub mod bytecode;
 pub mod canvas;
 pub mod checker;
 pub mod compiler;
+pub mod dialogs;
 pub mod errors;
+pub mod graphics;
 pub mod lexer;
 pub mod parser;
 pub mod tir;

@@ -288,6 +288,14 @@ impl<'p> Checker<'p> {
                 ));
                 None
             }
+            _ if crate::builtins::lookup(name).is_some() => {
+                let b = crate::builtins::lookup(name).expect("checked above");
+                let call = self.builtin_call(b, args, pos, false);
+                match call.kind {
+                    TExprKind::Builtin(b, args) => Some(TStmt::Builtin(b, args, pos)),
+                    _ => None,
+                }
+            }
             _ => {
                 let call = self.call(name, args, pos, false);
                 match call.kind {

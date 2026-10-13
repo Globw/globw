@@ -278,6 +278,10 @@ impl<'a> FnCompiler<'a> {
                 let r = self.operand(x);
                 self.emit(Op::Length(d, r), pos);
             }
+            TExprKind::Builtin(b, args) => {
+                let first = self.args(args);
+                self.emit(Op::Builtin { id: b.id(), first, argc: args.len() as u16, dst: d }, pos);
+            }
         }
         self.next = mark;
     }
@@ -384,6 +388,11 @@ impl<'a> FnCompiler<'a> {
             TStmt::Return(None, pos) => {
                 self.emit(Op::RetNone, *pos);
             }
+            TStmt::Builtin(b, args, pos) => {
+                let first = self.args(args);
+                let dst = self.temp();
+                self.emit(Op::Builtin { id: b.id(), first, argc: args.len() as u16, dst }, *pos);
+            }
         }
         self.next = mark;
     }
@@ -482,6 +491,20 @@ mod tests {
         let code = &module.functions[0].code;
         assert!(code.iter().any(|op| matches!(op, crate::bytecode::Op::JumpUnlessI(..))), "{:?}", code);
         assert!(!code.iter().any(|op| matches!(op, crate::bytecode::Op::CmpI(..))), "{:?}", code);
+    }
+
+    #[test]
+    fn rgb_random_and_time() {
+        let src = "variables:\n    i, n as int\n    ok as bool\nok <- TRUE\nFOR(i FROM 1 TO 200)\n    n <- RANDOM(1, 3)\n    IF(n < 1 OR n > 3)\n        ok <- FALSE\n    END IF\nEND LOOP\noutput(RGB(255, 128, 0), \" \", RGB(300, -5, 16), \" \", ok, \" \", TIME() >= 0)\n";
+        assert_eq!(run_src(src, ""), "#ff8000 #ff0010 TRUE TRUE\n");
+        assert!(run_src("variables:\n    n as int\nn <- RANDOM(5, 1)\n", "")
+            .contains("RANDOM: the minimum (5) is greater than the maximum (1)"));
+    }
+
+    #[test]
+    fn graphics_need_a_window() {
+        assert!(run_src("RECT(0, 0, 10, 10, \"red\")\n", "").contains("there is no window: call WINDOW(...) first"));
+        assert_eq!(run_src("output(OPEN())\n", ""), "FALSE\n");
     }
 
     #[test]

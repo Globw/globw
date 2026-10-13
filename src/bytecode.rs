@@ -88,6 +88,9 @@ pub enum Op {
     Call { func: u32, first: Reg, argc: u16, dst: Reg },
     Ret(Reg),
     Read(Reg, BaseType),
+    /// calls built-in `id` (see `builtins::Builtin::from_id`) with `argc`
+    /// registers from `first`; a function's result goes to `dst`
+    Builtin { id: u16, first: Reg, argc: u16, dst: Reg },
     RetNone,
 }
 

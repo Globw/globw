@@ -16,6 +16,11 @@ use crate::tir::*;
 
 pub const BUILTINS: [&str; 5] = ["input", "output", "LENGTH", "APPEND", "REMOVE"];
 
+/// Names of all built-ins, which cannot be used for variables or functions.
+pub(crate) fn is_builtin_name(name: &str) -> bool {
+    BUILTINS.contains(&name) || crate::builtins::lookup(name).is_some()
+}
+
 /// A variable as the checker sees it. For arrays, matrices and lists `ty`
 /// is the element type.
 #[derive(Debug, Clone)]
@@ -161,7 +166,7 @@ impl<'p> Checker<'p> {
         let prog = self.prog;
         let mut functions = HashSet::new();
         for s in &prog.subprograms {
-            if BUILTINS.contains(&s.name.as_str()) {
+            if is_builtin_name(&s.name) {
                 self.errors.push(Error::new(s.pos, format!("\"{}\" is a built-in name: choose another one", s.name)));
             } else if !functions.insert(s.name.clone()) {
                 self.errors.push(Error::new(s.pos, format!("function \"{}\" is defined twice", s.name)));
@@ -183,7 +188,7 @@ impl<'p> Checker<'p> {
         for &(name, pos) in names {
             let message = if !seen.insert(name) {
                 format!("\"{}\" is declared twice", name)
-            } else if BUILTINS.contains(&name) {
+            } else if is_builtin_name(name) {
                 format!("\"{}\" is a built-in name: choose another one", name)
             } else if functions.contains(name) {
                 format!("\"{}\" is already the name of a function", name)

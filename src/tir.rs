@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use crate::ast::{BinOp, Shape};
+use crate::builtins::Builtin;
 use crate::errors::Pos;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -122,6 +123,8 @@ pub enum TExprKind {
     /// call of `TProgram::functions[index]`
     Call(usize, Vec<TExpr>),
     Length(Box<TExpr>),
+    /// a built-in function (graphics, dialogs, RGB, RANDOM, TIME)
+    Builtin(Builtin, Vec<TExpr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,6 +147,8 @@ pub enum TStmt {
     Append(TExpr, TExpr),
     Remove(TExpr, TExpr, Pos),
     Return(Option<TExpr>, Pos),
+    /// a built-in procedure (WINDOW, SHOW, RECT, MESSAGE...)
+    Builtin(Builtin, Vec<TExpr>, Pos),
 }
 
 #[derive(Debug, Clone, PartialEq)]
