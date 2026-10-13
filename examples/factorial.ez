@@ -1,0 +1,10 @@
+variables: n
+FUNCTION factorial(k)
+    IF(k <= 1)
+        RETURN 1
+    END IF
+    RETURN k * factorial(k - 1)
+END FUNCTION
+FOR(n FROM 1 TO 5)
+    output(n, "! = ", factorial(n))
+END LOOP

@@ -1,0 +1,18 @@
+variables: grades[5], i, total, average
+FOR(i FROM 1 TO 5)
+    input(grades[i])
+END LOOP
+total <- 0
+FOR(i FROM 1 TO 5)
+    total <- total + grades[i]
+END LOOP
+average <- total / 5
+output("Average: ", average)
+IF(average >= 8)
+    output("Great")
+ELSE
+IF(average >= 6)
+    output("Pass")
+ELSE
+    output("Fail")
+END IF

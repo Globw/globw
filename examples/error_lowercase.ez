@@ -1,0 +1,5 @@
+variables: x
+x <- 1
+if(x > 0)
+    output(x)
+END IF

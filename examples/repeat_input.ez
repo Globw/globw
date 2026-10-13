@@ -1,0 +1,6 @@
+variables: n
+REPEAT
+    output("Enter a positive number:")
+    input(n)
+WHILE(n <= 0)
+output("Thanks, ", n)

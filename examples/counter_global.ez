@@ -1,0 +1,9 @@
+GLOBAL variables: count
+PROCEDURE tick()
+    count <- count + 1
+END PROCEDURE
+count <- 0
+tick()
+tick()
+tick()
+output("count = ", count)
