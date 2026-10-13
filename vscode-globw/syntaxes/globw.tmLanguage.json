@@ -86,7 +86,7 @@
         },
         {
           "name": "support.function.builtin.globw",
-          "match": "\\b(input|output|length|append|remove|window|open|show|clear|rect|circle|line|text|key|mouse_x|mouse_y|click|message|confirm|ask|rgb|random|time|camera|rotate|cube|box|sphere|triangle3d|sin|cos|sqrt|round)(?=\\s*\\()"
+          "match": "\\b(input|output|length|append|remove|window|open|show|clear|rect|circle|line|text|key|mouse_x|mouse_y|click|message|confirm|ask|rgb|random|time|camera|rotate|cube|box|sphere|triangle3d|sin|cos|sqrt|round|font|text_width)(?=\\s*\\()"
         }
       ]
     },

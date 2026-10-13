@@ -512,6 +512,22 @@ mod tests {
     }
 
     #[test]
+    fn fonts_work_without_a_window() {
+        let src = "variables:
+    a, b as int
+font(\"pixel\", 16)
+a = text_width(\"abc\")
+font(\"pixel\", 32)
+b = text_width(\"abc\")
+output(a, \" \", b)
+";
+        assert_eq!(run_src(src, ""), "48 96
+");
+        assert!(run_src("font(\"Nope Font\", 12)
+", "").contains("font \"Nope Font\" not found"));
+    }
+
+    #[test]
     fn graphics_need_a_window() {
         assert!(run_src("rect(0, 0, 10, 10, \"red\")\n", "").contains("there is no window: call window(...) first"));
         assert!(run_src("cube(0, 0, 5, 1, \"red\")\n", "").contains("there is no window: call window(...) first"));

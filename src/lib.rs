@@ -8,6 +8,7 @@ pub mod checker;
 pub mod compiler;
 pub mod dialogs;
 pub mod errors;
+pub mod fonts;
 pub mod graphics;
 pub mod lexer;
 pub mod parser;

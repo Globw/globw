@@ -1,0 +1,41 @@
+' ==================================================
+'  PROVA DEI FONT
+'  font(nome, dimensione) sceglie il font per text:
+'  un font installato in Windows, un file .ttf/.otf
+'  (anche in una sottocartella, come in Python) o "pixel".
+' ==================================================
+
+variables:
+    titolo as string
+    x as int
+
+window(800, 500, "Font")
+while(open())
+    clear("#1e1e2e")
+
+    ' titolo centrato grazie a text_width
+    font("Segoe UI", 48)
+    titolo = "Ciao da Globw!"
+    x = (800 - text_width(titolo)) div 2
+    text(x, 30, titolo, "white")
+
+    font("Segoe UI", 22)
+    text(40, 130, "Segoe UI: il font di Windows, liscio e leggibile", "#cdd6f4")
+
+    font("Arial", 22)
+    text(40, 180, "Arial: perché, città, è già così", "#f9e2af")
+
+    font("Comic Sans MS", 22)
+    text(40, 230, "Comic Sans MS: per i più coraggiosi", "#a6e3a1")
+
+    font("Consolas", 22)
+    text(40, 280, "Consolas: per il codice  x = x + 1", "#89b4fa")
+
+    font("pixel", 16)
+    text(40, 340, "PIXEL: IL FONT RETRO, PER I GIOCHI", "#f38ba8")
+
+    ' un file di font si usa così (se lo metti nella cartella del programma):
+    ' font("fonts/MioFont.ttf", 32)
+
+    show()
+end loop

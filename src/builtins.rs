@@ -6,6 +6,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::canvas::parse_color;
 use crate::dialogs;
+use crate::fonts::Fonts;
 use crate::graphics::Graphics;
 use crate::render3d::Vec3;
 use crate::tir::BaseType::{self, Bool, Int, Real, Str};
@@ -41,13 +42,15 @@ pub enum Builtin {
     Cos,
     Sqrt,
     Round,
+    Font,
+    TextWidth,
 }
 
 use Builtin::*;
 
-const ALL: [Builtin; 28] = [
+const ALL: [Builtin; 30] = [
     Window, Open, Show, Clear, Rect, Circle, Line, Text, Key, MouseX, MouseY, Click, Message, Confirm, Ask, Rgb, Random,
-    Time, Camera, Rotate, Cube, Box3, Sphere, Triangle3, Sin, Cos, Sqrt, Round,
+    Time, Camera, Rotate, Cube, Box3, Sphere, Triangle3, Sin, Cos, Sqrt, Round, Font, TextWidth,
 ];
 
 impl Builtin {
@@ -81,6 +84,8 @@ impl Builtin {
             Cos => "cos",
             Sqrt => "sqrt",
             Round => "round",
+            Font => "font",
+            TextWidth => "text_width",
         }
     }
 
@@ -101,6 +106,8 @@ impl Builtin {
             Box3 => &[Real, Real, Real, Real, Real, Real, Str],
             Triangle3 => &[Real, Real, Real, Real, Real, Real, Real, Real, Real, Str],
             Sin | Cos | Sqrt | Round => &[Real],
+            Font => &[Str, Int],
+            TextWidth => &[Str],
         }
     }
 
@@ -111,9 +118,9 @@ impl Builtin {
             MouseX | MouseY | Random => Some(Int),
             Ask | Rgb => Some(Str),
             Time | Sin | Cos | Sqrt => Some(Real),
-            Round => Some(Int),
+            Round | TextWidth => Some(Int),
             Window | Show | Clear | Rect | Circle | Line | Text | Message | Camera | Rotate | Cube | Box3 | Sphere
-            | Triangle3 => None,
+            | Triangle3 | Font => None,
         }
     }
 
@@ -156,6 +163,7 @@ fn text(v: &Value) -> &str {
 /// Run-time state of the built-ins: the window, the clock and the random generator.
 pub struct Env {
     graphics: Option<Graphics>,
+    fonts: Fonts,
     start: Instant,
     rng: u64,
 }
@@ -163,7 +171,7 @@ pub struct Env {
 impl Default for Env {
     fn default() -> Env {
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0x9E37_79B9, |d| d.as_nanos() as u64);
-        Env { graphics: None, start: Instant::now(), rng: seed | 1 }
+        Env { graphics: None, fonts: Fonts::default(), start: Instant::now(), rng: seed | 1 }
     }
 }
 
@@ -254,9 +262,15 @@ impl Env {
             Text => {
                 let c = parse_color(text(&args[3]))?;
                 let (x, y) = (real(&args[0]), real(&args[1]));
-                self.window()?.canvas.text(x, y, text(&args[2]), c);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                self.fonts.draw(&mut g.canvas, x, y, text(&args[2]), c)?;
                 Value::Null
             }
+            Font => {
+                self.fonts.set(text(&args[0]), int(&args[1]))?;
+                Value::Null
+            }
+            TextWidth => Value::Int(self.fonts.width(text(&args[0]))?),
             Key => Value::Bool(self.window()?.key(text(&args[0]))?),
             MouseX => Value::Int(self.window()?.mouse().0),
             MouseY => Value::Int(self.window()?.mouse().1),

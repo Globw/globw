@@ -74,6 +74,7 @@ test('functions: definition, parameters, calls', () => {
     assert.strictEqual(scope('if(key("A") and mouse_x() > 3)', 'mouse_x'), 'support.function.builtin.globw');
     assert.strictEqual(scope('triangle3d(0, 0, 0, 1, 0, 0, 0, 1, 0, c)', 'triangle3d'), 'support.function.builtin.globw');
     assert.strictEqual(scope('x = sin(a) + round(b)', 'sin'), 'support.function.builtin.globw');
+    assert.strictEqual(scope('w = text_width("hi")', 'text_width'), 'support.function.builtin.globw');
 });
 
 test('assignment and comparison', () => {

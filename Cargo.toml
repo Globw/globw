@@ -11,4 +11,6 @@ panic = "abort"
 
 [dependencies]
 font8x8 = "0.3"
+fontdue = "0.9.4"
 minifb = "0.29"
+ttf-parser = "0.25.1"

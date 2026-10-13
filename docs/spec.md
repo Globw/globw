@@ -262,7 +262,9 @@ end loop
 | `rect(x, y, width, height as float, color as string)` | procedure | filled rectangle; (x, y) is its top-left corner |
 | `circle(x, y, radius as float, color as string)` | procedure | filled circle centered on (x, y) |
 | `line(x1, y1, x2, y2 as float, color as string)` | procedure | 1-pixel line |
-| `text(x, y as float, text as string, color as string)` | procedure | text with a built-in 8×8 font drawn at double size (16 pixels per character); accented letters included |
+| `text(x, y as float, text as string, color as string)` | procedure | text in the current font; (x, y) is the top-left corner of the line |
+| `font(name as string, size as int)` | procedure | chooses the font for the next `text` calls; works with or without a window (see below) |
+| `text_width(text as string)` | function → `int` | width in pixels of the text in the current font |
 | `key(name as string)` | function → `bool` | `true` while the key is held: `"A"`…`"Z"`, `"0"`…`"9"`, `"LEFT"`, `"RIGHT"`, `"UP"`, `"DOWN"`, `"SPACE"`, `"ENTER"`, `"ESCAPE"`, `"SHIFT"`, `"CTRL"` |
 | `mouse_x()`, `mouse_y()` | function → `int` | mouse position inside the window |
 | `click()` | function → `bool` | `true` while the left button is held |
@@ -274,6 +276,12 @@ end loop
   - a drawing command, `show`, `key`, `mouse_x`, `mouse_y` or `click` used before `window` (the hint says to call `window(...)` first);
   - a non-positive window size.
   `open()` before `window` returns `false`.
+- **Fonts:** `size` is the height in pixels, from 1 to 500. The `name` of `font` can be:
+  - the family name of a font installed in Windows, in any case, like `"Arial"`, `"Segoe UI"` or `"Comic Sans MS"`;
+  - a font file ending in `.ttf`, `.otf` or `.ttc`, like `"fonts/MyFont.ttf"`; a relative path starts from the folder of the program;
+  - `"pixel"`: the built-in 8×8 bitmap font, drawn at a multiple of 8 pixels.
+
+  Vector fonts are drawn anti-aliased. Before any `font` call the font is `"Segoe UI"` at 20 pixels (or `"pixel"` at 16 if Segoe UI is missing). An unknown font or an unreadable file is a run-time error.
 - **End of the program:** when the program ends while the window is still open, the last frame stays on screen until the user closes the window.
 
 ### 6.8 Dialog boxes

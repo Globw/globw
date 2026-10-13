@@ -34,9 +34,6 @@ pub fn parse_color(text: &str) -> Result<u32, String> {
     Err(format!("unknown color \"{}\": use a name like \"red\" or a code like \"#ff8800\"", text))
 }
 
-/// Size of a character on screen: the 8×8 font drawn at double size.
-pub const CHAR_SIZE: i64 = 16;
-
 pub struct Canvas {
     pub w: usize,
     pub h: usize,
@@ -115,8 +112,24 @@ impl Canvas {
         }
     }
 
+    /// Mixes `c` into the pixel with opacity `alpha` (0..255), for anti-aliased text.
+    pub fn blend(&mut self, x: i64, y: i64, c: u32, alpha: u8) {
+        if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
+            return;
+        }
+        let i = y as usize * self.w + x as usize;
+        let (old, a) = (self.pixels[i], alpha as u32);
+        let mix = |shift: u32| ((((c >> shift) & 0xFF) * a + ((old >> shift) & 0xFF) * (255 - a)) / 255) << shift;
+        self.pixels[i] = mix(16) | mix(8) | mix(0);
+    }
+
     /// Text in the 8×8 font at double size, one 16×16 cell per character.
     pub fn text(&mut self, x: f64, y: f64, text: &str, c: u32) {
+        self.text_scaled(x, y, text, c, 2);
+    }
+
+    /// Text in the 8×8 font, each font pixel drawn as a `scale`×`scale` square.
+    pub fn text_scaled(&mut self, x: f64, y: f64, text: &str, c: u32, scale: i64) {
         let (x0, y0) = (x.round() as i64, y.round() as i64);
         for (k, ch) in text.chars().enumerate() {
             let glyph = BASIC_FONTS
@@ -124,13 +137,15 @@ impl Canvas {
                 .or_else(|| LATIN_FONTS.get(ch))
                 .or_else(|| BASIC_FONTS.get('?'))
                 .unwrap_or([0; 8]);
-            let cell = x0 + k as i64 * CHAR_SIZE;
+            let cell = x0 + k as i64 * 8 * scale;
             for (row, bits) in glyph.iter().enumerate() {
                 for col in 0..8 {
                     if bits & (1 << col) != 0 {
-                        let (px, py) = (cell + col * 2, y0 + row as i64 * 2);
-                        for (ox, oy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                            self.set(px + ox, py + oy, c);
+                        let (px, py) = (cell + col * scale, y0 + row as i64 * scale);
+                        for oy in 0..scale {
+                            for ox in 0..scale {
+                                self.set(px + ox, py + oy, c);
+                            }
                         }
                     }
                 }

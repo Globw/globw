@@ -18,6 +18,10 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
+    // relative paths in the program (for example font files) start from its folder
+    if let Some(dir) = std::path::Path::new(file).parent().filter(|d| !d.as_os_str().is_empty()) {
+        let _ = std::env::set_current_dir(dir);
+    }
     let module = match globw::compile(&source) {
         Ok(m) => m,
         Err(errors) => {

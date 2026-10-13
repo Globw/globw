@@ -314,3 +314,12 @@ fn builtins_3d_are_typed() {
         "argument 4 of \"camera\" must be a float, here it is a string"
     );
 }
+
+#[test]
+fn font_builtins_are_typed() {
+    assert!(check_src("variables:\n    w as int\nfont(\"Arial\", 24)\nw = text_width(\"hi\")\n").is_ok());
+    assert_eq!(
+        first_error("font(24, \"Arial\")\n").message,
+        "argument 1 of \"font\" must be a string, here it is an int"
+    );
+}
