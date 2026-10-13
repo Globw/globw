@@ -6,3 +6,5 @@ pub mod ast;
 pub mod parser;
 pub mod tir;
 pub mod checker;
+pub mod bytecode;
+pub mod vm;
