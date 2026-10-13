@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod bytecode;
+pub mod canvas;
 pub mod checker;
 pub mod compiler;
 pub mod errors;

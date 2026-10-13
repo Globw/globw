@@ -8,3 +8,7 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+
+[dependencies]
+font8x8 = "0.3"
+minifb = "0.29"
