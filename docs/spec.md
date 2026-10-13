@@ -235,6 +235,66 @@ output("Sum: ", s)
 
 Indices start at **1** for arrays, matrices, lists and strings. An out-of-range index is a run-time error.
 
+### 6.7 Graphics window
+
+A program can open **one** window and draw in it, game-style: each frame is drawn from scratch and then shown.
+
+```
+variables:
+    x as float
+x <- 100
+WINDOW(800, 600, "Demo")
+WHILE(OPEN())
+    CLEAR("black")
+    RECT(x, 250, 50, 50, "red")
+    IF(KEY("RIGHT"))
+        x <- x + 4
+    END IF
+    SHOW()
+END LOOP
+```
+
+| Command | Kind | Effect |
+|---|---|---|
+| `WINDOW(width as int, height as int, title as string)` | procedure | opens the window (a second call replaces it); the canvas starts black |
+| `OPEN()` | function → `bool` | `TRUE` until the user closes the window |
+| `SHOW()` | procedure | shows what was drawn, reads keyboard and mouse, and waits so that frames run at about 60 per second |
+| `CLEAR(color as string)` | procedure | fills the whole canvas |
+| `RECT(x, y, width, height as float, color as string)` | procedure | filled rectangle; (x, y) is its top-left corner |
+| `CIRCLE(x, y, radius as float, color as string)` | procedure | filled circle centered on (x, y) |
+| `LINE(x1, y1, x2, y2 as float, color as string)` | procedure | 1-pixel line |
+| `TEXT(x, y as float, text as string, color as string)` | procedure | text with a built-in 8×8 font drawn at double size (16 pixels per character); accented letters included |
+| `KEY(name as string)` | function → `bool` | `TRUE` while the key is held: `"A"`…`"Z"`, `"0"`…`"9"`, `"LEFT"`, `"RIGHT"`, `"UP"`, `"DOWN"`, `"SPACE"`, `"ENTER"`, `"ESCAPE"`, `"SHIFT"`, `"CTRL"` |
+| `MOUSE_X()`, `MOUSE_Y()` | function → `int` | mouse position inside the window |
+| `CLICK()` | function → `bool` | `TRUE` while the left button is held |
+
+- **Coordinates:** (0, 0) is the top-left corner, x grows to the right and y grows downwards. Coordinates are `float` (an `int` is accepted) and are rounded to pixels; whatever falls outside the canvas is cut off.
+- **Colors:** one of the names `"black"`, `"white"`, `"red"`, `"green"`, `"blue"`, `"yellow"`, `"orange"`, `"purple"`, `"pink"`, `"cyan"`, `"gray"`, `"brown"` (case-insensitive), or `"#rrggbb"`.
+- **Run-time errors:**
+  - an unknown color or key name;
+  - a drawing command, `SHOW`, `KEY`, `MOUSE_X`, `MOUSE_Y` or `CLICK` used before `WINDOW` (the hint says to call `WINDOW(...)` first);
+  - a non-positive window size.
+  `OPEN()` before `WINDOW` returns `FALSE`.
+- **End of the program:** when the program ends while the window is still open, the last frame stays on screen until the user closes the window.
+
+### 6.8 Dialog boxes
+
+| Command | Kind | Effect |
+|---|---|---|
+| `MESSAGE(text as string)` | procedure | Windows message box with an OK button; waits for it |
+| `CONFIRM(question as string)` | function → `bool` | Yes/No box: `TRUE` for Yes |
+| `ASK(question as string)` | function → `string` | input box; returns the text typed, or `""` if cancelled |
+
+### 6.9 Other built-in functions
+
+| Command | Kind | Effect |
+|---|---|---|
+| `RGB(r, g, b as int)` | function → `string` | the color `"#rrggbb"`; each value is clamped to 0…255 |
+| `RANDOM(min, max as int)` | function → `int` | a random integer from min to max included (run-time error if min > max) |
+| `TIME()` | function → `float` | seconds since the program started |
+
+Built-in procedures can only be used as statements, and built-in functions only inside expressions. Arguments follow the same rules as user functions (§6.4). All these names are reserved: they cannot be used for variables or user functions.
+
 ## 7. Errors
 
 There is one format for all errors, with line, column and a marker under the offending code:
@@ -273,6 +333,10 @@ The project is a Cargo project at the repository root, with one module per phase
 | `compiler.rs` | typed IR → register bytecode | tir, bytecode |
 | `vm.rs` | bytecode execution | bytecode, errors |
 | `lib.rs` | `compile` and `run` entry points | all |
+| `builtins.rs` | table of built-in procedures/functions (names, parameter and return types) and their run-time dispatch | tir, canvas, graphics, dialogs |
+| `canvas.rs` | pixel buffer: colors, shapes, text (no window, testable) | — |
+| `graphics.rs` | the window, keyboard and mouse (crate `minifb`) | canvas |
+| `dialogs.rs` | Windows message, Yes/No and input boxes | — |
 | `main.rs` | command line | lib |
 
 **Speed choices**
@@ -296,4 +360,4 @@ easier --check program.ez   only check for errors, do not run
 
 ## 10. Out of scope for v1
 
-File I/O, modules and imports, records/structs, math and random functions, editor syntax highlighting, interactive REPL, JIT compilation.
+File I/O, modules and imports, records/structs, math functions, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.
