@@ -123,7 +123,7 @@ impl<'p> Checker<'p> {
     pub(crate) fn int_expr(&mut self, t: TExpr, what: &str) -> TExpr {
         self.hint(&t, BaseType::Int);
         if t.ty != Type::Base(BaseType::Int) && t.ty != Type::Unknown {
-            self.report(Error::new(t.pos, format!("{} must be an integer, here it is {}", what, t.ty.name())));
+            self.report(Error::new(t.pos, format!("{} must be an int, here it is {}", what, t.ty.name())));
         }
         t
     }

@@ -31,7 +31,7 @@ pub(crate) struct Var {
 
 impl Var {
     pub(crate) fn declared(d: &Decl) -> Var {
-        Var { name: d.name.clone(), shape: d.shape.clone(), ty: None, origin: None, conflict: None, is_param: false }
+        Var { name: d.name.clone(), shape: d.shape.clone(), ty: Some(d.ty), origin: Some(d.pos), conflict: None, is_param: false }
     }
 
     pub(crate) fn full_type(&self) -> Type {
@@ -50,7 +50,6 @@ pub(crate) struct Instance {
     pub(crate) sub: Option<usize>,
     pub(crate) locals: Vec<Var>,
     pub(crate) ret: Option<BaseType>,
-    pub(crate) ret_origin: Option<Pos>,
     pub(crate) final_index: Option<usize>,
 }
 
@@ -123,7 +122,6 @@ impl<'p> Checker<'p> {
             sub: None,
             locals: prog.locals.iter().map(Var::declared).collect(),
             ret: None,
-            ret_origin: None,
             final_index: None,
         };
         Checker {
@@ -145,11 +143,10 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Records an error that depends on types. Skipped in never-called subprograms.
+    /// Records an error that depends on types (all types are declared, so
+    /// these are reported in never-called subprograms too).
     pub(crate) fn report(&mut self, e: Error) {
-        if !self.names_only {
-            self.report_structural(e);
-        }
+        self.report_structural(e);
     }
 
     /// Records an error that does not depend on types. Only the final round
@@ -305,8 +302,7 @@ impl<'p> Checker<'p> {
             if reached {
                 continue;
             }
-            let key = vec![Type::Unknown; prog.subprograms[s].params.len()];
-            let inst = self.instance(s, key);
+            let inst = self.instance(s);
             self.names_only = true;
             self.visit(inst);
             self.names_only = false;
@@ -352,31 +348,21 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// Joins `t` into the type of a variable (or of its elements), widening
-    /// integer to real. An incompatible type is recorded as a conflict.
+    /// A value of type `t` goes into a variable (or one of its elements).
+    /// It must fit the declared type: an int fits a float, nothing else differs.
     pub(crate) fn widen(&mut self, p: Place, t: BaseType, pos: Pos) {
         let v = self.var_mut(p);
-        let changed = match v.ty {
+        match v.ty {
             None => {
                 v.ty = Some(t);
                 v.origin = Some(pos);
-                true
+                self.changed = true;
             }
-            Some(old) => match join(old, t) {
-                Some(new) => {
-                    v.ty = Some(new);
-                    new != old
-                }
-                None => {
-                    if v.conflict.is_none() {
-                        v.conflict = Some(conflict_error(v, old, t, pos));
-                    }
-                    false
-                }
-            },
-        };
-        if changed {
-            self.changed = true;
+            Some(declared) if join(declared, t) == Some(declared) => {}
+            Some(declared) => {
+                let err = conflict_error(v, declared, t, pos);
+                self.report(err);
+            }
         }
     }
 
@@ -394,14 +380,18 @@ impl<'p> Checker<'p> {
     }
 }
 
-fn conflict_error(v: &Var, old: BaseType, new: BaseType, pos: Pos) -> Error {
-    let line = v.origin.map_or(String::new(), |p| format!(" (line {})", p.line));
+fn conflict_error(v: &Var, declared: BaseType, new: BaseType, pos: Pos) -> Error {
     let message = if v.shape == Shape::Scalar {
-        format!("\"{}\" is {}{}, but here it gets {}", v.name, old.name(), line, new.name())
+        format!("\"{}\" is {}, but here it gets {}", v.name, declared.name(), new.name())
     } else {
-        format!("the elements of \"{}\" are {}{}, but here they get {}", v.name, old.plural(), line, new.name())
+        format!("the elements of \"{}\" are {}, but here they get {}", v.name, declared.plural(), new.name())
     };
-    Error::new(pos, message)
+    let e = Error::new(pos, message);
+    if declared == BaseType::Int && new == BaseType::Real {
+        e.with_hint("use DIV for integer division")
+    } else {
+        e
+    }
 }
 
 fn slot(v: &Var) -> Slot {

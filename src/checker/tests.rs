@@ -21,59 +21,59 @@ fn t(name: &str, ty: Type) -> (String, Type) {
 
 use BaseType::*;
 
+const DOUBLE: &str = "FUNCTION double(x as int) as int\n    RETURN x * 2\nEND FUNCTION\n";
+
 #[test]
-fn infers_types_from_assignments() {
-    let src = "variables: a, b, c, d\na <- 1\nb <- 2.5\nc <- \"x\"\nd <- a < 2\n";
+fn declared_types_are_kept() {
+    let src = "variables:\n    a as int\n    b as float\n    c as string\n    d as bool\n    v as int[3]\n    l as list of string\na <- 1\n";
     assert_eq!(
         main_types(src),
-        vec![t("a", Type::Base(Int)), t("b", Type::Base(Real)), t("c", Type::Base(Str)), t("d", Type::Base(Bool))]
+        vec![
+            t("a", Type::Base(Int)),
+            t("b", Type::Base(Real)),
+            t("c", Type::Base(Str)),
+            t("d", Type::Base(Bool)),
+            t("v", Type::Array(Some(Int))),
+            t("l", Type::List(Some(Str))),
+        ]
     );
 }
 
 #[test]
-fn integer_widens_to_real() {
-    assert_eq!(main_types("variables: x\nx <- 0\nx <- x + 0.5\n"), vec![t("x", Type::Base(Real))]);
+fn int_goes_into_float() {
+    assert!(check_src("variables:\n    x as float\n    v as float[2]\nx <- 1\nx <- x + 1\nv[1] <- 3\n").is_ok());
 }
 
 #[test]
-fn input_type_comes_from_later_use() {
-    let src = "variables: n\ninput(n)\nIF(n > 0)\n    output(n)\nEND IF\n";
-    assert_eq!(main_types(src), vec![t("n", Type::Base(Int))]);
-}
-
-#[test]
-fn input_only_defaults_to_string() {
-    assert_eq!(main_types("variables: s\ninput(s)\noutput(s)\n"), vec![t("s", Type::Base(Str))]);
-}
-
-#[test]
-fn types_flow_backwards_through_assignments() {
-    let src = "variables: a, b\ninput(a)\nb <- a\nb <- b * 2\n";
-    assert_eq!(main_types(src), vec![t("a", Type::Base(Int)), t("b", Type::Base(Int))]);
-}
-
-#[test]
-fn arithmetic_makes_unknown_operands_numbers() {
-    assert_eq!(main_types("variables: a, b\ninput(a)\nb <- a * a\n")[0], t("a", Type::Base(Int)));
-}
-
-#[test]
-fn element_types() {
-    let src = "variables: v[3], l[]\nv[1] <- 2\nAPPEND(l, \"x\")\n";
-    assert_eq!(main_types(src), vec![t("v", Type::Array(Some(Int))), t("l", Type::List(Some(Str)))]);
-}
-
-#[test]
-fn string_concatenation() {
-    let src = "variables: s, n\nn <- 3\ns <- \"n = \" + n\n";
-    assert_eq!(main_types(src)[0], t("s", Type::Base(Str)));
-}
-
-#[test]
-fn conflict_is_reported() {
-    let e = first_error("variables: x\nx <- 1\nx <- \"a\"\n");
-    assert_eq!(e.message, "\"x\" is an integer (line 2), but here it gets a string");
+fn float_into_int_is_an_error() {
+    let e = first_error("variables:\n    n as int\nn <- 2.5\n");
+    assert_eq!(e.message, "\"n\" is an int, but here it gets a float");
+    assert_eq!(e.hint.as_deref(), Some("use DIV for integer division"));
     assert_eq!(e.pos.line, 3);
+}
+
+#[test]
+fn string_into_int_is_an_error() {
+    assert_eq!(first_error("variables:\n    n as int\nn <- \"a\"\n").message, "\"n\" is an int, but here it gets a string");
+    assert_eq!(
+        first_error("variables:\n    l as list of string\nAPPEND(l, 1)\n").message,
+        "the elements of \"l\" are strings, but here they get an int"
+    );
+}
+
+#[test]
+fn every_wrong_assignment_is_reported() {
+    let errors = check_src("variables:\n    n as int\nn <- \"a\"\nn <- TRUE\n").unwrap_err();
+    assert_eq!(errors.len(), 2);
+}
+
+#[test]
+fn input_plus_input_adds_numbers() {
+    let p = check_src("variables:\n    a, b, c as int\ninput(a, b)\nc <- a + b\n").unwrap();
+    match &p.functions[0].body[1] {
+        TStmt::Assign(_, v) => assert!(matches!(v.kind, TExprKind::Binary(crate::ast::BinOp::Add, Int, ..)), "{:?}", v),
+        other => panic!("{:?}", other),
+    }
 }
 
 #[test]
@@ -86,60 +86,69 @@ fn undeclared_variable() {
 
 #[test]
 fn miscased_value_keyword_hint() {
-    let e = first_error("variables: b\nb <- true\n");
+    let e = first_error("variables:\n    b as bool\nb <- true\n");
     assert_eq!(e.hint.as_deref(), Some("keywords are written in UPPERCASE: write TRUE"));
 }
 
 #[test]
 fn operator_type_errors() {
-    assert_eq!(first_error("variables: a\na <- 1 + TRUE\n").message, "cannot use + between an integer and a boolean");
-    assert_eq!(first_error("variables: a\na <- 7.5 MOD 2\n").message, "DIV and MOD only work with integers");
-    assert_eq!(first_error("variables: a\na <- \"x\" < 1\n").message, "cannot compare a string with an integer");
+    let a = "variables:\n    a as int\n    f as float\n    s as string\n    ok as bool\n";
+    assert_eq!(first_error(&format!("{}a <- 1 + TRUE\n", a)).message, "cannot use + between an int and a bool");
+    assert_eq!(first_error(&format!("{}f <- 7.5 MOD 2\n", a)).message, "DIV and MOD only work with integers");
+    assert_eq!(first_error(&format!("{}ok <- \"x\" < 1\n", a)).message, "cannot compare a string with an int");
     assert_eq!(
-        first_error("variables: a\na <- 1\nIF(a)\nEND IF\n").message,
-        "the condition must be TRUE or FALSE, here it is an integer"
+        first_error(&format!("{}a <- 1\nIF(a)\nEND IF\n", a)).message,
+        "the condition must be TRUE or FALSE, here it is an int"
     );
+    assert!(check_src(&format!("{}a <- 3\ns <- \"n = \" + a\n", a)).is_ok());
 }
 
 #[test]
 fn use_before_assignment_in_if_without_else() {
-    let e = first_error("variables: x, y\nIF(TRUE)\n    x <- 1\nEND IF\ny <- x\n");
+    let e = first_error("variables:\n    x, y as int\nIF(TRUE)\n    x <- 1\nEND IF\ny <- x\n");
     assert_eq!(e.message, "variable \"x\" might not have a value yet");
-    assert_eq!(e.pos.line, 5);
+    assert_eq!(e.pos.line, 6);
 }
 
 #[test]
 fn use_before_assignment_in_while() {
-    let e = first_error("variables: x, y\nWHILE(FALSE)\n    x <- 1\nEND LOOP\ny <- x\n");
+    let e = first_error("variables:\n    x, y as int\nWHILE(FALSE)\n    x <- 1\nEND LOOP\ny <- x\n");
     assert_eq!(e.message, "variable \"x\" might not have a value yet");
 }
 
 #[test]
 fn assignment_in_both_branches_or_repeat_is_fine() {
-    assert!(check_src("variables: x, y\nIF(TRUE)\n    x <- 1\nELSE\n    x <- 2\nEND IF\ny <- x\n").is_ok());
-    assert!(check_src("variables: x, y\nREPEAT\n    x <- 1\nWHILE(FALSE)\ny <- x\n").is_ok());
+    let d = "variables:\n    x, y as int\n";
+    assert!(check_src(&format!("{}IF(TRUE)\n    x <- 1\nELSE\n    x <- 2\nEND IF\ny <- x\n", d)).is_ok());
+    assert!(check_src(&format!("{}REPEAT\n    x <- 1\nWHILE(FALSE)\ny <- x\n", d)).is_ok());
 }
 
 #[test]
-fn for_variable_must_be_integer() {
-    let e = first_error("variables: i\ni <- 0.5\nFOR(i FROM 1 TO 3)\nEND LOOP\n");
-    assert_eq!(e.message, "the FOR variable must be an integer, \"i\" is a real");
+fn for_variable_must_be_int() {
+    let e = first_error("variables:\n    i as float\nFOR(i FROM 1 TO 3)\nEND LOOP\n");
+    assert_eq!(e.message, "the FOR variable must be an int, \"i\" is a float");
 }
 
 #[test]
 fn length_rules() {
-    assert_eq!(main_types("variables: v[3], n\nn <- LENGTH(v)\n")[1], t("n", Type::Base(Int)));
-    assert_eq!(first_error("variables: m[2, 2], n\nn <- LENGTH(m)\n").message, "LENGTH cannot be used on a matrix");
+    assert!(check_src("variables:\n    v as int[3]\n    n as int\nn <- LENGTH(v)\n").is_ok());
+    assert_eq!(
+        first_error("variables:\n    m as int[2, 2]\n    n as int\nn <- LENGTH(m)\n").message,
+        "LENGTH cannot be used on a matrix"
+    );
 }
 
 #[test]
 fn index_errors() {
     assert_eq!(
-        first_error("variables: m[2, 2]\nm[1] <- 0\n").message,
+        first_error("variables:\n    m as int[2, 2]\nm[1] <- 0\n").message,
         "\"m\" is a matrix: it needs 2 indices, like m[i, j]"
     );
-    assert_eq!(first_error("variables: v[2]\nv <- 1\n").message, "a whole array or list cannot be assigned at once");
-    assert_eq!(first_error("variables: x\nx <- 1\nx[1] <- 2\n").message, "\"x\" is not an array: [ ] cannot be used on it");
+    assert_eq!(first_error("variables:\n    v as int[2]\nv <- 1\n").message, "a whole array or list cannot be assigned at once");
+    assert_eq!(
+        first_error("variables:\n    x as int\nx <- 1\nx[1] <- 2\n").message,
+        "\"x\" is not an array: [ ] cannot be used on it"
+    );
 }
 
 #[test]
@@ -152,70 +161,95 @@ fn errors_are_collected_and_sorted() {
 #[test]
 fn misc_statement_errors() {
     assert_eq!(first_error("RETURN\n").message, "RETURN can only be used inside a FUNCTION or PROCEDURE");
-    assert_eq!(first_error("variables: v[2]\noutput(v)\n").message, "output prints only simple values");
-    assert_eq!(first_error("variables: v[2]\nAPPEND(v, 1)\n").message, "APPEND works only with lists (declared with [])");
+    assert_eq!(first_error("variables:\n    v as int[2]\noutput(v)\n").message, "output prints only simple values");
+    assert_eq!(
+        first_error("variables:\n    v as int[2]\nAPPEND(v, 1)\n").message,
+        "APPEND works only with lists (declared with list of)"
+    );
     assert_eq!(first_error("foo(1)\n").message, "function \"foo\" does not exist");
-    assert_eq!(first_error("variables: v[]\nlength(v)\n").hint.as_deref(), Some("did you mean LENGTH?"));
+    assert_eq!(first_error("variables:\n    v as list of int\nlength(v)\n").hint.as_deref(), Some("did you mean LENGTH?"));
 }
 
 #[test]
 fn declaration_errors() {
-    assert_eq!(first_error("variables: a, a\n").message, "\"a\" is declared twice");
-    assert_eq!(first_error("variables: LENGTH\n").message, "\"LENGTH\" is a built-in name: choose another one");
-    assert_eq!(first_error("GLOBAL variables: g\nvariables: g\n").message, "\"g\" is already declared as GLOBAL");
+    assert_eq!(first_error("variables:\n    a, a as int\n").message, "\"a\" is declared twice");
+    assert_eq!(first_error("variables:\n    LENGTH as int\n").message, "\"LENGTH\" is a built-in name: choose another one");
+    assert_eq!(
+        first_error("GLOBAL variables:\n    g as int\nvariables:\n    g as int\n").message,
+        "\"g\" is already declared as GLOBAL"
+    );
 }
 
 #[test]
-fn function_return_type_is_inferred() {
-    let src = "variables: r\nFUNCTION double(x)\n    RETURN x * 2\nEND FUNCTION\nr <- double(4)\n";
-    let p = check_src(src).unwrap();
-    assert_eq!(p.functions[0].locals[0].ty, Type::Base(Int));
+fn function_call_has_the_declared_return_type() {
+    let p = check_src(&format!("variables:\n    r as int\n{}r <- double(4)\n", DOUBLE)).unwrap();
     assert_eq!(p.functions.len(), 2);
     assert_eq!(p.functions[1].name, "double");
     assert_eq!(p.functions[1].ret, Some(Int));
 }
 
 #[test]
-fn functions_are_specialized_per_argument_types() {
-    let src = "variables: a, b\nFUNCTION double(x)\n    RETURN x * 2\nEND FUNCTION\na <- double(4)\nb <- double(1.5)\n";
-    let p = check_src(src).unwrap();
-    assert_eq!(main_types(src), vec![t("a", Type::Base(Int)), t("b", Type::Base(Real))]);
-    assert_eq!(p.functions.len(), 3);
+fn one_instance_per_function() {
+    let src = "variables:\n    a, b as float\nFUNCTION half(x as float) as float\n    RETURN x / 2\nEND FUNCTION\na <- half(4)\nb <- half(1.5)\n";
+    assert_eq!(check_src(src).unwrap().functions.len(), 2);
+}
+
+#[test]
+fn argument_types_are_checked() {
+    let half = "FUNCTION half(x as float) as float\n    RETURN x / 2\nEND FUNCTION\n";
+    assert_eq!(
+        first_error(&format!("variables:\n    r as float\n{}r <- half(\"a\")\n", half)).message,
+        "argument 1 of \"half\" must be a float, here it is a string"
+    );
+    let p = check_src(&format!("variables:\n    r as float\n{}r <- half(3)\n", half)).unwrap();
+    match &p.functions[0].body[0] {
+        TStmt::Assign(_, TExpr { kind: TExprKind::Call(_, args), .. }) => assert_eq!(args[0].kind, TExprKind::Real(3.0)),
+        other => panic!("{:?}", other),
+    }
+}
+
+#[test]
+fn collection_element_type_must_match() {
+    let p = "PROCEDURE p(a as float[])\nEND PROCEDURE\n";
+    assert_eq!(
+        first_error(&format!("variables:\n    v as int[3]\n{}p(v)\n", p)).message,
+        "argument 1 of \"p\" must be an array of floats, here it is an array of ints"
+    );
+    assert_eq!(
+        first_error(&format!("variables:\n    l as list of float\n{}p(l)\n", p)).message,
+        "argument 1 of \"p\" must be an array of floats, here it is a list of floats"
+    );
+    assert!(check_src(&format!("variables:\n    w as float[5]\n{}p(w)\n", p)).is_ok());
+}
+
+#[test]
+fn return_type_is_checked() {
+    assert_eq!(
+        first_error("variables:\n    r as int\nFUNCTION f() as int\n    RETURN \"a\"\nEND FUNCTION\nr <- f()\n").message,
+        "this function returns an int, here it returns a string"
+    );
+    assert!(check_src("variables:\n    r as float\nFUNCTION f() as float\n    RETURN 1\nEND FUNCTION\nr <- f()\n").is_ok());
 }
 
 #[test]
 fn recursion() {
-    let src = "variables: r\nFUNCTION fib(n)\n    IF(n < 2)\n        RETURN n\n    END IF\n    RETURN fib(n - 1) + fib(n - 2)\nEND FUNCTION\nr <- fib(10)\n";
-    assert_eq!(main_types(src), vec![t("r", Type::Base(Int))]);
-}
-
-#[test]
-fn parameter_types_flow_back_to_arguments() {
-    let src = "variables: n, r\nFUNCTION square(x)\n    RETURN x * x\nEND FUNCTION\ninput(n)\nr <- square(n)\n";
-    assert_eq!(main_types(src), vec![t("n", Type::Base(Int)), t("r", Type::Base(Int))]);
-}
-
-#[test]
-fn array_element_type_flows_back_from_procedure() {
-    let src = "variables: v[3]\nPROCEDURE fill(a)\n    variables: i\n    FOR(i FROM 1 TO 3)\n        a[i] <- i * 1.5\n    END LOOP\nEND PROCEDURE\nfill(v)\n";
-    let p = check_src(src).unwrap();
-    assert_eq!(p.functions[0].locals[0].ty, Type::Array(Some(Real)));
-    assert_eq!(p.functions.len(), 2);
+    let src = "variables:\n    r as int\nFUNCTION fib(n as int) as int\n    IF(n < 2)\n        RETURN n\n    END IF\n    RETURN fib(n - 1) + fib(n - 2)\nEND FUNCTION\nr <- fib(10)\n";
+    assert!(check_src(src).is_ok());
 }
 
 #[test]
 fn call_errors() {
-    let double = "FUNCTION double(x)\n    RETURN x * 2\nEND FUNCTION\n";
     assert_eq!(
-        first_error(&format!("variables: r\n{}r <- double(1, 2)\n", double)).message,
+        first_error(&format!("variables:\n    r as int\n{}r <- double(1, 2)\n", DOUBLE)).message,
         "\"double\" takes 1 value, here it gets 2"
     );
     assert_eq!(
-        first_error("variables: r\nPROCEDURE p()\nEND PROCEDURE\nr <- p()\n").message,
+        first_error("variables:\n    r as int\nPROCEDURE p()\nEND PROCEDURE\nr <- p()\n").message,
         "PROCEDURE \"p\" does not return a value"
     );
     assert_eq!(
-        first_error("variables: r\nFUNCTION f(x)\n    IF(x > 0)\n        RETURN 1\n    END IF\nEND FUNCTION\nr <- f(2)\n").message,
+        first_error("variables:\n    r as int\nFUNCTION f(x as int) as int\n    IF(x > 0)\n        RETURN 1\n    END IF\nEND FUNCTION\nr <- f(2)\n")
+            .message,
         "function \"f\" can reach END FUNCTION without RETURN"
     );
     assert_eq!(
@@ -226,39 +260,23 @@ fn call_errors() {
 
 #[test]
 fn main_variables_are_not_visible_in_functions() {
-    let e = first_error("variables: x\nPROCEDURE p()\n    x <- 1\nEND PROCEDURE\np()\n");
+    let e = first_error("variables:\n    x as int\nPROCEDURE p()\n    x <- 1\nEND PROCEDURE\np()\n");
     assert_eq!(e.message, "variable \"x\" is not declared");
     assert_eq!(
         e.hint.as_deref(),
         Some("\"x\" belongs to the main program: to use it here declare it with GLOBAL variables:")
     );
-    assert!(check_src("GLOBAL variables: x\nPROCEDURE p()\n    x <- 1\nEND PROCEDURE\np()\n").is_ok());
+    assert!(check_src("GLOBAL variables:\n    x as int\nPROCEDURE p()\n    x <- 1\nEND PROCEDURE\np()\n").is_ok());
 }
 
 #[test]
-fn uncalled_subprograms_are_checked_for_names_only() {
+fn uncalled_subprograms_are_fully_checked() {
     assert_eq!(
         first_error("PROCEDURE never()\n    y <- 1\nEND PROCEDURE\n").message,
         "variable \"y\" is not declared"
     );
-    assert!(check_src("FUNCTION unused(x)\n    RETURN x * \"a\"\nEND FUNCTION\n").is_ok());
-}
-
-#[test]
-fn guesses_never_override_a_later_real_type() {
-    // y's real type (string) comes from a function return known only after a round
-    let src = "variables: y\nFUNCTION f()\n    RETURN \"a\"\nEND FUNCTION\ny <- f()\noutput(y + 1)\n";
-    assert_eq!(main_types(src), vec![t("y", Type::Base(Str))]);
-}
-
-#[test]
-fn chained_functions_and_string_concatenation() {
-    let src = "variables: res\nFUNCTION square(k)\n    RETURN k * k\nEND FUNCTION\nFUNCTION compute(k)\n    RETURN square(k) + 1\nEND FUNCTION\nPROCEDURE show(x)\n    output(\"Result: \" + x)\nEND PROCEDURE\nres <- compute(3)\nshow(res)\n";
-    assert_eq!(main_types(src), vec![t("res", Type::Base(Int))]);
-}
-
-#[test]
-fn concatenation_says_nothing_about_the_other_operand() {
-    let src = "variables: a, b\ninput(a)\ninput(b)\noutput(\"sum: \" + a + b)\noutput(a * 2)\n";
-    assert_eq!(main_types(src), vec![t("a", Type::Base(Int)), t("b", Type::Base(Str))]);
+    assert_eq!(
+        first_error("FUNCTION unused(x as int) as int\n    RETURN x * \"a\"\nEND FUNCTION\n").message,
+        "cannot use * between an int and a string"
+    );
 }

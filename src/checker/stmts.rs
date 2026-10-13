@@ -190,7 +190,7 @@ impl<'p> Checker<'p> {
             if t != BaseType::Int {
                 self.report(Error::new(
                     var_pos,
-                    format!("the FOR variable must be an integer, \"{}\" is {}", var, t.name()),
+                    format!("the FOR variable must be an int, \"{}\" is {}", var, t.name()),
                 ));
             }
         }
@@ -254,7 +254,7 @@ impl<'p> Checker<'p> {
                 let second = self.expr(&args[1]);
                 let Type::List(elem) = list.ty else {
                     if list.ty != Type::Unknown {
-                        self.report(Error::new(list.pos, format!("{} works only with lists (declared with [])", name)));
+                        self.report(Error::new(list.pos, format!("{} works only with lists (declared with list of)", name)));
                     }
                     return None;
                 };
@@ -338,31 +338,13 @@ impl<'p> Checker<'p> {
     }
 
     fn widen_return(&mut self, t: BaseType, pos: Pos) {
-        let cur = self.current;
-        let (old, origin) = (self.instances[cur].ret, self.instances[cur].ret_origin);
-        match old {
-            None => {
-                self.instances[cur].ret = Some(t);
-                self.instances[cur].ret_origin = Some(pos);
-                self.changed = true;
-            }
-            Some(old) => match join(old, t) {
-                Some(new) => {
-                    if new != old {
-                        self.instances[cur].ret = Some(new);
-                        self.changed = true;
-                    }
-                }
-                None => self.report(Error::new(
+        if let Some(declared) = self.instances[self.current].ret {
+            if join(declared, t) != Some(declared) {
+                self.report(Error::new(
                     pos,
-                    format!(
-                        "this function already returns {} (line {}), here it returns {}",
-                        old.name(),
-                        origin.map_or(0, |p| p.line),
-                        t.name()
-                    ),
-                )),
-            },
+                    format!("this function returns {}, here it returns {}", declared.name(), t.name()),
+                ));
+            }
         }
     }
 }

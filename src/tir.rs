@@ -16,19 +16,19 @@ pub enum BaseType {
 impl BaseType {
     pub fn name(self) -> &'static str {
         match self {
-            BaseType::Int => "an integer",
-            BaseType::Real => "a real",
+            BaseType::Int => "an int",
+            BaseType::Real => "a float",
             BaseType::Str => "a string",
-            BaseType::Bool => "a boolean",
+            BaseType::Bool => "a bool",
         }
     }
 
     pub fn plural(self) -> &'static str {
         match self {
-            BaseType::Int => "integers",
-            BaseType::Real => "reals",
+            BaseType::Int => "ints",
+            BaseType::Real => "floats",
             BaseType::Str => "strings",
-            BaseType::Bool => "booleans",
+            BaseType::Bool => "bools",
         }
     }
 }
@@ -59,6 +59,20 @@ impl Type {
             Type::Array(_) => "an array",
             Type::Matrix(_) => "a matrix",
             Type::List(_) => "a list",
+        }
+    }
+
+    /// Like `name`, but collections also say their element type: "an array of ints".
+    pub fn full_name(self) -> String {
+        let of = |kind: &str, e: Option<BaseType>| match e {
+            Some(b) => format!("{} of {}", kind, b.plural()),
+            None => kind.to_string(),
+        };
+        match self {
+            Type::Array(e) => of("an array", e),
+            Type::Matrix(e) => of("a matrix", e),
+            Type::List(e) => of("a list", e),
+            other => other.name().to_string(),
         }
     }
 }
@@ -174,10 +188,11 @@ mod tests {
 
     #[test]
     fn names_for_messages() {
-        assert_eq!(Int.name(), "an integer");
+        assert_eq!(Int.name(), "an int");
+        assert_eq!(Type::Array(Some(Real)).full_name(), "an array of floats");
         assert_eq!(Str.plural(), "strings");
         assert_eq!(Type::Array(None).name(), "an array");
-        assert_eq!(Type::Base(Real).name(), "a real");
+        assert_eq!(Type::Base(Real).name(), "a float");
         assert_eq!(Type::Base(Bool).base(), Some(Bool));
         assert_eq!(Type::List(Some(Int)).base(), None);
     }

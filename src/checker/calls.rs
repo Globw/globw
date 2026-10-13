@@ -1,13 +1,23 @@
 //! Calls to user-defined functions and procedures: one instance (specialized
 //! copy) per combination of argument types.
 
-use crate::ast::{Expr, Shape};
+use crate::ast::{Decl, Expr, Shape};
 use crate::errors::{Error, Pos};
 use crate::lexer::miscased_statement_keyword;
 use crate::tir::*;
 
 use super::exprs::{convert, unknown};
 use super::{Checker, Instance, Var, BUILTINS};
+
+/// The type a declaration gives to its variable.
+pub(crate) fn declared_type(d: &Decl) -> Type {
+    match d.shape {
+        Shape::Scalar => Type::Base(d.ty),
+        Shape::Array(_) => Type::Array(Some(d.ty)),
+        Shape::Matrix(..) => Type::Matrix(Some(d.ty)),
+        Shape::List => Type::List(Some(d.ty)),
+    }
+}
 
 impl<'p> Checker<'p> {
     pub(crate) fn call(&mut self, name: &str, args: &[Expr], pos: Pos, in_expr: bool) -> TExpr {
@@ -34,53 +44,51 @@ impl<'p> Checker<'p> {
             return unknown(pos);
         }
         let targs: Vec<TExpr> = args.iter().map(|a| self.expr(a)).collect();
-        let key: Vec<Type> = targs.iter().map(|t| t.ty).collect();
-        let inst = self.instance(s, key);
+        let inst = self.instance(s);
         let index = self.reach(inst);
-        let params: Vec<(Option<BaseType>, Shape)> =
-            self.instances[inst].locals[..n].iter().map(|v| (v.ty, v.shape.clone())).collect();
         let mut out = Vec::with_capacity(n);
-        for (t, (ty, shape)) in targs.into_iter().zip(params) {
-            if let Some(b) = ty {
-                if shape == Shape::Scalar {
-                    self.hint(&t, b);
-                } else if let TExprKind::Load(p) = &t.kind {
-                    if self.var(*p).shape != Shape::Scalar {
-                        self.widen(*p, b, t.pos);
-                    }
-                }
+        for (k, (t, d)) in targs.into_iter().zip(&sub.params).enumerate() {
+            let expected = declared_type(d);
+            let fits = match (t.ty, expected) {
+                (Type::Unknown, _) => true,
+                (Type::Base(a), Type::Base(p)) => join(p, a) == Some(p),
+                (a, p) => a == p,
+            };
+            if !fits {
+                self.report(Error::new(
+                    t.pos,
+                    format!(
+                        "argument {} of \"{}\" must be {}, here it is {}",
+                        k + 1,
+                        name,
+                        expected.full_name(),
+                        t.ty.full_name()
+                    ),
+                ));
             }
-            out.push(if shape == Shape::Scalar { convert(t, ty) } else { t });
+            out.push(if d.shape == Shape::Scalar { convert(t, Some(d.ty)) } else { t });
         }
         let ret = self.instances[inst].ret;
-        if in_expr && ret.is_none() {
-            self.report(Error::new(pos, format!("cannot work out what type \"{}\" returns", name)));
-        }
         let ty = if in_expr { ret.map_or(Type::Unknown, Type::Base) } else { Type::Unknown };
         TExpr { kind: TExprKind::Call(index, out), ty, pos }
     }
 
-    /// Finds or creates the instance of subprogram `s` for these argument types.
-    pub(crate) fn instance(&mut self, s: usize, key: Vec<Type>) -> usize {
+    /// The single instance of subprogram `s`, created on first use with its
+    /// parameters and locals typed as declared.
+    pub(crate) fn instance(&mut self, s: usize) -> usize {
+        let prog = self.prog;
+        let sub = &prog.subprograms[s];
+        let key: Vec<Type> = sub.params.iter().map(declared_type).collect();
         if let Some(&i) = self.by_key.get(&(s, key.clone())) {
             return i;
         }
-        let prog = self.prog;
-        let sub = &prog.subprograms[s];
-        let mut locals = Vec::new();
-        for (d, t) in sub.params.iter().zip(&key) {
-            let (name, pos) = (&d.name, &d.pos);
-            let (shape, ty) = match *t {
-                Type::Unknown => (Shape::Scalar, None),
-                Type::Base(b) => (Shape::Scalar, Some(b)),
-                Type::Array(e) => (Shape::Array(0), e),
-                Type::Matrix(e) => (Shape::Matrix(0, 0), e),
-                Type::List(e) => (Shape::List, e),
-            };
-            locals.push(Var { name: name.clone(), shape, ty, origin: Some(*pos), conflict: None, is_param: true });
-        }
+        let mut locals: Vec<Var> = sub
+            .params
+            .iter()
+            .map(|d| Var { is_param: true, ..Var::declared(d) })
+            .collect();
         locals.extend(sub.locals.iter().map(Var::declared));
-        self.instances.push(Instance { sub: Some(s), locals, ret: None, ret_origin: None, final_index: None });
+        self.instances.push(Instance { sub: Some(s), locals, ret: sub.ret, final_index: None });
         let i = self.instances.len() - 1;
         self.by_key.insert((s, key), i);
         self.changed = true;
