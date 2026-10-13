@@ -7,6 +7,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::canvas::parse_color;
 use crate::dialogs;
 use crate::graphics::Graphics;
+use crate::render3d::Vec3;
 use crate::tir::BaseType::{self, Bool, Int, Real, Str};
 use crate::vm::Value;
 
@@ -30,13 +31,19 @@ pub enum Builtin {
     Rgb,
     Random,
     Time,
+    Camera,
+    Rotate,
+    Cube,
+    Box3,
+    Sphere,
+    Triangle3,
 }
 
 use Builtin::*;
 
-const ALL: [Builtin; 18] = [
+const ALL: [Builtin; 24] = [
     Window, Open, Show, Clear, Rect, Circle, Line, Text, Key, MouseX, MouseY, Click, Message, Confirm, Ask, Rgb, Random,
-    Time,
+    Time, Camera, Rotate, Cube, Box3, Sphere, Triangle3,
 ];
 
 impl Builtin {
@@ -60,6 +67,12 @@ impl Builtin {
             Rgb => "RGB",
             Random => "RANDOM",
             Time => "TIME",
+            Camera => "CAMERA",
+            Rotate => "ROTATE",
+            Cube => "CUBE",
+            Box3 => "BOX",
+            Sphere => "SPHERE",
+            Triangle3 => "TRIANGLE3D",
         }
     }
 
@@ -74,6 +87,11 @@ impl Builtin {
             Text => &[Real, Real, Str, Str],
             Rgb => &[Int, Int, Int],
             Random => &[Int, Int],
+            Camera => &[Real, Real, Real, Real, Real],
+            Rotate => &[Real, Real, Real],
+            Cube | Sphere => &[Real, Real, Real, Real, Str],
+            Box3 => &[Real, Real, Real, Real, Real, Real, Str],
+            Triangle3 => &[Real, Real, Real, Real, Real, Real, Real, Real, Real, Str],
         }
     }
 
@@ -84,7 +102,8 @@ impl Builtin {
             MouseX | MouseY | Random => Some(Int),
             Ask | Rgb => Some(Str),
             Time => Some(Real),
-            Window | Show | Clear | Rect | Circle | Line | Text | Message => None,
+            Window | Show | Clear | Rect | Circle | Line | Text | Message | Camera | Rotate | Cube | Box3 | Sphere
+            | Triangle3 => None,
         }
     }
 
@@ -222,6 +241,43 @@ impl Env {
             }
             Confirm => Value::Bool(dialogs::confirm(text(&args[0]))?),
             Ask => Value::Str(dialogs::ask(text(&args[0]))?.into()),
+            Camera => {
+                let s = &mut self.window()?.scene;
+                s.cam = Vec3::new(real(&args[0]), real(&args[1]), real(&args[2]));
+                s.turn = real(&args[3]);
+                s.tilt = real(&args[4]);
+                Value::Null
+            }
+            Rotate => {
+                self.window()?.scene.rot = (real(&args[0]), real(&args[1]), real(&args[2]));
+                Value::Null
+            }
+            Cube | Sphere => {
+                let c = parse_color(text(&args[4]))?;
+                let center = Vec3::new(real(&args[0]), real(&args[1]), real(&args[2]));
+                let g = self.window()?;
+                if b == Cube {
+                    g.scene.cube(&mut g.canvas, center, real(&args[3]), c);
+                } else {
+                    g.scene.sphere(&mut g.canvas, center, real(&args[3]), c);
+                }
+                Value::Null
+            }
+            Box3 => {
+                let c = parse_color(text(&args[6]))?;
+                let center = Vec3::new(real(&args[0]), real(&args[1]), real(&args[2]));
+                let size = Vec3::new(real(&args[3]), real(&args[4]), real(&args[5]));
+                let g = self.window()?;
+                g.scene.box_(&mut g.canvas, center, size, c);
+                Value::Null
+            }
+            Triangle3 => {
+                let c = parse_color(text(&args[9]))?;
+                let p = |k: usize| Vec3::new(real(&args[k]), real(&args[k + 1]), real(&args[k + 2]));
+                let g = self.window()?;
+                g.scene.triangle(&mut g.canvas, p(0), p(3), p(6), c, true);
+                Value::Null
+            }
         })
     }
 

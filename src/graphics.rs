@@ -4,6 +4,7 @@ pub use minifb::Key;
 use minifb::{MouseButton, MouseMode, Window, WindowOptions};
 
 use crate::canvas::Canvas;
+use crate::render3d::Scene;
 
 /// The keys a key name stands for (SHIFT and CTRL have a left and a right key).
 pub fn keys(name: &str) -> Option<Vec<Key>> {
@@ -40,6 +41,8 @@ pub fn keys(name: &str) -> Option<Vec<Key>> {
 pub struct Graphics {
     window: Window,
     pub canvas: Canvas,
+    /// 3D camera and rotation; a new window starts from the default
+    pub scene: Scene,
 }
 
 impl Graphics {
@@ -47,7 +50,7 @@ impl Graphics {
         let mut window = Window::new(title, w, h, WindowOptions::default())
             .map_err(|e| format!("cannot open the window: {}", e))?;
         window.set_target_fps(60);
-        let mut g = Graphics { window, canvas: Canvas::new(w, h) };
+        let mut g = Graphics { window, canvas: Canvas::new(w, h), scene: Scene::default() };
         g.show();
         Ok(g)
     }

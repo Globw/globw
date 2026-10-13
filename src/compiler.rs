@@ -504,6 +504,8 @@ mod tests {
     #[test]
     fn graphics_need_a_window() {
         assert!(run_src("RECT(0, 0, 10, 10, \"red\")\n", "").contains("there is no window: call WINDOW(...) first"));
+        assert!(run_src("CUBE(0, 0, 5, 1, \"red\")\n", "").contains("there is no window: call WINDOW(...) first"));
+        assert!(run_src("CAMERA(0, 0, 0, 0, 0)\n", "").contains("there is no window: call WINDOW(...) first"));
         assert_eq!(run_src("output(OPEN())\n", ""), "FALSE\n");
     }
 

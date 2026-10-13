@@ -300,3 +300,17 @@ fn builtin_calls_are_typed() {
     );
     assert_eq!(first_error("variables:\n    RECT as int\n").message, "\"RECT\" is a built-in name: choose another one");
 }
+
+#[test]
+fn builtins_3d_are_typed() {
+    let ok = "WINDOW(400, 300, \"x\")\nCAMERA(0, 2, -6, 0, -15)\nROTATE(0, 45, 0)\nCUBE(0, 0, 0, 2, \"red\")\nBOX(0, -1, 0, 10, 0.2, 10, \"gray\")\nSPHERE(1, 1, 1, 0.5, \"blue\")\nTRIANGLE3D(0, 0, 0, 1, 0, 0, 0, 1, 0, \"green\")\n";
+    assert!(check_src(ok).is_ok(), "{:?}", check_src(ok).err());
+    assert_eq!(
+        first_error("TRIANGLE3D(0, 0, 0, 1, 0, 0, 0, 1, \"green\")\n").message,
+        "\"TRIANGLE3D\" takes 10 values, here it gets 9"
+    );
+    assert_eq!(
+        first_error("CAMERA(0, 0, 0, \"left\", 0)\n").message,
+        "argument 4 of \"CAMERA\" must be a float, here it is a string"
+    );
+}
