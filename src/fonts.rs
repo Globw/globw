@@ -1,6 +1,7 @@
 //! Fonts for `text`: Windows fonts by name, font files (.ttf/.otf/.ttc) by
 //! path, or the built-in "pixel" bitmap font. Vector fonts are drawn
-//! anti-aliased with fontdue.
+//! anti-aliased with fontdue. Font files are read once, and every glyph is
+//! rasterized once per size, so changing font every frame stays cheap.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,10 +13,12 @@ use crate::canvas::Canvas;
 const DEFAULT_FONT: &str = "Segoe UI";
 const DEFAULT_SIZE: i64 = 20;
 
+#[derive(Clone, Copy)]
 enum Current {
     /// the 8×8 bitmap font drawn at `scale` × its size
     Pixel { scale: i64 },
-    Vector { font: Font, size: f32, glyphs: HashMap<char, (Metrics, Vec<u8>)> },
+    /// `loaded[font]` at `size` pixels
+    Vector { font: usize, size: f32 },
 }
 
 /// The font `text` draws with; chosen with `set` (the `font` command).
@@ -24,6 +27,11 @@ pub struct Fonts {
     current: Option<Current>,
     /// installed fonts: display name (lowercase) → file, read once from the registry
     installed: Option<Vec<(String, PathBuf)>>,
+    /// fonts already read, and where they are in `loaded` (key: lowercase name or path)
+    loaded: Vec<Font>,
+    by_name: HashMap<String, usize>,
+    /// rasterized glyphs: (font, size in bits, character)
+    glyphs: HashMap<(usize, u32, char), (Metrics, Vec<u8>)>,
 }
 
 fn is_font_file(name: &str) -> bool {
@@ -77,6 +85,11 @@ fn load(path: &Path, shown: &str, family: Option<&str>) -> Result<Font, String> 
 }
 
 impl Fonts {
+    /// Number of font files read so far.
+    pub fn loaded_files(&self) -> usize {
+        self.loaded.len()
+    }
+
     /// Chooses the font for the next `text` calls. `size` is the height in pixels.
     pub fn set(&mut self, name: &str, size: i64) -> Result<(), String> {
         if !(1..=500).contains(&size) {
@@ -86,37 +99,51 @@ impl Fonts {
             self.current = Some(Current::Pixel { scale: (size / 8).max(1) });
             return Ok(());
         }
-        let font = if is_font_file(name) {
-            load(Path::new(name), name, None)?
-        } else {
-            let wanted = name.trim().to_lowercase();
-            let installed = self.installed.get_or_insert_with(installed_fonts);
-            let Some((_, path)) = installed.iter().find(|(n, _)| *n == wanted) else {
-                return Err(format!(
-                    "font \"{}\" not found: use a font installed in Windows (like \"Arial\"), a .ttf/.otf file, or \"pixel\"",
-                    name
-                ));
-            };
-            let path = path.clone();
-            load(&path, name, Some(name.trim()))?
+        let key = name.trim().to_lowercase();
+        let font = match self.by_name.get(&key) {
+            Some(&id) => id,
+            None => {
+                let font = if is_font_file(name) {
+                    load(Path::new(name), name, None)?
+                } else {
+                    let installed = self.installed.get_or_insert_with(installed_fonts);
+                    let Some((_, path)) = installed.iter().find(|(n, _)| *n == key) else {
+                        return Err(format!(
+                            "font \"{}\" not found: use a font installed in Windows (like \"Arial\"), a .ttf/.otf file, or \"pixel\"",
+                            name
+                        ));
+                    };
+                    let path = path.clone();
+                    load(&path, name, Some(name.trim()))?
+                };
+                self.loaded.push(font);
+                self.by_name.insert(key, self.loaded.len() - 1);
+                self.loaded.len() - 1
+            }
         };
-        self.current = Some(Current::Vector { font, size: size as f32, glyphs: HashMap::new() });
+        self.current = Some(Current::Vector { font, size: size as f32 });
         Ok(())
     }
 
-    fn current(&mut self) -> &mut Current {
+    fn current(&mut self) -> Current {
         if self.current.is_none() && self.set(DEFAULT_FONT, DEFAULT_SIZE).is_err() {
             self.current = Some(Current::Pixel { scale: 2 });
         }
-        self.current.as_mut().expect("a font is always set here")
+        self.current.expect("a font is always set here")
+    }
+
+    /// The rasterized glyph of `ch`, computed once per font and size.
+    fn glyph(&mut self, font: usize, size: f32, ch: char) -> &(Metrics, Vec<u8>) {
+        let loaded = &self.loaded;
+        self.glyphs.entry((font, size.to_bits(), ch)).or_insert_with(|| loaded[font].rasterize(ch, size))
     }
 
     /// Width in pixels of `text` in the current font.
     pub fn width(&mut self, text: &str) -> Result<i64, String> {
         Ok(match self.current() {
-            Current::Pixel { scale } => text.chars().count() as i64 * 8 * *scale,
-            Current::Vector { font, size, glyphs } => {
-                let w: f32 = text.chars().map(|ch| glyph(font, *size, glyphs, ch).0.advance_width).sum();
+            Current::Pixel { scale } => text.chars().count() as i64 * 8 * scale,
+            Current::Vector { font, size } => {
+                let w: f32 = text.chars().map(|ch| self.glyph(font, size, ch).0.advance_width).sum();
                 w.round() as i64
             }
         })
@@ -125,13 +152,13 @@ impl Fonts {
     /// Draws `text` with its top-left corner at (x, y).
     pub fn draw(&mut self, canvas: &mut Canvas, x: f64, y: f64, text: &str, color: u32) -> Result<(), String> {
         match self.current() {
-            Current::Pixel { scale } => canvas.text_scaled(x, y, text, color, *scale),
-            Current::Vector { font, size, glyphs } => {
-                let ascent = font.horizontal_line_metrics(*size).map_or(*size * 0.8, |m| m.ascent);
+            Current::Pixel { scale } => canvas.text_scaled(x, y, text, color, scale),
+            Current::Vector { font, size } => {
+                let ascent = self.loaded[font].horizontal_line_metrics(size).map_or(size * 0.8, |m| m.ascent);
                 let baseline = y as f32 + ascent;
                 let mut pen = x as f32;
                 for ch in text.chars() {
-                    let (m, bitmap) = glyph(font, *size, glyphs, ch);
+                    let (m, bitmap) = self.glyph(font, size, ch);
                     let left = (pen + m.xmin as f32).round() as i64;
                     let top = (baseline - (m.ymin as f32 + m.height as f32)).round() as i64;
                     for row in 0..m.height {
@@ -148,11 +175,6 @@ impl Fonts {
         }
         Ok(())
     }
-}
-
-/// The rasterized glyph of `ch`, computed once per font.
-fn glyph<'a>(font: &Font, size: f32, cache: &'a mut HashMap<char, (Metrics, Vec<u8>)>, ch: char) -> &'a (Metrics, Vec<u8>) {
-    cache.entry(ch).or_insert_with(|| font.rasterize(ch, size))
 }
 
 #[cfg(all(test, windows))]
@@ -233,5 +255,15 @@ mod tests {
         let e = f.set("missing.ttf", 20).unwrap_err();
         assert!(e.starts_with("cannot read the font file \"missing.ttf\""), "{}", e);
         assert_eq!(f.set("Arial", 0).unwrap_err(), "the font size must be between 1 and 500, here it is 0");
+    }
+
+    #[test]
+    fn fonts_are_loaded_once() {
+        let mut f = Fonts::default();
+        for size in [12, 24, 12, 24] {
+            f.set("Arial", size).unwrap();
+            f.width("Hello").unwrap();
+        }
+        assert_eq!(f.loaded_files(), 1);
     }
 }

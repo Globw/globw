@@ -1,0 +1,324 @@
+' ==================================================================
+'  LABIRINTO 3D
+'  Raccogli tutte le gemme azzurre, poi raggiungi l'uscita
+'  (diventa verde quando hai preso tutte le gemme).
+'
+'  Frecce SINISTRA / DESTRA : girati
+'  Frecce SU / GIÙ          : cammina avanti e indietro
+'
+'  A ogni livello il labirinto è nuovo e più grande.
+' ==================================================================
+
+global variables:
+    mappa as int[25, 25]            ' 1 = muro, 0 = libero, 2 = uscita
+    n as int                        ' lato del labirinto (dispari)
+    gemmaX, gemmaZ as list of int   ' posizione delle gemme
+    presa as list of bool           ' gemma già raccolta?
+    px, pz, giro as float           ' posizione e direzione del giocatore
+    prese as int
+
+variables:
+    livello as int
+    ancora, finito as bool
+    inizio, tempo as float
+
+
+' ---------------------------------------------------------------
+'  Generazione del labirinto (ricerca in profondità con una pila)
+' ---------------------------------------------------------------
+
+procedure genera()
+    variables:
+        i, j, cx, cz, k, quanti, scelta as int
+        pilaX, pilaZ as list of int
+        dx, dz, sceltaX, sceltaZ as int[4]
+    for(i from 1 to n)
+        for(j from 1 to n)
+            mappa[i, j] = 1
+        end loop
+    end loop
+    dx[1] = 2
+    dz[1] = 0
+    dx[2] = -2
+    dz[2] = 0
+    dx[3] = 0
+    dz[3] = 2
+    dx[4] = 0
+    dz[4] = -2
+
+    mappa[2, 2] = 0
+    append(pilaX, 2)
+    append(pilaZ, 2)
+    while(length(pilaX) > 0)
+        cx = pilaX[length(pilaX)]
+        cz = pilaZ[length(pilaZ)]
+        ' le celle vicine ancora chiuse
+        quanti = 0
+        for(k from 1 to 4)
+            if(cx + dx[k] > 1 and cx + dx[k] < n and cz + dz[k] > 1 and cz + dz[k] < n)
+                if(mappa[cx + dx[k], cz + dz[k]] == 1)
+                    quanti = quanti + 1
+                    sceltaX[quanti] = dx[k]
+                    sceltaZ[quanti] = dz[k]
+                end if
+            end if
+        end loop
+        if(quanti == 0)
+            ' vicolo cieco: si torna indietro
+            remove(pilaX, length(pilaX))
+            remove(pilaZ, length(pilaZ))
+        else
+            ' si abbatte il muro verso una vicina a caso e ci si sposta lì
+            scelta = random(1, quanti)
+            mappa[cx + sceltaX[scelta] div 2, cz + sceltaZ[scelta] div 2] = 0
+            mappa[cx + sceltaX[scelta], cz + sceltaZ[scelta]] = 0
+            append(pilaX, cx + sceltaX[scelta])
+            append(pilaZ, cz + sceltaZ[scelta])
+        end if
+    end loop
+    mappa[n - 1, n - 1] = 2
+end procedure
+
+procedure svuotaGemme()
+    while(length(gemmaX) > 0)
+        remove(gemmaX, 1)
+        remove(gemmaZ, 1)
+        remove(presa, 1)
+    end loop
+end procedure
+
+function occupata(x as int, z as int) as bool
+    variables:
+        k as int
+        trovata as bool
+    trovata = false
+    for(k from 1 to length(gemmaX))
+        if(gemmaX[k] == x and gemmaZ[k] == z)
+            trovata = true
+        end if
+    end loop
+    return trovata
+end function
+
+' mette le gemme in celle libere a caso, lontane dalla partenza
+procedure piazzaGemme(quante as int)
+    variables:
+        k, x, z as int
+    svuotaGemme()
+    for(k from 1 to quante)
+        repeat
+            x = random(1, (n - 1) div 2) * 2
+            z = random(1, (n - 1) div 2) * 2
+        while(mappa[x, z] != 0 or (x == 2 and z == 2) or occupata(x, z))
+        append(gemmaX, x)
+        append(gemmaZ, z)
+        append(presa, false)
+    end loop
+    prese = 0
+end procedure
+
+
+' ---------------------------------------------------------------
+'  Movimento con le collisioni
+' ---------------------------------------------------------------
+
+function libero(x as float, z as float) as bool
+    variables:
+        i, j as int
+    i = round(x)
+    j = round(z)
+    if(i < 1 or j < 1 or i > n or j > n)
+        return false
+    end if
+    return mappa[i, j] != 1
+end function
+
+' il giocatore è un quadratino di lato 0.4: tutti e quattro gli angoli devono essere liberi
+function spazio(x as float, z as float) as bool
+    return libero(x - 0.2, z - 0.2) and libero(x + 0.2, z - 0.2) and libero(x - 0.2, z + 0.2) and libero(x + 0.2, z + 0.2)
+end function
+
+' si prova a muoversi lungo x e lungo z separatamente, così si scivola lungo i muri
+procedure cammina(passo as float)
+    variables:
+        nx, nz as float
+    nx = px + sin(giro) * passo
+    if(spazio(nx, pz))
+        px = nx
+    end if
+    nz = pz + cos(giro) * passo
+    if(spazio(px, nz))
+        pz = nz
+    end if
+end procedure
+
+procedure raccogli()
+    variables:
+        k as int
+        ddx, ddz as float
+    for(k from 1 to length(gemmaX))
+        ddx = gemmaX[k] - px
+        ddz = gemmaZ[k] - pz
+        if(not presa[k] and ddx * ddx + ddz * ddz < 0.36)
+            presa[k] = true
+            prese = prese + 1
+        end if
+    end loop
+end procedure
+
+
+' ---------------------------------------------------------------
+'  Disegno: mondo 3D, minimappa e scritte
+' ---------------------------------------------------------------
+
+procedure disegnaMondo(t as float)
+    variables:
+        i, j, k, ci, cj, i0, i1, j0, j1 as int
+        colore as string
+    clear("#0b0b1a")
+    camera(px, 0.8, pz, giro, 0)
+    box(n / 2 + 0.5, -0.05, n / 2 + 0.5, n, 0.1, n, "#2b2b3d")
+
+    ' solo i muri vicini: quelli lontani sono nascosti comunque
+    ci = round(px)
+    cj = round(pz)
+    i0 = ci - 7
+    i1 = ci + 7
+    j0 = cj - 7
+    j1 = cj + 7
+    if(i0 < 1)
+        i0 = 1
+    end if
+    if(j0 < 1)
+        j0 = 1
+    end if
+    if(i1 > n)
+        i1 = n
+    end if
+    if(j1 > n)
+        j1 = n
+    end if
+    for(i from i0 to i1)
+        for(j from j0 to j1)
+            if(mappa[i, j] == 1)
+                if((i + j) mod 2 == 0)
+                    colore = "#8a6d4b"
+                else
+                    colore = "#7a5f40"
+                end if
+                box(i, 1, j, 1, 2, 1, colore)
+            else if(mappa[i, j] == 2)
+                if(prese == length(gemmaX))
+                    colore = "lime"
+                else
+                    colore = "#802020"
+                end if
+                box(i, 0.03, j, 0.9, 0.06, 0.9, colore)
+            end if
+        end loop
+    end loop
+
+    for(k from 1 to length(gemmaX))
+        if(not presa[k])
+            rotate(45, t * 90 + k * 30, 0)
+            cube(gemmaX[k], 0.6 + sin(t * 120 + k * 50) * 0.1, gemmaZ[k], 0.3, "cyan")
+            rotate(0, 0, 0)
+        end if
+    end loop
+end procedure
+
+procedure minimappa()
+    variables:
+        i, j, k, s, ox, oy as int
+        cx, cy as float
+    s = 6
+    ox = 800 - n * s - 12
+    oy = 12
+    rect(ox - 3, oy - 3, n * s + 6, n * s + 6, "black")
+    for(i from 1 to n)
+        for(j from 1 to n)
+            if(mappa[i, j] == 1)
+                rect(ox + (i - 1) * s, oy + (j - 1) * s, s, s, "#777777")
+            else if(mappa[i, j] == 2)
+                rect(ox + (i - 1) * s, oy + (j - 1) * s, s, s, "lime")
+            end if
+        end loop
+    end loop
+    for(k from 1 to length(gemmaX))
+        if(not presa[k])
+            rect(ox + (gemmaX[k] - 1) * s + 1, oy + (gemmaZ[k] - 1) * s + 1, s - 2, s - 2, "cyan")
+        end if
+    end loop
+    cx = ox + (px - 0.5) * s
+    cy = oy + (pz - 0.5) * s
+    circle(cx, cy, 3, "yellow")
+    line(cx, cy, cx + sin(giro) * 9, cy + cos(giro) * 9, "yellow")
+end procedure
+
+procedure scritte(livello as int, secondi as float)
+    font("Segoe UI", 22)
+    text(16, 12, "Livello " + livello, "white")
+    text(16, 40, "Gemme: " + prese + " / " + length(gemmaX), "cyan")
+    text(16, 68, "Tempo: " + round(secondi) + " s", "#dddddd")
+    font("Segoe UI", 16)
+    if(prese == length(gemmaX))
+        text(16, 570, "Tutte le gemme prese: raggiungi l'uscita verde!", "lime")
+    else
+        text(16, 570, "Frecce: muoviti e girati", "#aaaaaa")
+    end if
+end procedure
+
+
+' ---------------------------------------------------------------
+'  Programma principale
+' ---------------------------------------------------------------
+
+window(800, 600, "Labirinto 3D")
+livello = 1
+ancora = true
+while(ancora and open())
+    n = 7 + livello * 4
+    if(n > 23)
+        n = 23
+    end if
+    genera()
+    piazzaGemme(livello + 2)
+    px = 2
+    pz = 2
+    if(mappa[2, 3] == 0)
+        giro = 0
+    else
+        giro = 90
+    end if
+    inizio = time()
+    finito = false
+
+    while(open() and not finito)
+        if(key("LEFT"))
+            giro = giro - 3
+        end if
+        if(key("RIGHT"))
+            giro = giro + 3
+        end if
+        if(key("UP"))
+            cammina(0.07)
+        else if(key("DOWN"))
+            cammina(-0.05)
+        end if
+        raccogli()
+        if(prese == length(gemmaX) and round(px) == n - 1 and round(pz) == n - 1)
+            finito = true
+        end if
+
+        disegnaMondo(time())
+        minimappa()
+        scritte(livello, time() - inizio)
+        show()
+    end loop
+
+    if(finito)
+        tempo = time() - inizio
+        ancora = confirm("Livello " + livello + " completato in " + round(tempo) + " secondi! Vuoi passare al livello successivo?")
+        livello = livello + 1
+    end if
+end loop

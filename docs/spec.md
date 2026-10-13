@@ -270,7 +270,7 @@ end loop
 | `click()` | function → `bool` | `true` while the left button is held |
 
 - **Coordinates:** (0, 0) is the top-left corner, x grows to the right and y grows downwards. Coordinates are `float` (an `int` is accepted) and are rounded to pixels; whatever falls outside the canvas is cut off.
-- **Colors:** one of the names `"black"`, `"white"`, `"red"`, `"green"`, `"blue"`, `"yellow"`, `"orange"`, `"purple"`, `"pink"`, `"cyan"`, `"gray"`, `"brown"` (case-insensitive), or `"#rrggbb"`.
+- **Colors:** one of the names `"black"`, `"white"`, `"red"`, `"green"`, `"blue"`, `"yellow"`, `"orange"`, `"purple"`, `"pink"`, `"cyan"`, `"gray"`, `"brown"`, `"lime"`, `"navy"`, `"teal"`, `"magenta"`, `"gold"`, `"silver"`, `"maroon"`, `"olive"`, `"darkgray"`, `"lightgray"` (case-insensitive), or `"#rrggbb"`.
 - **Run-time errors:**
   - an unknown color or key name;
   - a drawing command, `show`, `key`, `mouse_x`, `mouse_y` or `click` used before `window` (the hint says to call `window(...)` first);

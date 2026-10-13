@@ -3,7 +3,7 @@
 
 use font8x8::{UnicodeFonts, BASIC_FONTS, LATIN_FONTS};
 
-const COLORS: [(&str, u32); 12] = [
+const COLORS: [(&str, u32); 22] = [
     ("black", 0x000000),
     ("white", 0xFFFFFF),
     ("red", 0xFF0000),
@@ -16,6 +16,16 @@ const COLORS: [(&str, u32); 12] = [
     ("cyan", 0x00FFFF),
     ("gray", 0x808080),
     ("brown", 0x8B4513),
+    ("lime", 0x40FF40),
+    ("navy", 0x000080),
+    ("teal", 0x008080),
+    ("magenta", 0xFF00FF),
+    ("gold", 0xFFD700),
+    ("silver", 0xC0C0C0),
+    ("maroon", 0x800000),
+    ("olive", 0x808000),
+    ("darkgray", 0x404040),
+    ("lightgray", 0xD3D3D3),
 ];
 
 /// A color name or `#rrggbb` → 0xRRGGBB.
@@ -167,6 +177,9 @@ mod tests {
         assert_eq!(parse_color("#ff8800"), Ok(0xFF8800));
         assert_eq!(parse_color("#FF8800"), Ok(0xFF8800));
         assert_eq!(parse_color("white"), Ok(0xFFFFFF));
+        for name in ["lime", "navy", "teal", "magenta", "gold", "silver", "maroon", "olive", "darkgray", "lightgray"] {
+            assert!(parse_color(name).is_ok(), "{}", name);
+        }
         assert_eq!(
             parse_color("nope"),
             Err("unknown color \"nope\": use a name like \"red\" or a code like \"#ff8800\"".to_string())
