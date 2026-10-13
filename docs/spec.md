@@ -67,7 +67,7 @@ variables:
     names as list of string
 ```
 
-- `variables:` stands alone on its line. Each following line, **indented** more than `variables:`, declares one or more variables (separated by commas) and their type after `as`. The block ends at the first line that is not indented more.
+- `variables:` stands alone on its line. Each following line, **indented** more than the line where the block starts (the one with `variables:` or `GLOBAL variables:`), declares one or more variables (separated by commas) and their type after `as`. The block ends at the first line that is not indented more.
 - Every variable used must be declared. A scope may have several `variables:` blocks, all at its top.
 - `T[N]` is an array of N elements, where N is an integer literal > 0. `T[N, M]` is an N×M matrix. `list of T` is a dynamic list, initially empty.
 - `GLOBAL variables:` (only at the very start of the program) makes those variables visible everywhere, functions included. The main program's own variables are **not** visible inside functions.

@@ -68,7 +68,8 @@ impl<'p> Checker<'p> {
         let prog = self.prog;
         let sub = &prog.subprograms[s];
         let mut locals = Vec::new();
-        for ((name, pos), t) in sub.params.iter().zip(&key) {
+        for (d, t) in sub.params.iter().zip(&key) {
+            let (name, pos) = (&d.name, &d.pos);
             let (shape, ty) = match *t {
                 Type::Unknown => (Shape::Scalar, None),
                 Type::Base(b) => (Shape::Scalar, Some(b)),

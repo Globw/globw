@@ -1,6 +1,7 @@
 //! The syntax tree produced by the parser.
 
 use crate::errors::Pos;
+use crate::tir::BaseType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinOp {
@@ -84,6 +85,8 @@ pub enum Shape {
 pub struct Decl {
     pub name: String,
     pub shape: Shape,
+    /// for collections: the element type
+    pub ty: BaseType,
     pub pos: Pos,
 }
 
@@ -91,7 +94,10 @@ pub struct Decl {
 pub struct Subprogram {
     pub name: String,
     pub is_function: bool,
-    pub params: Vec<(String, Pos)>,
+    /// array and matrix parameters have size 0: any size is accepted
+    pub params: Vec<Decl>,
+    /// the declared return type of a FUNCTION; None for a PROCEDURE
+    pub ret: Option<BaseType>,
     pub locals: Vec<Decl>,
     pub body: Vec<Stmt>,
     pub pos: Pos,

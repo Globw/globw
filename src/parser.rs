@@ -139,11 +139,12 @@ impl Parser {
     fn program(mut self) -> Result<Program, Error> {
         let mut p = Program::default();
         self.skip_newlines();
-        while self.accept(&Tok::Global) {
-            if !self.accept(&Tok::Variables) {
+        while self.is(&Tok::Global) {
+            let line_col = self.advance().pos.col;
+            if !self.is(&Tok::Variables) {
                 return self.fail("GLOBAL must be followed by \"variables:\"");
             }
-            let decls = self.decl_list()?;
+            let decls = self.decl_block(Some(line_col))?;
             p.globals.extend(decls);
             self.skip_newlines();
         }
@@ -163,48 +164,115 @@ impl Parser {
 
     fn local_decls(&mut self) -> Result<Vec<Decl>, Error> {
         let mut v = Vec::new();
-        while self.accept(&Tok::Variables) {
-            v.extend(self.decl_list()?);
+        while self.is(&Tok::Variables) {
+            v.extend(self.decl_block(None)?);
             self.skip_newlines();
         }
         Ok(v)
     }
 
-    fn decl_list(&mut self) -> Result<Vec<Decl>, Error> {
+    fn is_name(&self, word: &str) -> bool {
+        matches!(self.tok(), Tok::Name(n) if n == word)
+    }
+
+    /// `variables:` on its own line, then lines `a, b as TYPE` indented more
+    /// than the line where the block starts (`line_col`: where GLOBAL is).
+    fn decl_block(&mut self, line_col: Option<u32>) -> Result<Vec<Decl>, Error> {
+        let variables_col = self.advance().pos.col;
+        let col = line_col.unwrap_or(variables_col);
+        if !self.is(&Tok::Newline) {
+            return Err(Error::new(self.pos(), "\"variables:\" must be followed by a new line with the declarations")
+                .with_hint("put each declaration on its own indented line below, like \"    a as int\""));
+        }
+        self.skip_newlines();
         let mut v = Vec::new();
+        while matches!(self.tok(), Tok::Name(_)) && self.pos().col > col {
+            v.extend(self.decl_line()?);
+            self.skip_newlines();
+        }
+        if v.is_empty() {
+            return self.fail("the declarations under \"variables:\" must be indented");
+        }
+        Ok(v)
+    }
+
+    fn decl_line(&mut self) -> Result<Vec<Decl>, Error> {
+        let mut names = Vec::new();
         loop {
             let pos = self.pos();
-            let name = match self.tok().clone() {
+            match self.tok().clone() {
                 Tok::Name(n) => {
                     self.advance();
-                    n
+                    names.push((n, pos));
                 }
                 other => return self.fail(format!("expected the name of a variable, found {}", describe(&other))),
-            };
-            let shape = if self.accept(&Tok::LBracket) {
-                if self.accept(&Tok::RBracket) {
-                    Shape::List
-                } else {
-                    let a = self.dimension()?;
-                    let shape = if self.accept(&Tok::Comma) {
-                        let b = self.dimension()?;
-                        Shape::Matrix(a, b)
-                    } else {
-                        Shape::Array(a)
-                    };
-                    self.expect(&Tok::RBracket, "\"]\"")?;
-                    shape
-                }
-            } else {
-                Shape::Scalar
-            };
-            v.push(Decl { name, shape, pos });
+            }
             if !self.accept(&Tok::Comma) {
                 break;
             }
         }
+        if !self.is_name("as") {
+            return self.fail(format!("expected \"as\" and a type after \"{}\"", names[names.len() - 1].0))
+                .map_err(|e: Error| e.with_hint("for example: x as int"));
+        }
+        self.advance();
+        let (shape, ty) = self.type_spec(false)?;
         self.end_stmt()?;
-        Ok(v)
+        Ok(names.into_iter().map(|(name, pos)| Decl { name, shape: shape.clone(), ty, pos }).collect())
+    }
+
+    fn base_type(&mut self) -> Result<crate::tir::BaseType, Error> {
+        use crate::tir::BaseType;
+        let ty = match self.tok() {
+            Tok::Name(n) if n == "int" => BaseType::Int,
+            Tok::Name(n) if n == "float" => BaseType::Real,
+            Tok::Name(n) if n == "string" => BaseType::Str,
+            Tok::Name(n) if n == "bool" => BaseType::Bool,
+            Tok::Name(n) => {
+                return Err(Error::new(self.pos(), format!("unknown type \"{}\"", n))
+                    .with_hint("the types are int, float, string, bool"))
+            }
+            other => return self.fail(format!("expected a type, found {}", describe(other))),
+        };
+        self.advance();
+        Ok(ty)
+    }
+
+    /// A type after `as`. Parameters write arrays as `int[]` and matrices as
+    /// `int[,]` (any size); declarations give the sizes.
+    fn type_spec(&mut self, param: bool) -> Result<(Shape, crate::tir::BaseType), Error> {
+        if self.is_name("list") {
+            self.advance();
+            if !self.is_name("of") {
+                return self.fail("expected \"of\" after \"list\", like list of int");
+            }
+            self.advance();
+            return Ok((Shape::List, self.base_type()?));
+        }
+        let ty = self.base_type()?;
+        if !self.accept(&Tok::LBracket) {
+            return Ok((Shape::Scalar, ty));
+        }
+        if param {
+            let shape = if self.accept(&Tok::Comma) { Shape::Matrix(0, 0) } else { Shape::Array(0) };
+            if !self.is(&Tok::RBracket) {
+                return self.fail("a parameter takes arrays of any size: write int[] or int[,]");
+            }
+            self.advance();
+            return Ok((shape, ty));
+        }
+        if self.is(&Tok::RBracket) {
+            return self.fail("an array needs its size, like int[10]");
+        }
+        let a = self.dimension()?;
+        let shape = if self.accept(&Tok::Comma) {
+            let b = self.dimension()?;
+            Shape::Matrix(a, b)
+        } else {
+            Shape::Array(a)
+        };
+        self.expect(&Tok::RBracket, "\"]\"")?;
+        Ok((shape, ty))
     }
 
     fn dimension(&mut self) -> Result<usize, Error> {
@@ -232,19 +300,37 @@ impl Parser {
         if !self.accept(&Tok::RParen) {
             loop {
                 let p = self.pos();
-                match self.tok().clone() {
+                let name = match self.tok().clone() {
                     Tok::Name(n) => {
                         self.advance();
-                        params.push((n, p));
+                        n
                     }
                     other => return self.fail(format!("expected a parameter name, found {}", describe(&other))),
+                };
+                if !self.is_name("as") {
+                    return Err(Error::new(p, format!("parameter \"{}\" needs a type, like {} as int", name, name)));
                 }
+                self.advance();
+                let (shape, ty) = self.type_spec(true)?;
+                params.push(Decl { name, shape, ty, pos: p });
                 if self.accept(&Tok::RParen) {
                     break;
                 }
                 self.expect(&Tok::Comma, "\",\" or \")\"")?;
             }
         }
+        let ret = if is_function {
+            if !self.is_name("as") {
+                return self.fail("a FUNCTION must declare its return type, like ) as int");
+            }
+            self.advance();
+            Some(self.base_type()?)
+        } else {
+            if self.is_name("as") {
+                return self.fail("a PROCEDURE does not return a value, so it has no return type");
+            }
+            None
+        };
         self.end_stmt()?;
         self.skip_newlines();
         let locals = self.local_decls()?;
@@ -256,7 +342,7 @@ impl Parser {
         let body = self.block(&[end], pos, what, closer, None)?;
         self.advance();
         self.end_stmt()?;
-        Ok(Subprogram { name, is_function, params, locals, body, pos })
+        Ok(Subprogram { name, is_function, params, ret, locals, body, pos })
     }
 
     /// Parses statements until one of `ends` (left unconsumed). For a REPEAT
@@ -368,8 +454,11 @@ impl Parser {
         let mut branches = vec![(cond, body)];
         let mut else_body = None;
         while self.accept(&Tok::Else) {
-            self.end_stmt()?;
-            self.skip_newlines();
+            // "ELSE IF(...)" may be written on one line or on two
+            if !self.is(&Tok::If) {
+                self.end_stmt()?;
+                self.skip_newlines();
+            }
             if self.accept(&Tok::If) {
                 let cond = self.condition()?;
                 self.end_stmt()?;
@@ -661,12 +750,75 @@ mod tests {
     }
 
     #[test]
-    fn declarations() {
-        let p = parse_src("GLOBAL variables: g\nvariables: a, v[3], m[2, 4], l[]\na <- 1\n").unwrap();
-        assert_eq!(p.globals[0].name, "g");
-        let shapes: Vec<Shape> = p.locals.iter().map(|d| d.shape.clone()).collect();
-        assert_eq!(shapes, vec![Shape::Scalar, Shape::Array(3), Shape::Matrix(2, 4), Shape::List]);
+    fn typed_declarations() {
+        use crate::tir::BaseType::*;
+        let src = "GLOBAL variables:\n    g as float\nvariables:\n    price as float\n    q, d as int\n    ok as bool\n    v as int[3]\n    m as float[2, 4]\n    l as list of string\na <- 1\n";
+        let p = parse_src(src).unwrap();
+        assert_eq!((p.globals[0].name.as_str(), p.globals[0].ty), ("g", Real));
+        let got: Vec<(&str, Shape, crate::tir::BaseType)> =
+            p.locals.iter().map(|d| (d.name.as_str(), d.shape.clone(), d.ty)).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("price", Shape::Scalar, Real),
+                ("q", Shape::Scalar, Int),
+                ("d", Shape::Scalar, Int),
+                ("ok", Shape::Scalar, Bool),
+                ("v", Shape::Array(3), Int),
+                ("m", Shape::Matrix(2, 4), Real),
+                ("l", Shape::List, Str),
+            ]
+        );
         assert_eq!(p.body.len(), 1);
+    }
+
+    #[test]
+    fn typed_signatures() {
+        use crate::tir::BaseType::*;
+        let src = "FUNCTION area(b as float, h as float) as float\n    RETURN b * h\nEND FUNCTION\nPROCEDURE fill(v as int[], m as float[,], l as list of int)\nEND PROCEDURE\n";
+        let p = parse_src(src).unwrap();
+        let params = |i: usize| -> Vec<(String, Shape, crate::tir::BaseType)> {
+            p.subprograms[i].params.iter().map(|d| (d.name.clone(), d.shape.clone(), d.ty)).collect()
+        };
+        assert_eq!(params(0), vec![("b".into(), Shape::Scalar, Real), ("h".into(), Shape::Scalar, Real)]);
+        assert_eq!(p.subprograms[0].ret, Some(Real));
+        assert_eq!(
+            params(1),
+            vec![("v".into(), Shape::Array(0), Int), ("m".into(), Shape::Matrix(0, 0), Real), ("l".into(), Shape::List, Int)]
+        );
+        assert_eq!(p.subprograms[1].ret, None);
+    }
+
+    #[test]
+    fn else_if_on_one_line() {
+        let src = "IF(a)\n    x <- 1\nELSE IF(b)\n    x <- 2\nELSE\n    x <- 3\nEND IF\n";
+        match &parse_src(src).unwrap().body[0].kind {
+            StmtKind::If { branches, else_body } => {
+                assert_eq!(branches.len(), 2);
+                assert_eq!(else_body.as_ref().unwrap().len(), 1);
+            }
+            other => panic!("{:?}", other),
+        }
+    }
+
+    #[test]
+    fn declaration_errors() {
+        let e = err("variables: a, b\n");
+        assert_eq!(e.message, "\"variables:\" must be followed by a new line with the declarations");
+        assert_eq!(e.hint.as_deref(), Some("put each declaration on its own indented line below, like \"    a as int\""));
+        let e = err("variables:\n    x as integer\n");
+        assert_eq!(e.message, "unknown type \"integer\"");
+        assert_eq!(e.hint.as_deref(), Some("the types are int, float, string, bool"));
+        assert_eq!(err("variables:\nx as int\n").message, "the declarations under \"variables:\" must be indented");
+        assert_eq!(
+            err("variables:\n    v as int[]\n").message,
+            "an array needs its size, like int[10]"
+        );
+        assert_eq!(
+            err("FUNCTION f(x as int)\n    RETURN x\nEND FUNCTION\n").message,
+            "a FUNCTION must declare its return type, like ) as int"
+        );
+        assert_eq!(err("PROCEDURE p(x)\nEND PROCEDURE\n").message, "parameter \"x\" needs a type, like x as int");
     }
 
     #[test]
@@ -713,12 +865,12 @@ mod tests {
 
     #[test]
     fn functions_and_procedures() {
-        let src = "FUNCTION add(a, b)\n    variables: r\n    r <- a + b\n    RETURN r\nEND FUNCTION\nPROCEDURE hello()\n    output(\"hi\")\nEND PROCEDURE\nhello()\n";
+        let src = "FUNCTION add(a as int, b as int) as int\n    variables:\n        r as int\n    r <- a + b\n    RETURN r\nEND FUNCTION\nPROCEDURE hello()\n    output(\"hi\")\nEND PROCEDURE\nhello()\n";
         let p = parse_src(src).unwrap();
         assert_eq!(p.subprograms.len(), 2);
         let add = &p.subprograms[0];
         assert!(add.is_function);
-        assert_eq!(add.params.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+        assert_eq!(add.params.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
         assert_eq!(add.locals[0].name, "r");
         assert_eq!(add.body.len(), 2);
         assert!(!p.subprograms[1].is_function);
@@ -774,7 +926,7 @@ mod tests {
     #[test]
     fn declarations_must_come_first() {
         assert_eq!(
-            err("x <- 1\nvariables: y\n").message,
+            err("x <- 1\nvariables:\n    y as int\n").message,
             "variable declarations must come at the start of the program or function"
         );
     }

@@ -175,7 +175,7 @@ impl<'p> Checker<'p> {
         let main: Vec<(&str, Pos)> = prog.locals.iter().map(|d| (d.name.as_str(), d.pos)).collect();
         self.check_names(&main, &globals, &functions);
         for s in &prog.subprograms {
-            let mut names: Vec<(&str, Pos)> = s.params.iter().map(|(n, p)| (n.as_str(), *p)).collect();
+            let mut names: Vec<(&str, Pos)> = s.params.iter().map(|d| (d.name.as_str(), d.pos)).collect();
             names.extend(s.locals.iter().map(|d| (d.name.as_str(), d.pos)));
             self.check_names(&names, &[], &functions);
         }
