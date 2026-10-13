@@ -1,0 +1,22 @@
+variables: prime[10000000], i, j, n, count
+n <- 10000000
+FOR(i FROM 2 TO n)
+    prime[i] <- TRUE
+END LOOP
+prime[1] <- FALSE
+FOR(i FROM 2 TO n)
+    IF(prime[i])
+        j <- i * i
+        WHILE(j <= n)
+            prime[j] <- FALSE
+            j <- j + i
+        END LOOP
+    END IF
+END LOOP
+count <- 0
+FOR(i FROM 1 TO n)
+    IF(prime[i])
+        count <- count + 1
+    END IF
+END LOOP
+output(count)

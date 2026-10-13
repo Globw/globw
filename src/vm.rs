@@ -296,6 +296,11 @@ impl<'m> Vm<'m> {
                         ip = t as usize;
                     }
                 }
+                Op::JumpUnlessI(c, a, b, t) => {
+                    if !compare(c, &int(&reg!(a)), &int(&reg!(b))) {
+                        ip = t as usize;
+                    }
+                }
                 Op::ForInit { var, end, step, exit } => {
                     let s = int(&reg!(step));
                     if s == 0 {

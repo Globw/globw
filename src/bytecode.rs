@@ -52,6 +52,8 @@ pub enum Op {
     Jump(u32),
     JumpIfFalse(Reg, u32),
     JumpIfTrue(Reg, u32),
+    /// jumps to the target when the integer comparison a <cmp> b is false
+    JumpUnlessI(Cmp, Reg, Reg, u32),
     /// fails if step is 0; jumps to `exit` if the loop must not run at all
     ForInit { var: Reg, end: Reg, step: Reg, exit: u32 },
     /// var += step; jumps back to `body` while the loop continues

@@ -49,6 +49,18 @@ fn alloc(shape: &Shape, dst: Reg) -> Option<Op> {
     }
 }
 
+fn cmp_of(op: BinOp) -> Option<Cmp> {
+    Some(match op {
+        BinOp::Eq => Cmp::Eq,
+        BinOp::NotEq => Cmp::NotEq,
+        BinOp::Lt => Cmp::Lt,
+        BinOp::LtEq => Cmp::LtEq,
+        BinOp::Gt => Cmp::Gt,
+        BinOp::GtEq => Cmp::GtEq,
+        _ => return None,
+    })
+}
+
 fn binary_op(op: BinOp, t: BaseType, d: Reg, a: Reg, b: Reg) -> Op {
     let cmp = |c: Cmp| match t {
         BaseType::Int => Op::CmpI(c, d, a, b),
@@ -145,7 +157,7 @@ impl<'a> FnCompiler<'a> {
 
     fn patch(&mut self, at: usize, target: u32) {
         match &mut self.code[at] {
-            Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) => *t = target,
+            Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) => *t = target,
             Op::ForInit { exit, .. } => *exit = target,
             other => panic!("internal error: cannot patch {:?}", other),
         }
@@ -160,6 +172,19 @@ impl<'a> FnCompiler<'a> {
         let t = self.temp();
         self.expr_into(e, t);
         t
+    }
+
+    /// Emits a jump taken when `c` is false; returns its index for patching.
+    fn jump_unless(&mut self, c: &TExpr) -> usize {
+        if let TExprKind::Binary(op, BaseType::Int, a, b) = &c.kind {
+            if let Some(cmp) = cmp_of(*op) {
+                let x = self.operand(a);
+                let y = self.operand(b);
+                return self.emit(Op::JumpUnlessI(cmp, x, y, 0), c.pos);
+            }
+        }
+        let r = self.operand(c);
+        self.emit(Op::JumpIfFalse(r, 0), c.pos)
     }
 
     fn collection(&mut self, p: Place, pos: Pos) -> Reg {
@@ -283,8 +308,7 @@ impl<'a> FnCompiler<'a> {
             TStmt::If(branches, other) => {
                 let mut exits = Vec::new();
                 for (c, body) in branches {
-                    let r = self.operand(c);
-                    let skip = self.emit(Op::JumpIfFalse(r, 0), c.pos);
+                    let skip = self.jump_unless(c);
                     self.next = mark;
                     self.block(body);
                     exits.push(self.emit(Op::Jump(0), c.pos));
@@ -301,8 +325,7 @@ impl<'a> FnCompiler<'a> {
             }
             TStmt::While(c, body) => {
                 let top = self.here();
-                let r = self.operand(c);
-                let exit = self.emit(Op::JumpIfFalse(r, 0), c.pos);
+                let exit = self.jump_unless(c);
                 self.next = mark;
                 self.block(body);
                 self.emit(Op::Jump(top), c.pos);
@@ -448,6 +471,14 @@ mod tests {
             text.push_str(&e.render(src));
         }
         text
+    }
+
+    #[test]
+    fn integer_conditions_use_fused_compare_and_jump() {
+        let module = crate::compile("variables: i\ni <- 0\nWHILE(i < 3)\n    i <- i + 1\nEND LOOP\n").unwrap();
+        let code = &module.functions[0].code;
+        assert!(code.iter().any(|op| matches!(op, crate::bytecode::Op::JumpUnlessI(..))), "{:?}", code);
+        assert!(!code.iter().any(|op| matches!(op, crate::bytecode::Op::CmpI(..))), "{:?}", code);
     }
 
     #[test]

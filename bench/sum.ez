@@ -1,0 +1,6 @@
+variables: i, s
+s <- 0
+FOR(i FROM 1 TO 100000000)
+    s <- s + i MOD 7
+END LOOP
+output(s)
