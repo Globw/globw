@@ -79,3 +79,13 @@ fn errors_in_modules_name_their_file() {
     assert_eq!(code, 1);
     assert!(stderr.contains("module \"nothing_here\" not found"), "{}", stderr);
 }
+
+#[test]
+fn module_locals_may_share_names_with_other_files_functions() {
+    let dir = std::env::temp_dir().join("globw_module_names_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("calc.gw"), "function need(goal as float) as float\n    return goal * 2\nend function\n").unwrap();
+    std::fs::write(dir.join("main.gw"), "import calc\nprocedure goal()\n    output(calc.need(2))\nend procedure\ngoal()\n").unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("main.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "4.0\n"), "{}", stderr);
+}

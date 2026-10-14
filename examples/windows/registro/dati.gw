@@ -1,0 +1,276 @@
+' ==================================================
+'  dati.gw - le materie, i voti e il file dove sono salvati
+' ==================================================
+' Ogni voto ha un valore (da 0 a 10), una data ("2026-10-14")
+' e un tipo ("scritto", "orale" o "pratico").
+
+global variables:
+    materie as list of string
+    voti as dict of string to list of float
+    date as dict of string to list of string
+    tipi as dict of string to list of string
+    file_dati as string
+
+file_dati = "registro_voti.txt"
+if(file_exists(file_dati))
+    carica()
+end if
+
+' ---------------------------------------------- materie e voti
+
+function esiste(nome as string) as bool
+    return has_key(voti, nome)
+end function
+
+procedure aggiungi_materia(nome as string)
+    if(esiste(nome))
+        return
+    end if
+    append(materie, nome)
+    voti[nome] = []
+    date[nome] = []
+    tipi[nome] = []
+end procedure
+
+procedure elimina_materia(nome as string)
+    remove(materie, index_of(materie, nome))
+    remove_key(voti, nome)
+    remove_key(date, nome)
+    remove_key(tipi, nome)
+end procedure
+
+procedure aggiungi_voto(materia as string, voto as float, tipo as string, giorno as string = "")
+    aggiungi_materia(materia)
+    if(giorno == "")
+        giorno = today()
+    end if
+    append(voti[materia], voto)
+    append(date[materia], giorno)
+    append(tipi[materia], tipo)
+end procedure
+
+procedure elimina_voto(materia as string, posizione as int)
+    remove(voti[materia], posizione)
+    remove(date[materia], posizione)
+    remove(tipi[materia], posizione)
+end procedure
+
+' ---------------------------------------------- medie
+
+' La media di una materia, -1 se non ha voti.
+function media(materia as string) as float
+    if(not esiste(materia))
+        return -1
+    end if
+    if(length(voti[materia]) == 0)
+        return -1
+    end if
+    return sum(voti[materia]) / length(voti[materia])
+end function
+
+' La media delle medie delle materie che hanno voti, -1 se nessuna ne ha.
+function media_generale() as float
+    variables:
+        totale as float
+        quante as int
+        m as string
+    totale = 0
+    quante = 0
+    for(m in materie)
+        if(media(m) >= 0)
+            totale = totale + media(m)
+            quante = quante + 1
+        end if
+    end loop
+    if(quante == 0)
+        return -1
+    end if
+    return totale / quante
+end function
+
+' Il voto che serve nella prossima verifica per arrivare alla media voluta.
+function voto_necessario(materia as string, obiettivo as float) as float
+    return obiettivo * (length(voti[materia]) + 1) - sum(voti[materia])
+end function
+
+' Quanti 10 di fila servono per arrivare alla media voluta (0 se non si arriva mai).
+function dieci_necessari(materia as string, obiettivo as float) as int
+    variables:
+        somma as float
+        n, k as int
+    if(obiettivo >= 10)
+        return 0
+    end if
+    somma = sum(voti[materia])
+    n = length(voti[materia])
+    k = 0
+    while((somma + 10 * k) / (n + k) < obiettivo)
+        k = k + 1
+    end loop
+    return k
+end function
+
+' Tendenza: la media degli ultimi 3 voti meno la media di quelli prima.
+function tendenza(materia as string) as float
+    variables:
+        v as list of float
+        recenti, prima as float
+        i, n as int
+    v = voti[materia]
+    n = length(v)
+    if(n < 4)
+        return 0
+    end if
+    recenti = 0
+    prima = 0
+    for(i from 1 to n)
+        if(i > n - 3)
+            recenti = recenti + v[i]
+        else
+            prima = prima + v[i]
+        end if
+    end loop
+    return recenti / 3 - prima / (n - 3)
+end function
+
+' ---------------------------------------------- voti scritti come a scuola
+
+' "7.5", "7,5", "7½", "8+", "6-", "6/7", "6 1/2"... oppure -1 se non è un voto.
+function leggi_voto(scritto as string) as float
+    variables:
+        t as string
+        extra, valore as float
+        parti as list of string
+    t = replace(replace(lowercase(trim(scritto)), ",", "."), " ", "")
+    t = replace(t, "1/2", "½")
+    extra = 0
+    if(ends_with(t, "½"))
+        extra = 0.5
+    else if(ends_with(t, "+"))
+        extra = 0.25
+    else if(ends_with(t, "-"))
+        extra = -0.25
+    end if
+    if(extra != 0)
+        t = substring(t, 1, length(t) - 1)
+    end if
+    if(contains(t, "/"))
+        ' "6/7" vuol dire a metà tra 6 e 7
+        parti = split(t, "/")
+        if(length(parti) != 2 or extra != 0)
+            return -1
+        end if
+        if(not numero(parti[1]) or not numero(parti[2]))
+            return -1
+        end if
+        valore = (to_float(parti[1]) + to_float(parti[2])) / 2
+    else
+        if(not numero(t))
+            return -1
+        end if
+        valore = to_float(t) + extra
+    end if
+    if(valore < 0 or valore > 10)
+        return -1
+    end if
+    return valore
+end function
+
+function numero(t as string) as bool
+    variables:
+        c as string
+        punti, cifre as int
+    punti = 0
+    cifre = 0
+    for(c in t)
+        if(c == ".")
+            punti = punti + 1
+        else if(contains("0123456789", c))
+            cifre = cifre + 1
+        else
+            return false
+        end if
+    end loop
+    return cifre > 0 and punti <= 1
+end function
+
+' 8.25 -> "8+", 7.75 -> "8-", 7.5 -> "7½", 8.0 -> "8"
+function scrivi_voto(v as float) as string
+    variables:
+        intero as int
+        resto as float
+    intero = floor(v)
+    resto = v - intero
+    if(absolute(resto) < 0.001)
+        return to_text(intero)
+    else if(absolute(resto - 0.25) < 0.001)
+        return intero + "+"
+    else if(absolute(resto - 0.5) < 0.001)
+        return intero + "½"
+    else if(absolute(resto - 0.75) < 0.001)
+        return (intero + 1) + "-"
+    end if
+    return to_text(round_to(v, 2))
+end function
+
+' "2026-10-14" -> "14/10"
+function giorno_breve(giorno as string) as string
+    if(length(giorno) < 10)
+        return giorno
+    end if
+    return substring(giorno, 9, 10) + "/" + substring(giorno, 6, 7)
+end function
+
+' ---------------------------------------------- file
+
+' Una riga per materia ("M|nome") e una per voto ("V|materia|voto|data|tipo").
+procedure salva()
+    variables:
+        testo as string
+        m as string
+        i as int
+    testo = "registro voti 1\n"
+    for(m in materie)
+        testo = testo + "M|" + m + "\n"
+        for(i from 1 to length(voti[m]))
+            testo = testo + "V|" + m + "|" + voti[m][i] + "|" + date[m][i] + "|" + tipi[m][i] + "\n"
+        end loop
+    end loop
+    write_file(file_dati, testo)
+end procedure
+
+procedure carica()
+    variables:
+        riga as string
+        campi as list of string
+    for(riga in read_lines(file_dati))
+        campi = split(riga, "|")
+        if(campi[1] == "M" and length(campi) == 2)
+            aggiungi_materia(campi[2])
+        else if(campi[1] == "V" and length(campi) == 5)
+            aggiungi_voto(campi[2], to_float(campi[3]), campi[5], campi[4])
+        end if
+    end loop
+end procedure
+
+' Alcuni voti di esempio, per vedere subito grafici e medie.
+procedure esempio()
+    aggiungi_voto("Matematica", 6.5, "scritto", "2026-09-18")
+    aggiungi_voto("Matematica", 5.75, "scritto", "2026-09-30")
+    aggiungi_voto("Matematica", 7, "orale", "2026-10-06")
+    aggiungi_voto("Matematica", 7.5, "scritto", "2026-10-13")
+    aggiungi_voto("Italiano", 7, "scritto", "2026-09-22")
+    aggiungi_voto("Italiano", 8.25, "orale", "2026-10-02")
+    aggiungi_voto("Italiano", 7.5, "scritto", "2026-10-09")
+    aggiungi_voto("Inglese", 8, "orale", "2026-09-25")
+    aggiungi_voto("Inglese", 8.5, "scritto", "2026-10-08")
+    aggiungi_voto("Storia", 5.5, "orale", "2026-09-29")
+    aggiungi_voto("Storia", 6.25, "orale", "2026-10-12")
+    aggiungi_voto("Fisica", 6, "scritto", "2026-09-24")
+    aggiungi_voto("Fisica", 4.5, "scritto", "2026-10-01")
+    aggiungi_voto("Fisica", 5.75, "orale", "2026-10-07")
+    aggiungi_voto("Fisica", 6.5, "scritto", "2026-10-14")
+    aggiungi_voto("Informatica", 9, "pratico", "2026-10-05")
+    aggiungi_voto("Informatica", 9.5, "scritto", "2026-10-12")
+    salva()
+end procedure

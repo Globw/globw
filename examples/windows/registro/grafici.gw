@@ -1,0 +1,110 @@
+' ==================================================
+'  grafici.gw - andamento dei voti e confronto tra materie
+' ==================================================
+
+import ui
+
+' Posizione verticale di un voto (da 0 a 10) dentro l'area del grafico.
+function y_voto(v as float, y as float, h as float) as float
+    return y + h - v / 10 * h
+end function
+
+' La griglia comune: righe ogni 2 voti e la linea del 6 tratteggiata.
+procedure griglia(x as float, y as float, w as float, h as float)
+    variables:
+        v as int
+    for(v from 0 to 10 step 2)
+        line(x, y_voto(v, y, h), x + w, y_voto(v, y, h), "#e2e8f0")
+        ui.scrivi_a_destra(x - 8, y_voto(v, y, h) - 9, to_text(v), "#94a3b8", 13)
+    end loop
+    ui.tratteggio(x, x + w, y_voto(6, y, h), "#f87171")
+end procedure
+
+' L'andamento dei voti di una materia, in ordine di data.
+procedure andamento(x as float, y as float, w as float, h as float, valori as list of float, giorni as list of string, media as float)
+    variables:
+        px, py, pw, ph, passo as float
+        i, n as int
+        xa, ya, xb, yb as float
+    px = x + 36
+    py = y + 8
+    pw = w - 52
+    ph = h - 36
+    griglia(px, py, pw, ph)
+    n = length(valori)
+    if(n == 0)
+        ui.scrivi_centrato(px, py, pw, ph, "Ancora nessun voto", "#94a3b8", 17)
+        return
+    end if
+    if(media >= 0)
+        ui.tratteggio(px, px + pw, y_voto(media, py, ph), "#60a5fa")
+        ui.scrivi(px + pw - 54, y_voto(media, py, ph) - 22, "media", "#60a5fa", 13)
+    end if
+    passo = 0
+    if(n > 1)
+        passo = (pw - 30) / (n - 1)
+    end if
+    ' prima le linee, poi i punti sopra
+    for(i from 1 to n - 1)
+        xa = px + 15 + (i - 1) * passo
+        xb = px + 15 + i * passo
+        ya = y_voto(valori[i], py, ph)
+        yb = y_voto(valori[i + 1], py, ph)
+        ui.linea_spessa(xa, ya, xb, yb, "#3b82f6")
+    end loop
+    for(i from 1 to n)
+        xa = px + 15 + (i - 1) * passo
+        if(n == 1)
+            xa = px + pw / 2
+        end if
+        ya = y_voto(valori[i], py, ph)
+        circle(xa, ya, 8, "white")
+        circle(xa, ya, 6, ui.colore_voto(valori[i]))
+        if(n <= 12)
+            ui.scrivi_centrato(xa - 30, ph + py + 4, 60, 18, giorni[i], "#94a3b8", 12)
+        end if
+        if(ui.dentro(xa - 9, ya - 9, 18, 18))
+            ui.riquadro(xa - 34, ya - 40, 68, 28, "#0f172a", 7)
+            ui.scrivi_centrato(xa - 34, ya - 40, 68, 28, ui_voto(valori[i]), "white", 15, true)
+        end if
+    end loop
+end procedure
+
+' Il testo di un voto per il fumetto (senza importare dati, che non serve qui).
+function ui_voto(v as float) as string
+    if(v == floor(v))
+        return to_text(floor(v))
+    end if
+    return to_text(round_to(v, 2))
+end function
+
+' Una barra per materia, alta come la sua media.
+procedure barre(x as float, y as float, w as float, h as float, nomi as list of string, medie as list of float)
+    variables:
+        px, py, pw, ph, spazio, bw, bx, by as float
+        i, n as int
+    px = x + 36
+    py = y + 8
+    pw = w - 52
+    ph = h - 44
+    griglia(px, py, pw, ph)
+    n = length(nomi)
+    if(n == 0)
+        ui.scrivi_centrato(px, py, pw, ph, "Nessuna materia", "#94a3b8", 17)
+        return
+    end if
+    spazio = pw / n
+    bw = minimum(spazio * 0.6, 70)
+    for(i from 1 to n)
+        bx = px + (i - 1) * spazio + (spazio - bw) / 2
+        if(medie[i] >= 0)
+            by = y_voto(medie[i], py, ph)
+            ui.riquadro(bx, by, bw, py + ph - by, ui.colore_voto(medie[i]), 6)
+            rect(bx, py + ph - 6, bw, 6, ui.colore_voto(medie[i]))
+            ui.scrivi_centrato(bx - 10, by - 24, bw + 20, 20, to_text(round_to(medie[i], 1)), "#334155", 14, true)
+        else
+            ui.scrivi_centrato(bx - 10, py + ph - 24, bw + 20, 20, "–", "#94a3b8", 14)
+        end if
+        ui.scrivi_centrato(px + (i - 1) * spazio, py + ph + 6, spazio, 20, ui.accorcia(nomi[i], spazio - 6, 13), "#475569", 13)
+    end loop
+end procedure

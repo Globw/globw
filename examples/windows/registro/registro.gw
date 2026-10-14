@@ -1,0 +1,378 @@
+' ==================================================
+'  REGISTRO VOTI
+'  Materie, voti, medie, grafici, obiettivi e pagella.
+'  I dati si salvano da soli in registro_voti.txt.
+'
+'  Moduli: dati.gw (voti e file), ui.gw (bottoni e testo),
+'          grafici.gw (andamento e barre, caricato quando serve)
+' ==================================================
+
+import dati
+import ui
+lazy import grafici
+
+global variables:
+    selezionata as string
+    vista as string
+    larghezza_finestra, altezza_finestra as int
+
+selezionata = ""
+vista = "materia"
+larghezza_finestra = 1120
+altezza_finestra = 720
+
+if(length(dati.materie) == 0)
+    if(confirm("Il registro è vuoto.\n\nVuoi caricare alcuni voti di esempio per provare l'app?\n(Potrai eliminarli quando vuoi.)"))
+        dati.esempio()
+    end if
+end if
+if(length(dati.materie) > 0)
+    selezionata = dati.materie[1]
+end if
+
+window(larghezza_finestra, altezza_finestra, "Registro voti")
+while(open())
+    ui.inizio_fotogramma()
+    clear("#f1f5f9")
+    barra_alta()
+    lato()
+    if(vista == "panoramica")
+        panoramica()
+    else if(selezionata == "")
+        benvenuto()
+    else
+        dettaglio()
+    end if
+    show()
+end loop
+
+' ---------------------------------------------- barra in alto
+
+procedure barra_alta()
+    variables:
+        m as float
+        etichetta as string
+        w as int
+    rect(0, 0, larghezza_finestra, 64, "#0f172a")
+    ui.scrivi(24, 15, "Registro voti", "white", 26, true)
+    m = dati.media_generale()
+    etichetta = "Media generale: –"
+    if(m >= 0)
+        etichetta = "Media generale: " + round_to(m, 2)
+    end if
+    w = ui.larghezza(etichetta, 17, true) + 32
+    ui.riquadro(larghezza_finestra - w - 24, 14, w, 36, ui.colore_voto(m), 18)
+    ui.scrivi_centrato(larghezza_finestra - w - 24, 14, w, 36, etichetta, "white", 17, true)
+end procedure
+
+' ---------------------------------------------- elenco delle materie
+
+procedure lato()
+    variables:
+        y, m_media as float
+        m, nuova as string
+        righe_massime, mostrate as int
+    rect(0, 64, 280, altezza_finestra - 64, "white")
+    line(280, 64, 280, altezza_finestra, "#e2e8f0")
+    ui.scrivi(24, 82, "MATERIE", "#94a3b8", 14, true)
+    y = 112
+    righe_massime = (altezza_finestra - 112 - 130) div 46
+    mostrate = 0
+    for(m in dati.materie)
+        if(mostrate == righe_massime)
+            ui.scrivi(24, y + 8, "… e altre " + (length(dati.materie) - mostrate), "#94a3b8", 15)
+            break
+        end if
+        mostrate = mostrate + 1
+        if(m == selezionata and vista == "materia")
+            ui.riquadro(12, y, 256, 40, "#dbeafe", 9)
+        else if(ui.dentro(12, y, 256, 40))
+            ui.riquadro(12, y, 256, 40, "#f1f5f9", 9)
+        end if
+        ui.scrivi(26, y + 8, ui.accorcia(m, 170, 17), "#0f172a", 17)
+        m_media = dati.media(m)
+        ui.riquadro(204, y + 7, 52, 26, ui.sfondo_voto(m_media), 13)
+        if(m_media >= 0)
+            ui.scrivi_centrato(204, y + 7, 52, 26, to_text(round_to(m_media, 1)), ui.colore_voto(m_media), 15, true)
+        else
+            ui.scrivi_centrato(204, y + 7, 52, 26, "–", "#94a3b8", 15, true)
+        end if
+        if(ui.cliccato(12, y, 256, 40))
+            selezionata = m
+            vista = "materia"
+        end if
+        y = y + 46
+    end loop
+    if(ui.bottone(16, altezza_finestra - 112, 248, 42, "+ Nuova materia"))
+        nuova = trim(ask("Nome della nuova materia:"))
+        if(nuova != "" and not contains(nuova, "|"))
+            dati.aggiungi_materia(nuova)
+            dati.salva()
+            selezionata = nuova
+            vista = "materia"
+        end if
+    end if
+    if(ui.bottone_chiaro(16, altezza_finestra - 60, 248, 42, "Panoramica e pagella"))
+        vista = "panoramica"
+    end if
+end procedure
+
+procedure benvenuto()
+    ui.scheda(310, 90, larghezza_finestra - 334, 200)
+    ui.scrivi(340, 120, "Benvenuto nel tuo registro!", "#0f172a", 26, true)
+    ui.scrivi(340, 168, "Aggiungi una materia con il bottone \"+ Nuova materia\" a sinistra,", "#475569", 17)
+    ui.scrivi(340, 194, "poi scegli la materia e inserisci i voti: 7½, 8+, 6-, 6/7 e 7,25 vanno tutti bene.", "#475569", 17)
+    ui.scrivi(340, 232, "Ogni modifica viene salvata da sola nel file registro_voti.txt.", "#94a3b8", 15)
+end procedure
+
+' ---------------------------------------------- dettaglio di una materia
+
+procedure dettaglio()
+    variables:
+        m, t as float
+        n, i, mostrati as int
+        x, y, lista_x, lista_w as float
+        sotto, riga as string
+    m = dati.media(selezionata)
+    n = length(dati.voti[selezionata])
+    x = 304
+
+    ' intestazione
+    ui.scheda(x, 84, larghezza_finestra - x - 24, 112)
+    ui.scrivi(x + 24, 100, ui.accorcia(selezionata, 520, 30), "#0f172a", 30, true)
+    sotto = "Nessun voto"
+    if(n == 1)
+        sotto = "1 voto"
+    else if(n > 1)
+        sotto = n + " voti"
+    end if
+    if(n > 0)
+        sotto = sotto + "  ·  ultimo " + dati.scrivi_voto(dati.voti[selezionata][n]) + " il " + dati.giorno_breve(dati.date[selezionata][n])
+        sotto = sotto + "  ·  più alto " + dati.scrivi_voto(maximum(dati.voti[selezionata])) + ", più basso " + dati.scrivi_voto(minimum(dati.voti[selezionata]))
+    end if
+    ui.scrivi(x + 24, 146, sotto, "#64748b", 16)
+    ui.riquadro(larghezza_finestra - 24 - 150, 98, 130, 84, ui.sfondo_voto(m), 14)
+    if(m >= 0)
+        ui.scrivi_centrato(larghezza_finestra - 174, 100, 130, 54, to_text(round_to(m, 2)), ui.colore_voto(m), 36, true)
+    else
+        ui.scrivi_centrato(larghezza_finestra - 174, 100, 130, 54, "–", "#94a3b8", 36, true)
+    end if
+    ui.scrivi_centrato(larghezza_finestra - 174, 148, 130, 24, "media", "#64748b", 14)
+
+    ' grafico dell'andamento
+    lista_w = 270
+    lista_x = larghezza_finestra - 24 - lista_w
+    ui.scheda(x, 212, lista_x - x - 16, 330, "ANDAMENTO")
+    grafici.andamento(x + 14, 248, lista_x - x - 44, 280, dati.voti[selezionata], giorni_brevi(dati.date[selezionata]), m)
+
+    ' elenco dei voti, dal più recente
+    ui.scheda(lista_x, 212, lista_w, altezza_finestra - 236, "VOTI  (clic per eliminare)")
+    y = 246
+    mostrati = 0
+    for(i from n to 1 step -1)
+        if(mostrati == 10)
+            ui.scrivi(lista_x + 20, y + 6, "… e altri " + (n - mostrati), "#94a3b8", 15)
+            break
+        end if
+        mostrati = mostrati + 1
+        if(ui.dentro(lista_x + 10, y, lista_w - 20, 36))
+            ui.riquadro(lista_x + 10, y, lista_w - 20, 36, "#fee2e2", 8)
+        end if
+        t = dati.voti[selezionata][i]
+        ui.riquadro(lista_x + 20, y + 5, 54, 26, ui.sfondo_voto(t), 13)
+        ui.scrivi_centrato(lista_x + 20, y + 5, 54, 26, dati.scrivi_voto(t), ui.colore_voto(t), 16, true)
+        ui.scrivi(lista_x + 88, y + 7, dati.tipi[selezionata][i], "#334155", 16)
+        ui.scrivi_a_destra(lista_x + lista_w - 22, y + 8, dati.giorno_breve(dati.date[selezionata][i]), "#94a3b8", 15)
+        if(ui.cliccato(lista_x + 10, y, lista_w - 20, 36))
+            riga = "Eliminare il voto " + dati.scrivi_voto(t) + " (" + dati.tipi[selezionata][i] + ") del " + dati.giorno_breve(dati.date[selezionata][i]) + "?"
+            if(confirm(riga))
+                dati.elimina_voto(selezionata, i)
+                dati.salva()
+                return
+            end if
+        end if
+        y = y + 40
+    end loop
+
+    ' azioni
+    y = 560
+    if(ui.bottone(x, y, 160, 44, "+ Voto"))
+        nuovo_voto()
+    end if
+    if(ui.bottone_chiaro(x + 172, y, 170, 44, "Obiettivo media"))
+        obiettivo()
+    end if
+    if(ui.bottone(x + 354, y, 170, 44, "Elimina materia", "#fee2e2", "#fecaca", "#b91c1c"))
+        if(confirm("Eliminare la materia \"" + selezionata + "\" e tutti i suoi voti?"))
+            dati.elimina_materia(selezionata)
+            dati.salva()
+            selezionata = ""
+            if(length(dati.materie) > 0)
+                selezionata = dati.materie[1]
+            end if
+            return
+        end if
+    end if
+    t = dati.tendenza(selezionata)
+    if(t > 0.25)
+        ui.scrivi(x, 620, "↗  In miglioramento: gli ultimi 3 voti sono sopra la media di prima di " + round_to(t, 2), "#15803d", 16)
+    else if(t < -0.25)
+        ui.scrivi(x, 620, "↘  In calo: gli ultimi 3 voti sono sotto la media di prima di " + round_to(-t, 2), "#dc2626", 16)
+    else if(n >= 4)
+        ui.scrivi(x, 620, "→  Andamento stabile negli ultimi voti", "#64748b", 16)
+    end if
+end procedure
+
+function giorni_brevi(giorni as list of string) as list of string
+    variables:
+        out as list of string
+        g as string
+    for(g in giorni)
+        append(out, dati.giorno_breve(g))
+    end loop
+    return out
+end function
+
+procedure nuovo_voto()
+    variables:
+        scritto, tipo as string
+        v as float
+    scritto = ask("Voto di " + selezionata + "  (es. 7, 7½, 8+, 6-, 6/7, 7,25):")
+    if(trim(scritto) == "")
+        return
+    end if
+    v = dati.leggi_voto(scritto)
+    if(v < 0)
+        message("\"" + scritto + "\" non è un voto valido.\nScrivi un numero da 0 a 10, anche con ½, +, - oppure 6/7.")
+        return
+    end if
+    tipo = lowercase(trim(ask("Tipo di verifica: scritto, orale o pratico?  (vuoto = scritto)")))
+    if(tipo == "" or starts_with(tipo, "s"))
+        tipo = "scritto"
+    else if(starts_with(tipo, "o"))
+        tipo = "orale"
+    else if(starts_with(tipo, "p"))
+        tipo = "pratico"
+    end if
+    dati.aggiungi_voto(selezionata, v, tipo)
+    dati.salva()
+end procedure
+
+procedure obiettivo()
+    variables:
+        scritto as string
+        voluta, serve as float
+        dieci as int
+    scritto = ask("Che media vuoi raggiungere in " + selezionata + "?  (es. 7)")
+    if(trim(scritto) == "")
+        return
+    end if
+    voluta = dati.leggi_voto(scritto)
+    if(voluta < 0)
+        message("\"" + scritto + "\" non è una media valida.")
+        return
+    end if
+    serve = dati.voto_necessario(selezionata, voluta)
+    if(length(dati.voti[selezionata]) > 0 and dati.media(selezionata) >= voluta)
+        message("Hai già " + round_to(dati.media(selezionata), 2) + ": sei sopra il " + dati.scrivi_voto(voluta) + ".\n\nPer restarci, alla prossima verifica ti basta almeno " + dati.scrivi_voto(maximum(serve, 0)) + ".")
+    else if(serve <= 10)
+        message("Per arrivare a " + dati.scrivi_voto(voluta) + " di media in " + selezionata + "\nalla prossima verifica ti serve almeno " + round_to(serve, 2) + " (" + dati.scrivi_voto(round(serve * 4) / 4.0) + ").")
+    else
+        dieci = dati.dieci_necessari(selezionata, voluta)
+        if(dieci == 0)
+            message("Con una media di " + dati.scrivi_voto(voluta) + " non si arriva mai: servirebbero solo 10.")
+        else
+            message("Con un solo voto non basta: servirebbero " + round_to(serve, 2) + ".\n\nPer arrivare a " + dati.scrivi_voto(voluta) + " ti servono " + dieci + " dieci di fila.")
+        end if
+    end if
+end procedure
+
+' ---------------------------------------------- panoramica e pagella
+
+procedure panoramica()
+    variables:
+        medie as list of float
+        m, migliore, peggiore as string
+        insufficienti, x, colonna as int
+        valore as float
+    x = 304
+    migliore = ""
+    peggiore = ""
+    insufficienti = 0
+    for(m in dati.materie)
+        valore = dati.media(m)
+        append(medie, valore)
+        if(valore >= 0)
+            if(valore < 6)
+                insufficienti = insufficienti + 1
+            end if
+            if(migliore == "")
+                migliore = m
+                peggiore = m
+            end if
+            if(valore > dati.media(migliore))
+                migliore = m
+            end if
+            if(valore < dati.media(peggiore))
+                peggiore = m
+            end if
+        end if
+    end loop
+    ui.scheda(x, 84, larghezza_finestra - x - 24, 420, "MEDIA PER MATERIA")
+    grafici.barre(x + 14, 120, larghezza_finestra - x - 52, 370, dati.materie, medie)
+
+    ui.scheda(x, 520, larghezza_finestra - x - 24, 176)
+    colonna = x + 24
+    ui.scrivi(colonna, 538, "Materie insufficienti", "#64748b", 15)
+    ui.scrivi(colonna, 562, to_text(insufficienti), ui.colore_voto(10 - insufficienti * 3), 34, true)
+    if(migliore != "")
+        ui.scrivi(colonna + 220, 538, "Media più alta", "#64748b", 15)
+        ui.scrivi(colonna + 220, 566, ui.accorcia(migliore, 190, 22) + "  " + round_to(dati.media(migliore), 2), "#15803d", 22, true)
+        ui.scrivi(colonna + 480, 538, "Media più bassa", "#64748b", 15)
+        ui.scrivi(colonna + 480, 566, ui.accorcia(peggiore, 190, 22) + "  " + round_to(dati.media(peggiore), 2), ui.colore_voto(dati.media(peggiore)), 22, true)
+    end if
+    if(ui.bottone(colonna, 626, 220, 46, "Esporta pagella"))
+        pagella()
+    end if
+    if(ui.bottone_chiaro(colonna + 232, 626, 170, 46, "Torna ai voti"))
+        vista = "materia"
+    end if
+end procedure
+
+' Scrive pagella.txt: una riga per materia con media, voti e giudizio.
+procedure pagella()
+    variables:
+        testo, m, giudizio, riga as string
+        v, generale as float
+    testo = "PAGELLA  -  " + dati.giorno_breve(today()) + "/" + substring(today(), 1, 4) + "\n"
+    testo = testo + "==================================================\n"
+    for(m in dati.materie)
+        v = dati.media(m)
+        riga = m
+        while(length(riga) < 22)
+            riga = riga + "."
+        end loop
+        if(v < 0)
+            testo = testo + riga + "  nessun voto\n"
+        else
+            giudizio = "sufficiente"
+            if(v < 5)
+                giudizio = "gravemente insufficiente"
+            else if(v < 6)
+                giudizio = "insufficiente"
+            else if(v >= 8)
+                giudizio = "ottimo"
+            else if(v >= 7)
+                giudizio = "buono"
+            end if
+            testo = testo + riga + "  " + to_text(round_to(v, 2)) + "  (" + length(dati.voti[m]) + " voti, " + giudizio + ")\n"
+        end if
+    end loop
+    generale = dati.media_generale()
+    testo = testo + "==================================================\n"
+    if(generale >= 0)
+        testo = testo + "Media generale: " + round_to(generale, 2) + "\n"
+    end if
+    write_file("pagella.txt", testo)
+    message("Pagella salvata in pagella.txt, nella cartella del registro.\n\n" + testo)
+end procedure

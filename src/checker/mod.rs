@@ -190,10 +190,19 @@ impl<'p> Checker<'p> {
         self.check_names(&globals, &[], &functions);
         let main: Vec<(&str, Pos)> = prog.locals.iter().map(|d| (d.name.as_str(), d.pos)).collect();
         self.check_names(&main, &globals, &functions);
+        // local names clash only with the functions of their own file: the
+        // functions of module "m" are named "m.f", those of the program just "f"
+        let module_of = |name: &str| name.rsplit_once('.').map_or(String::new(), |(m, _)| m.to_string());
         for s in &prog.subprograms {
+            let module = module_of(&s.name);
+            let own: HashSet<String> = functions
+                .iter()
+                .filter(|f| module_of(f) == module)
+                .map(|f| f.rsplit_once('.').map_or(f.clone(), |(_, n)| n.to_string()))
+                .collect();
             let mut names: Vec<(&str, Pos)> = s.params.iter().map(|d| (d.name.as_str(), d.pos)).collect();
             names.extend(s.locals.iter().map(|d| (d.name.as_str(), d.pos)));
-            self.check_names(&names, &[], &functions);
+            self.check_names(&names, &[], &own);
         }
     }
 

@@ -645,12 +645,17 @@ impl Parser {
         let mut branches = vec![(cond, body)];
         let mut else_body = None;
         while self.accept(&Tok::Else) {
-            // "ELSE IF(...)" may be written on one line or on two
-            if !self.is(&Tok::If) {
+            // "else if(...)" may be written on one line, or on two with the
+            // `if` at the same indentation as `else`; a more indented `if`
+            // is the first statement of the else block
+            let else_indent = self.t[self.i - 1].indent;
+            let mut chained = self.is(&Tok::If);
+            if !chained {
                 self.end_stmt()?;
                 self.skip_newlines();
+                chained = self.is(&Tok::If) && self.t[self.i].indent <= else_indent;
             }
-            if self.accept(&Tok::If) {
+            if chained && self.accept(&Tok::If) {
                 let cond = self.condition()?;
                 self.end_stmt()?;
                 let body = self.block(&ends, opened, "if", "end if", None)?;
@@ -1309,5 +1314,36 @@ output(c.h(1))
         assert_eq!(err("x = 1
 import a
 ").message, "imports go at the very start of the file, before everything else");
+    }
+
+    #[test]
+    fn else_then_if_on_the_next_line() {
+        let chained = parse_src("if(true)
+    x = 1
+else
+if(false)
+    x = 2
+end if
+").unwrap();
+        match &chained.body[0].kind {
+            StmtKind::If { branches, else_body } => assert_eq!((branches.len(), else_body.is_none()), (2, true)),
+            other => panic!("{:?}", other),
+        }
+        let nested = parse_src("if(true)
+    x = 1
+else
+    if(false)
+        x = 2
+    end if
+    x = 3
+end if
+").unwrap();
+        match &nested.body[0].kind {
+            StmtKind::If { branches, else_body } => {
+                assert_eq!(branches.len(), 1);
+                assert_eq!(else_body.as_ref().unwrap().len(), 2);
+            }
+            other => panic!("{:?}", other),
+        }
     }
 }

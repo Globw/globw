@@ -41,7 +41,7 @@ output(double(n))
 
 ## 3. Lexical rules
 
-- **Keywords are lowercase only**: `if`, `else`, `end if`, `while`, `for`, `from`, `to`, `step`, `repeat`, `end loop`, `function`, `end function`, `procedure`, `end procedure`, `return`, `global`, `and`, `or`, `not`, `div`, `mod`, `true`, `false`.
+- **Keywords are lowercase only**: `if`, `else`, `end if`, `while`, `for`, `from`, `to`, `step`, `repeat`, `end loop`, `function`, `end function`, `procedure`, `end procedure`, `return`, `global`, `break`, `continue`, `and`, `or`, `not`, `div`, `mod`, `true`, `false`. `import`, `lazy` (at the start of a line) and `in` (in `for`) are keywords only where they are used that way.
   The same word in another case (`IF`, `If`) is not a keyword. It is treated as a name, and the resulting error suggests the lowercase form.
 - **Declarations**: `variables:`, `as`, `of` and the type names `int`, `float`, `string`, `bool` are written in lowercase, exactly like that.
 - **Built-in procedures and functions** are lowercase too (`input`, `output`, `length`, `window`, `rect`…). All keywords and built-in names are reserved: they cannot name variables or functions.
@@ -167,8 +167,8 @@ else
     output("fail")
 end if
 ```
-- An `else` followed directly by `if(...)`, on the same line or on the next one, **always** forms an "else if", ignoring blank lines and comments in between. The whole chain is closed by **one** `end if`. An extra `end if` gives an error that explains this rule.
-- To get a real nested `if` inside an `else`, it must not be the first statement of the block.
+- An `else` followed by `if(...)` on the same line, or on the next line **at the same indentation as the `else` (or less)**, forms an "else if", ignoring blank lines and comments in between. The whole chain is closed by **one** `end if`. An extra `end if` gives an error that explains this rule.
+- An `if` on the line after `else` but **more indented** than it is a real nested `if`, the first statement of the else block, with its own `end if`.
 - The condition must be `boolean`.
 
 ### 6.3 Loops

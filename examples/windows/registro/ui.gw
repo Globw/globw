@@ -1,0 +1,166 @@
+' ==================================================
+'  ui.gw - pezzi di interfaccia: testo, riquadri, bottoni
+' ==================================================
+
+global variables:
+    premuto_prima as bool
+    scatto as bool
+    normale, grassetto as string
+
+premuto_prima = false
+scatto = false
+normale = "Segoe UI"
+grassetto = "C:/Windows/Fonts/seguisb.ttf"
+if(not file_exists(grassetto))
+    grassetto = normale
+end if
+
+' Da chiamare all'inizio di ogni fotogramma: capisce se il tasto
+' del mouse è appena stato premuto (un clic, non il tasto tenuto giù).
+procedure inizio_fotogramma()
+    variables:
+        premuto as bool
+    premuto = click()
+    scatto = premuto and not premuto_prima
+    premuto_prima = premuto
+end procedure
+
+function dentro(x as float, y as float, w as float, h as float) as bool
+    return mouse_x() >= x and mouse_x() < x + w and mouse_y() >= y and mouse_y() < y + h
+end function
+
+' Un clic appena fatto dentro il rettangolo.
+function cliccato(x as float, y as float, w as float, h as float) as bool
+    return scatto and dentro(x, y, w, h)
+end function
+
+' ---------------------------------------------- testo
+
+procedure scrivi(x as float, y as float, s as string, colore as string = "#0f172a", misura as int = 18, forte as bool = false)
+    if(forte)
+        font(grassetto, misura)
+    else
+        font(normale, misura)
+    end if
+    text(x, y, s, colore)
+end procedure
+
+function larghezza(s as string, misura as int = 18, forte as bool = false) as int
+    if(forte)
+        font(grassetto, misura)
+    else
+        font(normale, misura)
+    end if
+    return text_width(s)
+end function
+
+procedure scrivi_centrato(x as float, y as float, w as float, h as float, s as string, colore as string = "#0f172a", misura as int = 18, forte as bool = false)
+    scrivi(x + (w - larghezza(s, misura, forte)) / 2, y + (h - misura * 1.33) / 2, s, colore, misura, forte)
+end procedure
+
+procedure scrivi_a_destra(x_destra as float, y as float, s as string, colore as string = "#0f172a", misura as int = 18, forte as bool = false)
+    scrivi(x_destra - larghezza(s, misura, forte), y, s, colore, misura, forte)
+end procedure
+
+' Accorcia un testo con "…" finché non sta nella larghezza data.
+function accorcia(s as string, massimo as float, misura as int = 18) as string
+    variables:
+        t as string
+    if(larghezza(s, misura) <= massimo)
+        return s
+    end if
+    t = s
+    while(length(t) > 1 and larghezza(t + "…", misura) > massimo)
+        t = substring(t, 1, length(t) - 1)
+    end loop
+    return t + "…"
+end function
+
+' ---------------------------------------------- forme
+
+' Rettangolo con gli angoli arrotondati.
+procedure riquadro(x as float, y as float, w as float, h as float, colore as string, raggio as float = 10)
+    variables:
+        r as float
+    r = minimum(raggio, minimum(w, h) / 2)
+    rect(x + r, y, w - 2 * r, h, colore)
+    rect(x, y + r, w, h - 2 * r, colore)
+    circle(x + r, y + r, r, colore)
+    circle(x + w - r - 1, y + r, r, colore)
+    circle(x + r, y + h - r - 1, r, colore)
+    circle(x + w - r - 1, y + h - r - 1, r, colore)
+end procedure
+
+' Una scheda bianca con un'ombra leggera e un titolo facoltativo.
+procedure scheda(x as float, y as float, w as float, h as float, titolo as string = "")
+    riquadro(x + 1, y + 3, w, h, "#e2e8f0", 14)
+    riquadro(x, y, w, h, "white", 14)
+    if(titolo != "")
+        scrivi(x + 20, y + 14, titolo, "#64748b", 15, true)
+    end if
+end procedure
+
+procedure linea_spessa(x1 as float, y1 as float, x2 as float, y2 as float, colore as string)
+    line(x1, y1, x2, y2, colore)
+    line(x1, y1 + 1, x2, y2 + 1, colore)
+    line(x1 + 1, y1, x2 + 1, y2, colore)
+end procedure
+
+procedure tratteggio(x1 as float, x2 as float, y as float, colore as string)
+    variables:
+        x as float
+    x = x1
+    while(x < x2)
+        line(x, y, minimum(x + 6, x2), y, colore)
+        x = x + 12
+    end loop
+end procedure
+
+' ---------------------------------------------- bottoni
+
+' Disegna un bottone e dice se è appena stato cliccato.
+function bottone(x as float, y as float, w as float, h as float, etichetta as string, colore as string = "#2563eb", colore_sopra as string = "#1d4ed8", colore_testo as string = "white") as bool
+    if(dentro(x, y, w, h))
+        riquadro(x, y, w, h, colore_sopra, 9)
+    else
+        riquadro(x, y, w, h, colore, 9)
+    end if
+    scrivi_centrato(x, y, w, h, etichetta, colore_testo, 17, true)
+    return cliccato(x, y, w, h)
+end function
+
+' Un bottone chiaro, per le azioni secondarie.
+function bottone_chiaro(x as float, y as float, w as float, h as float, etichetta as string) as bool
+    return bottone(x, y, w, h, etichetta, "#e2e8f0", "#cbd5e1", "#0f172a")
+end function
+
+' ---------------------------------------------- colori dei voti
+
+function colore_voto(v as float) as string
+    if(v < 0)
+        return "#94a3b8"
+    else if(v < 5)
+        return "#dc2626"
+    else if(v < 6)
+        return "#f97316"
+    else if(v < 7)
+        return "#eab308"
+    else if(v < 8)
+        return "#22c55e"
+    end if
+    return "#15803d"
+end function
+
+' Un colore chiaro adatto come sfondo dietro a un voto.
+function sfondo_voto(v as float) as string
+    if(v < 0)
+        return "#f1f5f9"
+    else if(v < 5)
+        return "#fee2e2"
+    else if(v < 6)
+        return "#ffedd5"
+    else if(v < 7)
+        return "#fef9c3"
+    end if
+    return "#dcfce7"
+end function
