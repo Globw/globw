@@ -236,6 +236,8 @@ pub enum TStmt {
     Builtin(Builtin, Vec<TExpr>, Pos),
     /// `container[key] = value` for lists and dictionaries reached through any expression
     SetIndex(TExpr, TExpr, TExpr, Pos),
+    /// runs function `func` (a module's start-up code) unless global `flag` is true
+    LoadModule { flag: u16, func: usize, pos: Pos },
 }
 
 #[derive(Debug, Clone, PartialEq)]

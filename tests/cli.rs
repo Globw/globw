@@ -50,3 +50,32 @@ fn non_utf8_file_is_explained() {
     assert_eq!(code, 3);
     assert!(stderr.contains("is not saved as UTF-8"), "{}", stderr);
 }
+
+#[test]
+fn modules_and_lazy_imports() {
+    let (code, stdout, stderr) = globw(&["examples/modules/main.gw"]);
+    assert_eq!(code, 0, "{}", stderr);
+    let expected = std::fs::read_to_string("examples/modules/main.expected").unwrap().replace("\r\n", "\n");
+    assert_eq!(stdout, expected);
+}
+
+#[test]
+fn errors_in_modules_name_their_file() {
+    let dir = std::env::temp_dir().join("globw_module_errors_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("tools.gw"), "function half(n as int) as int\n    return n div 0\nend function\n").unwrap();
+    std::fs::write(dir.join("broken.gw"), "function f() as int\n    return 1 +\nend function\n").unwrap();
+    std::fs::write(dir.join("ok.gw"), "import tools\noutput(tools.half(4))\n").unwrap();
+    std::fs::write(dir.join("bad.gw"), "import broken\n").unwrap();
+    std::fs::write(dir.join("missing.gw"), "import nothing_here\n").unwrap();
+    let path = |f: &str| dir.join(f).to_str().unwrap().to_string();
+    let (code, _, stderr) = globw(&[&path("ok.gw")]);
+    assert_eq!(code, 2);
+    assert!(stderr.starts_with("Error in tools.gw at line 2, column 14: division by zero"), "{}", stderr);
+    let (code, _, stderr) = globw(&["--check", &path("bad.gw")]);
+    assert_eq!(code, 1);
+    assert!(stderr.starts_with("Error in broken.gw at line 2"), "{}", stderr);
+    let (code, _, stderr) = globw(&["--check", &path("missing.gw")]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("module \"nothing_here\" not found"), "{}", stderr);
+}

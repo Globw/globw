@@ -1,7 +1,7 @@
 // Reads the errors printed by `globw --check` into plain objects.
 // Lines and columns are 0-based, ready for a VS Code Range.
 
-const HEADER = /^Error at line (\d+)(?:, column (\d+))?: (.*)$/;
+const HEADER = /^Error (?:in (.+?) )?at line (\d+)(?:, column (\d+))?: (.*)$/;
 const CARET = /^\s*(\^+)\s*$/;
 const HINT = /^Hint: (.*)$/;
 
@@ -13,10 +13,12 @@ function parseErrors(stderr) {
         const header = HEADER.exec(line);
         if (header) {
             current = {
-                line: Number(header[1]) - 1,
-                col: header[2] ? Number(header[2]) - 1 : null,
+                // the module file the error is in, null for the checked file itself
+                file: header[1] || null,
+                line: Number(header[2]) - 1,
+                col: header[3] ? Number(header[3]) - 1 : null,
                 len: null,
-                message: header[3],
+                message: header[4],
                 hint: null,
             };
             errors.push(current);

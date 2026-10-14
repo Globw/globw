@@ -74,6 +74,15 @@ impl<'p> Checker<'p> {
             }
             StmtKind::Call(name, args) => self.call_stmt(name, args, pos),
             StmtKind::Return(value) => self.return_stmt(value.as_ref(), pos),
+            StmtKind::LoadModule { init, flag } => {
+                let s = self.sub_by_name[init.as_str()];
+                let inst = self.instance(s);
+                let func = self.reach(inst);
+                let Some(Place::Global(flag)) = self.lookup(flag) else {
+                    panic!("internal error: module flag {} is not a global", flag)
+                };
+                Some(TStmt::LoadModule { flag, func, pos })
+            }
         }
     }
 

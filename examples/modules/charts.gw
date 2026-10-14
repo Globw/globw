@@ -1,0 +1,11 @@
+output("[charts loaded]")
+procedure bar(n as int)
+    variables:
+        s as string
+        i as int
+    s = ""
+    for(i from 1 to n)
+        s = s + "#"
+    end loop
+    output(s)
+end procedure

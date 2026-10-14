@@ -19,7 +19,7 @@ pub(crate) const FLOAT_TO_INT_HINT: &str = "use round(x) to turn a float into an
 pub const BUILTINS: [&str; 5] = ["input", "output", "length", "append", "remove"];
 
 /// Names of all built-ins, which cannot be used for variables or functions.
-pub(crate) fn is_builtin_name(name: &str) -> bool {
+pub fn is_builtin_name(name: &str) -> bool {
     BUILTINS.contains(&name) || crate::builtins::lookup(name).is_some()
 }
 

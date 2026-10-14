@@ -80,6 +80,10 @@ test('functions: definition, parameters, calls', () => {
     assert.strictEqual(scope('w = read_lines("a.txt")', 'read_lines'), 'support.function.builtin.globw');
     assert.strictEqual(scope('n = get(d, "a", 0) + length(keys(d))', 'keys'), 'support.function.builtin.globw');
     assert.strictEqual(scope('if(has_key(d, k))', 'has_key'), 'support.function.builtin.globw');
+    assert.strictEqual(scope('lazy import shapes as s', 'lazy'), 'keyword.control.globw');
+    assert.strictEqual(scope('lazy import shapes as s', 'import'), 'keyword.control.globw');
+    assert.strictEqual(scope('from shapes import area', 'from'), 'keyword.control.globw');
+    assert.strictEqual(scope('x = s.area(1, 2)', 'area'), 'entity.name.function.globw');
 });
 
 test('assignment and comparison', () => {

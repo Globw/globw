@@ -7,12 +7,23 @@ pub struct Pos {
     pub line: u32,
     pub col: u32,
     pub len: u32,
+    /// index of the source file: 0 is the main program, the others are modules
+    pub file: u16,
 }
 
 impl Pos {
     pub fn new(line: u32, col: u32, len: u32) -> Pos {
-        Pos { line, col, len }
+        Pos { line, col, len, file: 0 }
     }
+}
+
+/// A source file of the program: the main program first, then the modules
+/// it imports.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceFile {
+    /// the name shown in error messages, like "shapes.gw"
+    pub name: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +41,18 @@ impl Error {
     pub fn with_hint(mut self, hint: impl Into<String>) -> Error {
         self.hint = Some(hint.into());
         self
+    }
+
+    /// Like `render`, for programs made of several files: an error in a
+    /// module also names its file ("Error in shapes.gw at line 3...").
+    pub fn render_in(&self, files: &[SourceFile]) -> String {
+        let Some(f) = files.get(self.pos.file as usize) else { return self.render("") };
+        let out = self.render(&f.text);
+        if self.pos.file == 0 {
+            out
+        } else {
+            out.replacen("Error at line", &format!("Error in {} at line", f.name), 1)
+        }
     }
 
     /// Renders the error with the offending source line and a caret marker.

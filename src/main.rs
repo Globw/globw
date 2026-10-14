@@ -26,14 +26,16 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
-    // relative paths in the program (for example font files) start from its folder
+    // relative paths in the program (for example font files and modules) start from its folder
     if let Some(dir) = std::path::Path::new(file).parent().filter(|d| !d.as_os_str().is_empty()) {
         let _ = std::env::set_current_dir(dir);
     }
-    let module = match globw::compile(&source) {
+    let name = std::path::Path::new(file).file_name().map_or(file.clone(), |n| n.to_string_lossy().into_owned());
+    let (files, compiled) = globw::compile_program(globw::SourceFile { name, text: source }, std::path::Path::new("."));
+    let module = match compiled {
         Ok(m) => m,
         Err(errors) => {
-            let text: Vec<String> = errors.iter().map(|e| e.render(&source)).collect();
+            let text: Vec<String> = errors.iter().map(|e| e.render_in(&files)).collect();
             eprint!("{}", text.join("\n"));
             return ExitCode::from(1);
         }
@@ -51,7 +53,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprint!("{}", e.render(&source));
+            eprint!("{}", e.render_in(&files));
             ExitCode::from(2)
         }
     }

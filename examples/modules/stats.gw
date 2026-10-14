@@ -1,0 +1,8 @@
+import shapes
+output("[stats loaded]")
+function mean(l as list of int) as float
+    return sum(l) / length(l)
+end function
+function double_area(b as float) as float
+    return 2 * shapes.area(b, b)
+end function

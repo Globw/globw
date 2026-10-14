@@ -12,6 +12,7 @@ test('one error with column, caret length and hint', () => {
     ].join('\n');
     assert.deepStrictEqual(parseErrors(stderr), [
         {
+            file: null,
             line: 2,
             col: 0,
             len: 5,
@@ -35,6 +36,7 @@ test('several errors separated by blank lines, Windows line endings', () => {
     const errors = parseErrors(stderr);
     assert.strictEqual(errors.length, 2);
     assert.deepStrictEqual(errors[1], {
+        file: null,
         line: 1,
         col: 5,
         len: 1,
@@ -45,9 +47,15 @@ test('several errors separated by blank lines, Windows line endings', () => {
 
 test('error without column covers the whole line', () => {
     const errors = parseErrors('Error at line 4: division by zero\n    output(1 / 0)\n');
-    assert.deepStrictEqual(errors, [{ line: 3, col: null, len: null, message: 'division by zero', hint: null }]);
+    assert.deepStrictEqual(errors, [{ file: null, line: 3, col: null, len: null, message: 'division by zero', hint: null }]);
 });
 
 test('no errors', () => {
     assert.deepStrictEqual(parseErrors(''), []);
+});
+
+test('errors in an imported module name their file', () => {
+    const stderr = ['Error in shapes.gw at line 4, column 2: division by zero', '    x', '     ^', ''].join('\n');
+    const [e] = parseErrors(stderr);
+    assert.deepStrictEqual([e.file, e.line, e.col, e.len, e.message], ['shapes.gw', 3, 1, 1, 'division by zero']);
 });

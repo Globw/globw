@@ -549,6 +549,22 @@ impl<'m> Vm<'m> {
                     ip = 0;
                     base = new_base;
                 }
+                Op::Ensure { flag, func: f } => {
+                    if !matches!(self.globals[flag as usize], Value::Bool(true)) {
+                        self.globals[flag as usize] = Value::Bool(true);
+                        if self.frames.len() >= MAX_CALL_DEPTH {
+                            fail!("too many nested calls (maybe a recursion that never ends)");
+                        }
+                        let callee = &m.functions[f as usize];
+                        let new_base = self.regs.len();
+                        self.regs.resize(new_base + callee.n_regs as usize, Value::Null);
+                        self.frames.push(Frame { func, ip, base, dst: 0 });
+                        func = f as usize;
+                        code = &callee.code;
+                        ip = 0;
+                        base = new_base;
+                    }
+                }
                 Op::Ret(s) => {
                     let v = std::mem::replace(&mut reg!(s), Value::Null);
                     let Some(fr) = self.frames.pop() else { return Ok(()) };

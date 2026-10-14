@@ -1,0 +1,4 @@
+output("[never loaded: this line must not appear]")
+procedure nothing()
+    output("x")
+end procedure

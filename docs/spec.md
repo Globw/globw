@@ -16,9 +16,10 @@ Source files use the `.gw` extension. The executable is `globw.exe`. Implementat
 
 A program is a sequence of lines, **one statement per line**, in this order:
 
-1. global declarations (`global variables: ...`), optional;
-2. main-program declarations (`variables: ...`);
-3. `function` / `procedure` definitions and main-program statements, in any order. Main statements run top to bottom. A function can be called before its definition appears in the text.
+1. imports (`import ...`, see 6.12), optional;
+2. global declarations (`global variables: ...`), optional;
+3. main-program declarations (`variables: ...`);
+4. `function` / `procedure` definitions and main-program statements, in any order. Main statements run top to bottom. A function can be called before its definition appears in the text.
 
 Comments run from `'` to the end of the line. Blank lines are ignored.
 
@@ -461,6 +462,30 @@ A file that cannot be read or written is a run-time error that names it.
 
 All these names are reserved like the other built-ins. Python features that need types Globw does not have (sets, tuples), functions as values (`map`, `filter`, `lambda`) or classes are not part of Globw.
 
+### 6.12 Modules and imports
+
+Any `.gw` file can be imported by another one as a **module**. Imports go at the very start of the file:
+
+```
+import shapes                     ' shapes.gw, in the folder of the program
+import statistics as st           ' with another name
+from tools import mean, middle as mid
+lazy import charts                ' loaded only when first used
+lazy from sounds import beep
+
+output(shapes.area(3, 4), " ", st.median(v), " ", mean(v))
+shapes.calls = 0
+```
+
+- `import m` makes the functions, procedures and `global variables` of `m.gw` available as `m.name`. `import m as x` uses `x.name` instead. `from m import a, b as c` makes them available without the prefix. Several modules can go on one line: `import a, b as c`.
+- A module is looked for next to the file that imports it, then in the folder of the main program. Module names cannot contain dots.
+- A module is a normal program: its statements are its **start-up code**, which runs **once**, the first time the module is loaded. Its `variables:` (not global) are visible only to that start-up code; its `global variables` are visible to its own functions and, with the prefix, to the files that import it.
+- A normal `import` loads the module where the import is written, in order. A **lazy import** (as in Python 3.15) loads it just before the first statement that uses it; a lazy module that is never used never runs. Whatever the kind of import, every file and module is **checked before the program starts**: an error in a lazy module is reported at once, not when it is first used.
+- Circular imports are allowed, as in Python: a module that is already loading is not loaded again, so it may be used before its start-up code has finished.
+- A module does not see the names of the program that imports it: pass values as parameters.
+- Errors in a module name its file: `Error in shapes.gw at line 4, column 12: ...`.
+- Errors: a module that does not exist, a name the module does not define, `m.name` without `import m`, a variable or function named like an imported module or name, an import after other statements, a module importing itself or the main program.
+
 ## 7. Errors
 
 There is one format for all errors, with line, column and a marker under the offending code:
@@ -527,4 +552,4 @@ globw --check program.gw   only check for errors, do not run
 
 ## 10. Out of scope for v1
 
-Modules and imports, records/structs, sets, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.
+Packages (modules in subfolders), records/structs, sets, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.

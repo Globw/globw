@@ -148,6 +148,10 @@ impl Parser {
     fn program(mut self) -> Result<Program, Error> {
         let mut p = Program::default();
         self.skip_newlines();
+        while self.at_import() {
+            p.imports.extend(self.import()?);
+            self.skip_newlines();
+        }
         while self.is(&Tok::Global) {
             self.advance();
             if !self.is(&Tok::Variables) {
@@ -169,6 +173,82 @@ impl Parser {
             self.skip_newlines();
         }
         Ok(p)
+    }
+
+    /// Whether an import starts here: `import x`, `from x import`, `lazy ...`.
+    fn at_import(&self) -> bool {
+        let named = |t: &Tok, w: &str| matches!(t, Tok::Name(n) if n == w);
+        let start = if named(self.tok(), "lazy") { 1 } else { 0 };
+        let first = self.peek_tok(start);
+        (named(first, "import") || *first == Tok::From) && matches!(self.peek_tok(start + 1), Tok::Name(_))
+    }
+
+    fn module_name(&mut self) -> Result<String, Error> {
+        match self.tok().clone() {
+            Tok::Name(n) if n.contains('.') => self.fail(format!("\"{}\": a module name cannot contain dots", n)),
+            Tok::Name(n) => {
+                self.advance();
+                Ok(n)
+            }
+            _ => self.fail("expected the name of a module, like import shapes"),
+        }
+    }
+
+    fn alias(&mut self) -> Result<Option<String>, Error> {
+        if !self.is_name("as") {
+            return Ok(None);
+        }
+        self.advance();
+        match self.tok().clone() {
+            Tok::Name(n) if !n.contains('.') => {
+                self.advance();
+                Ok(Some(n))
+            }
+            _ => self.fail("expected a name after \"as\""),
+        }
+    }
+
+    /// One import line; `import a, b as c` gives one import per module.
+    fn import(&mut self) -> Result<Vec<Import>, Error> {
+        let pos = self.pos();
+        let lazy = self.is_name("lazy");
+        if lazy {
+            self.advance();
+        }
+        let mut out = Vec::new();
+        if self.accept(&Tok::From) {
+            let module = self.module_name()?;
+            if !self.is_name("import") {
+                return self.fail(format!("expected \"import\", like from {} import name", module));
+            }
+            self.advance();
+            let mut names = Vec::new();
+            loop {
+                let npos = self.pos();
+                let name = match self.tok().clone() {
+                    Tok::Name(n) if !n.contains('.') => n,
+                    _ => return self.fail("expected the name of a function or variable of the module"),
+                };
+                self.advance();
+                names.push(ImportName { name, alias: self.alias()?, pos: npos });
+                if !self.accept(&Tok::Comma) {
+                    break;
+                }
+            }
+            out.push(Import { module, alias: None, names: Some(names), lazy, pos });
+        } else {
+            self.advance(); // import
+            loop {
+                let mpos = self.pos();
+                let module = self.module_name()?;
+                out.push(Import { module, alias: self.alias()?, names: None, lazy, pos: mpos });
+                if !self.accept(&Tok::Comma) {
+                    break;
+                }
+            }
+        }
+        self.end_stmt()?;
+        Ok(out)
     }
 
     fn local_decls(&mut self) -> Result<Vec<Decl>, Error> {
@@ -476,6 +556,10 @@ impl Parser {
     fn stmt(&mut self) -> Result<Stmt, Error> {
         self.ops = 0;
         let pos = self.pos();
+        if self.at_import() {
+            return Err(Error::new(pos, "imports go at the very start of the file, before everything else")
+                .with_hint("move this line to the top"));
+        }
         let kind = match self.tok().clone() {
             Tok::If => self.if_stmt()?,
             Tok::While => {
@@ -1139,5 +1223,27 @@ mod tests {
             }
             other => panic!("{:?}", other),
         }
+    }
+
+    #[test]
+    fn imports() {
+        let p = parse_src("lazy import a, b as c
+from d import e, f as g
+global variables:
+    x as int
+output(c.h(1))
+").unwrap();
+        let summary: Vec<(String, Option<String>, bool)> =
+            p.imports.iter().map(|i| (i.module.clone(), i.alias.clone(), i.lazy)).collect();
+        assert_eq!(
+            summary,
+            vec![("a".into(), None, true), ("b".into(), Some("c".into()), true), ("d".into(), None, false)]
+        );
+        let names = p.imports[2].names.as_ref().unwrap();
+        assert_eq!((names[1].name.as_str(), names[1].alias.as_deref()), ("f", Some("g")));
+        assert_eq!(expr_of("c.h(1) + m.v").unwrap(), "(Add c.h(1) m.v)");
+        assert_eq!(err("x = 1
+import a
+").message, "imports go at the very start of the file, before everything else");
     }
 }

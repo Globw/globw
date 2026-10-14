@@ -306,8 +306,19 @@ impl Scanner {
             }
             (self.i, self.line, self.col) = saved;
         }
-        let len = w.chars().count() as u32;
-        let tok = keyword(&w).unwrap_or(Tok::Name(w));
+        let tok = match keyword(&w) {
+            Some(k) => k,
+            None => {
+                // a qualified name: module.name
+                let mut w = w;
+                while self.peek(0) == Some('.') && self.peek(1).map_or(false, |c| c.is_alphabetic() || c == '_') {
+                    w.push(self.bump());
+                    w.push_str(&self.read_word());
+                }
+                Tok::Name(w)
+            }
+        };
+        let len = self.col - col;
         self.push(tok, line, col, len);
         Ok(())
     }

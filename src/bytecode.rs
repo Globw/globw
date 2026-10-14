@@ -93,6 +93,9 @@ pub enum Op {
     /// registers from `first`; a function's result goes to `dst`
     Builtin { id: u16, first: Reg, argc: u16, dst: Reg },
     RetNone,
+    /// if global `flag` is not true: sets it and calls function `func` with no
+    /// arguments (a module's start-up code, run at most once)
+    Ensure { flag: u16, func: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq)]

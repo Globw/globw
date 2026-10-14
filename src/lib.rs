@@ -12,6 +12,7 @@ pub mod fonts;
 pub mod graphics;
 pub mod lexer;
 pub mod library;
+pub mod modules;
 pub mod parser;
 pub mod render3d;
 pub mod tir;
@@ -19,14 +20,24 @@ pub mod vm;
 
 use std::io::{BufRead, Write};
 
-pub use errors::Error;
+pub use errors::{Error, SourceFile};
 
-/// Compiles source text to bytecode, or returns every error found.
+/// Compiles source text to bytecode, or returns every error found. Imported
+/// modules are looked for in the current folder.
 pub fn compile(source: &str) -> Result<bytecode::Module, Vec<Error>> {
-    let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
-    let program = parser::parse(tokens).map_err(|e| vec![e])?;
-    let typed = checker::check(&program)?;
-    Ok(compiler::compile(&typed))
+    let main = SourceFile { name: "program.gw".to_string(), text: source.to_string() };
+    compile_program(main, std::path::Path::new(".")).1
+}
+
+/// Compiles a program and the modules it imports (looked for in `dir`, the
+/// folder of the program). The files come back too, for rendering errors.
+pub fn compile_program(
+    main: SourceFile,
+    dir: &std::path::Path,
+) -> (Vec<SourceFile>, Result<bytecode::Module, Vec<Error>>) {
+    let (files, program) = modules::load(main, dir);
+    let result = program.and_then(|p| checker::check(&p)).map(|t| compiler::compile(&t));
+    (files, result)
 }
 
 /// Runs a compiled program, reading `input()` lines from `input`.

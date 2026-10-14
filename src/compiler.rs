@@ -329,6 +329,9 @@ impl<'a> FnCompiler<'a> {
         let mark = self.next;
         match s {
             TStmt::Assign(t, v) => self.assign(t, v),
+            TStmt::LoadModule { flag, func, pos } => {
+                self.emit(Op::Ensure { flag: *flag, func: *func as u32 }, *pos);
+            }
             TStmt::SetIndex(c, k, v, pos) => {
                 let c = self.operand(c);
                 let k = self.operand(k);

@@ -77,6 +77,28 @@ pub enum StmtKind {
     Repeat(Vec<Stmt>, Expr),
     Call(String, Vec<Expr>),
     Return(Option<Expr>),
+    /// runs the start-up code of a module (procedure `init`) unless the
+    /// global flag `flag` says it already ran; added by the module loader
+    LoadModule { init: String, flag: String },
+}
+
+/// `import shapes`, `import shapes as s`, `from shapes import area, side as l`,
+/// each optionally preceded by `lazy`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Import {
+    pub module: String,
+    pub alias: Option<String>,
+    /// for `from ... import`: the names, each with its optional alias
+    pub names: Option<Vec<ImportName>>,
+    pub lazy: bool,
+    pub pos: Pos,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportName {
+    pub name: String,
+    pub alias: Option<String>,
+    pub pos: Pos,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -114,6 +136,7 @@ pub struct Subprogram {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Program {
+    pub imports: Vec<Import>,
     pub globals: Vec<Decl>,
     pub locals: Vec<Decl>,
     pub subprograms: Vec<Subprogram>,

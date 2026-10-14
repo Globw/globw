@@ -1,0 +1,9 @@
+' A module: its functions and global variables can be imported.
+global variables:
+    calls as int
+output("[shapes loaded]")
+calls = 0
+function area(b as float, h as float) as float
+    calls = calls + 1
+    return b * h / 2
+end function

@@ -1,0 +1,12 @@
+' Modules: a normal import runs the module at once,
+' a lazy import only just before its first use.
+import shapes as s
+from stats import mean, double_area as da
+lazy import charts
+lazy import never
+output("start")
+output(s.area(3, 4), " ", mean([1, 2, 6]))
+output("before the bar")
+charts.bar(5)
+charts.bar(2)
+output(da(2), " calls: ", s.calls)
