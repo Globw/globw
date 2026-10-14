@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use crate::builtins::{Builtin, CheckError, Checked};
 use crate::tir::BaseType::{Bool, Int, Real, Str};
-use crate::tir::{join, BaseType, Type};
-use crate::vm::{display, format_real, Value};
+use crate::tir::{fits, join, list_elem, list_of, resolve, BaseType, Type};
+use crate::vm::{display, format_real, missing_key, Dict, Key as DictKey, Value};
 
 // ---------------------------------------------------------------- types
 
@@ -137,27 +137,51 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
         }
         Sort | Reverse => {
             arity(1)?;
-            match collection(a[0]) {
-                Some(_) => ok(none(1), Type::Unknown),
-                None => other(format!("{} works with an array or list", b.name())),
+            match (collection(a[0]), list_elem(a[0])) {
+                (Some(_), _) => ok(none(1), Type::Unknown),
+                (None, Some(_)) if b == Reverse => ok(none(1), Type::Unknown),
+                (None, Some(_)) => other("sort works only with lists of simple values (ints, floats, strings or bools)"),
+                _ => other(format!("{} works with an array or list", b.name())),
             }
         }
         Insert => {
             arity(3)?;
-            let Type::List(Some(e)) = a[0] else { return other("insert works with a list") };
+            let Some(e) = list_elem(a[0]) else { return other("insert works with a list") };
             if a[1] != Type::Base(Int) {
                 return Err(CheckError::Arg { index: 1, expected: Type::Base(Int) });
             }
-            match a[2] {
-                Type::Base(v) if join(e, v) == Some(e) => ok(vec![None, None, Some(e)], Type::Unknown),
-                v => other(format!("the value to insert must be {}, here it is {}", e.name(), v.full_name())),
+            if !fits(e, a[2]) {
+                return other(format!("the value to insert must be {}, here it is {}", e.full_name(), a[2].full_name()));
             }
+            ok(vec![None, None, e.base()], Type::Unknown)
         }
         TakeLast | ClearList => {
             arity(1)?;
+            match list_elem(a[0]) {
+                Some(e) => ok(none(1), if b == TakeLast { e } else { Type::Unknown }),
+                None => other(format!("{} works with a list", b.name())),
+            }
+        }
+        HasKey | Get | RemoveKey => {
+            arity(if b == Get { 3 } else { 2 })?;
+            let Type::Dict(k, v) = a[0] else { return other(format!("{} works with a dictionary", b.name())) };
+            if !fits(Type::Base(k), a[1]) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(k) });
+            }
+            let v = resolve(v);
+            match b {
+                HasKey => ok(none(2), Type::Base(Bool)),
+                RemoveKey => ok(none(2), Type::Unknown),
+                _ if fits(v, a[2]) => ok(vec![None, None, v.base()], v),
+                _ => Err(CheckError::Arg { index: 2, expected: v }),
+            }
+        }
+        Keys | Values => {
+            arity(1)?;
             match a[0] {
-                Type::List(Some(e)) => ok(none(1), if b == TakeLast { Type::Base(e) } else { Type::Unknown }),
-                _ => other(format!("{} works with a list", b.name())),
+                Type::Dict(k, _) if b == Keys => ok(none(1), Type::List(Some(k))),
+                Type::Dict(_, v) => ok(none(1), list_of(resolve(v))),
+                _ => other(format!("{} works with a dictionary", b.name())),
             }
         }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
@@ -186,6 +210,17 @@ fn text(v: &Value) -> &str {
         Value::Str(s) => s,
         other => panic!("internal error: expected a string, found {:?}", other),
     }
+}
+
+fn dict(v: &Value) -> &Rc<RefCell<Dict>> {
+    match v {
+        Value::Dict(d) => d,
+        other => panic!("internal error: expected a dictionary, found {:?}", other),
+    }
+}
+
+fn new_list(items: Vec<Value>) -> Value {
+    Value::Seq(Rc::new(RefCell::new(items)))
 }
 
 fn seq(v: &Value) -> &Rc<RefCell<Vec<Value>>> {
@@ -425,6 +460,19 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             seq(&args[0]).borrow_mut().reverse();
             Value::Null
         }
+
+        // dictionaries
+        HasKey => Value::Bool(dict(&args[0]).borrow().get(&DictKey::of(&args[1])).is_some()),
+        Get => dict(&args[0]).borrow().get(&DictKey::of(&args[1])).cloned().unwrap_or_else(|| args[2].clone()),
+        RemoveKey => {
+            let k = DictKey::of(&args[1]);
+            if !dict(&args[0]).borrow_mut().remove(&k) {
+                return Err(format!("remove_key: {}", missing_key(&k)));
+            }
+            Value::Null
+        }
+        Keys => new_list(dict(&args[0]).borrow().keys().map(DictKey::value).collect()),
+        Values => new_list(dict(&args[0]).borrow().values().cloned().collect()),
         Insert => {
             let mut items = seq(&args[0]).borrow_mut();
             let pos = int(&args[1]);

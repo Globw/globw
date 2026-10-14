@@ -65,11 +65,13 @@ variables:
     grades as int[10]
     grid as float[3, 4]
     names as list of string
+    grid2 as list of list of int
+    phone as dict of string to string
 ```
 
 - `variables:` stands alone on its line. Each following line, **indented** more than the line where the block starts (the one with `variables:` or `global variables:`), declares one or more variables (separated by commas) and their type after `as`. The block ends at the first line that is not indented more, or that is not a declaration (an indented `x = 1` is simply the first statement). For indentation a tab counts as moving to the next multiple of 4 columns.
 - Every variable used must be declared. A scope may have several `variables:` blocks, all at its top.
-- `T[N]` is an array of N elements, where N is an integer literal > 0. An array or matrix has at most 10,000,000 elements. `T[N, M]` is an N×M matrix. `list of T` is a dynamic list, initially empty.
+- `T[N]` is an array of N elements, where N is an integer literal > 0. An array or matrix has at most 10,000,000 elements. `T[N, M]` is an N×M matrix. `list of T` is a dynamic list, initially empty. `dict of K to V` is a dictionary, initially empty.
 - `global variables:` (only at the very start of the program) makes those variables visible everywhere, functions included. The main program's own variables are **not** visible inside functions.
 - Inside a function or procedure, a `variables:` block declares local variables. A local variable with the same name as a global one hides it.
 - Declaring the same name twice in a scope is an error. So is a main variable with the same name as a global, a variable named like a function, or a variable named like a built-in.
@@ -84,7 +86,11 @@ variables:
 | `string` | text |
 | `bool` | `true` / `false` |
 
-Collections: `T[N]` (array), `T[N, M]` (matrix), `list of T` (list), where T is one of the four types above.
+Collections: `T[N]` (array), `T[N, M]` (matrix), `list of T` (list) and `dict of K to V` (dictionary).
+
+- Arrays and matrices contain simple values (one of the four types above).
+- The elements of a list and the values of a dictionary can be of any type, collections included: `list of list of int`, `dict of string to list of string`, `dict of int to dict of string to float`… Collections can nest to any depth.
+- Dictionary keys (K) are `int` or `string`.
 
 - Every variable has the type it is declared with, for the whole program.
 - An `int` value can go where a `float` is expected (assignment, argument, element, return): it is converted. Every other mismatch is an error before the program runs:
@@ -104,7 +110,7 @@ Precedence, from highest to lowest:
 
 | Level | Operators |
 |---|---|
-| 1 | calls `f(...)`, indexing `v[i]`, `m[i, j]` |
+| 1 | calls `f(...)`, indexing `v[i]`, `m[i, j]`, chained indexing `g[i][j]`, `keys(d)[1]` |
 | 2 | unary `-`, `not` |
 | 3 | `*`, `/`, `div`, `mod` |
 | 4 | `+`, `-` |
@@ -119,6 +125,8 @@ Precedence, from highest to lowest:
 - `and` and `or` short-circuit.
 - `int` overflow and division by zero are run-time errors.
 - Parentheses `( )` group.
+- A **list literal** `[a, b, c]` builds a new list. All its elements must have the same type (ints and floats mix as floats); `[]` is the empty list and fits any list. Literals nest: `[[1, 2], [3]]` is a list of lists of ints.
+- `d[k]` is the value of key `k` in dictionary `d`; a key that is not in the dictionary is a run-time error (`key "Zoe" is not in the dictionary`).
 
 ## 6. Statements
 
@@ -128,7 +136,14 @@ x = 5
 grades[i] = 7
 grid[i, j] = 0
 ```
-A whole array, matrix or list cannot be assigned at once. Characters of a string cannot be changed.
+A whole array or matrix cannot be assigned at once. A whole list or dictionary can, by reference, from a value of the same type: `words = split(s, " ")`, `row = [1, 2, 3]`. Characters of a string cannot be changed.
+
+```
+grid2[1][2] = 9          ' element 2 of the first inner list
+phone["Anna"] = "123"    ' adds the key, or replaces its value
+book["Anna"]["mail"] = "a@b.it"
+```
+Assigning to a dictionary key adds it if it is missing. Collections are shared by reference: after `append(grid2, row)`, changing `row` changes `grid2[length(grid2)]` too.
 
 ### 6.2 Conditionals
 ```
@@ -196,7 +211,7 @@ end procedure
 ```
 - **Definition**:
   - Functions and procedures are defined only at top level, never nested. Recursion is allowed.
-  - Parameters are local variables and do not go in `variables:`. Each parameter has a type: `name as T`, `name as T[]` (an array of any size), `name as T[,]` (a matrix of any size) or `name as list of T`.
+  - Parameters are local variables and do not go in `variables:`. Each parameter has a type: `name as T`, `name as T[]` (an array of any size), `name as T[,]` (a matrix of any size), `name as list of T` or `name as dict of K to V` (nesting included). Collections are passed by reference.
   - A `function` declares its return type after the parentheses: `) as T`, where T is one of the four simple types. A `procedure` has none.
 - **Returning**:
   - A `function` must execute `return value` on every path. This is checked before the program runs.
@@ -406,6 +421,21 @@ Python-like functions, named in plain English in Globw's style. "Number" means `
 | `take_last(list)` | element type | removes and returns the last element (run-time error if empty) |
 | `clear_list(list)` | procedure | removes every element |
 
+`sum`, `contains`, `index_of`, `sort`, `join`, `minimum` and `maximum` work on collections of simple values; `length`, `append`, `remove`, `reverse`, `insert`, `take_last` and `clear_list` work on any list, nested ones included.
+
+**Dictionaries**
+
+| Command | Result | Effect |
+|---|---|---|
+| `length(d)` | `int` | number of keys |
+| `has_key(d, key)` | `bool` | the key is in the dictionary |
+| `get(d, key, default)` | value type | the value of the key, or `default` if it is missing |
+| `remove_key(d, key)` | procedure | removes the key (run-time error if it is missing) |
+| `keys(d)` | `list of K` | the keys, in the order they were first added |
+| `values(d)` | `list of V` | the values, in the same order |
+
+`input` cannot read into a dictionary or a list of lists: read into a variable, then assign it.
+
 A list returned by a function (like `split` or `read_lines`) can be assigned to a list variable of the same type: `words = split(line_text, " ")`. Lists are assigned by reference.
 
 **Files** (relative paths start from the folder of the program; text is UTF-8)
@@ -429,7 +459,7 @@ A file that cannot be read or written is a run-time error that names it.
 | `now()` | `string` | the time, like `"16:05:09"` |
 | `stop()` | procedure | ends the program at once (the window, if any, closes) |
 
-All these names are reserved like the other built-ins. Python features that need types Globw does not have (dictionaries, sets, tuples), functions as values (`map`, `filter`, `lambda`) or classes are not part of Globw.
+All these names are reserved like the other built-ins. Python features that need types Globw does not have (sets, tuples), functions as values (`map`, `filter`, `lambda`) or classes are not part of Globw.
 
 ## 7. Errors
 
@@ -497,4 +527,4 @@ globw --check program.gw   only check for errors, do not run
 
 ## 10. Out of scope for v1
 
-Modules and imports, records/structs, dictionaries and sets, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.
+Modules and imports, records/structs, sets, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.

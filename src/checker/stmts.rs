@@ -27,6 +27,9 @@ impl<'p> Checker<'p> {
         match &s.kind {
             StmtKind::Assign(target, value) => {
                 let v = self.expr(value);
+                if self.needs_general_target(target) {
+                    return self.assign_element(target, v);
+                }
                 let t = self.target(target)?;
                 Some(self.assign(t, v))
             }
@@ -87,6 +90,69 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `g[1][2] = x`, `d["a"] = x`: element assignments that go through
+    /// nested lists or dictionaries.
+    fn needs_general_target(&self, t: &Target) -> bool {
+        if !t.rest.is_empty() {
+            return true;
+        }
+        match self.lookup(&t.name) {
+            Some(p) => !t.indices.is_empty() && matches!(self.var(p).full_type(), Type::Dict(..) | Type::ListOf(_)),
+            None => false,
+        }
+    }
+
+    fn assign_element(&mut self, t: &Target, v: TExpr) -> Option<TStmt> {
+        let Some(p) = self.lookup(&t.name) else {
+            let err = self.undeclared(&t.name, t.pos);
+            self.report_structural(err);
+            return None;
+        };
+        let mut container = TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos: t.pos };
+        let groups: Vec<&Vec<Expr>> = std::iter::once(&t.indices).chain(t.rest.iter()).collect();
+        let (last, path) = groups.split_last().expect("at least one index group");
+        for group in path {
+            container = self.subscript(container, group, t.pos);
+        }
+        if last.len() != 1 {
+            self.report(Error::new(t.pos, "use one index at a time, like a[i][j]"));
+            return None;
+        }
+        let key = self.expr(&last[0]);
+        let element = match container.ty {
+            Type::Array(Some(b)) => Some(Type::Base(b)),
+            other => list_elem(other),
+        };
+        let (elem, key) = match (container.ty, element) {
+            (Type::Unknown, _) => return None,
+            (_, Some(elem)) => (elem, self.int_expr(key, "the index")),
+            (Type::Dict(k, v), _) => {
+                if !fits(Type::Base(k), key.ty) {
+                    self.report(Error::new(key.pos, format!("the key must be {}, here it is {}", k.name(), key.ty.full_name())));
+                }
+                (resolve(v), key)
+            }
+            (Type::Base(BaseType::Str), _) => {
+                self.report(Error::new(t.pos, "a character of a string cannot be changed"));
+                return None;
+            }
+            (other, _) => {
+                self.report(Error::new(
+                    t.pos,
+                    format!("[ ] can be used on lists, dictionaries and strings, not on {}", other.full_name()),
+                ));
+                return None;
+            }
+        };
+        if !fits(elem, v.ty) {
+            self.report(Error::new(
+                v.pos,
+                format!("this element must be {}, here it gets {}", elem.full_name(), v.ty.full_name()),
+            ));
+        }
+        Some(TStmt::SetIndex(container, key, convert(v, elem.base()), t.pos))
+    }
+
     fn mark_assigned(&mut self, t: &TTarget) {
         if let (Place::Local(i), true) = (t.place, t.indices.is_empty()) {
             self.assigned[i as usize] = true;
@@ -111,10 +177,10 @@ impl<'p> Checker<'p> {
         let (shape, ty) = (v.shape.clone(), v.ty);
         let needed = match shape {
             Shape::Scalar => 0,
-            Shape::Array(_) | Shape::List => 1,
+            Shape::Array(_) | Shape::List | Shape::Dict => 1,
             Shape::Matrix(..) => 2,
         };
-        if indices.len() == needed || (shape == Shape::List && indices.is_empty()) {
+        if indices.len() == needed || (matches!(shape, Shape::List | Shape::Dict) && indices.is_empty()) {
             return Some(TTarget { place: p, indices, pos: t.pos });
         }
         let err = match (&shape, indices.len()) {
@@ -138,7 +204,7 @@ impl<'p> Checker<'p> {
         if var.shape != Shape::Scalar && t.indices.is_empty() {
             // a whole list, like `words = split(s, " ")`
             let (expected, name) = (var.full_type(), var.name.clone());
-            if v.ty != expected && v.ty != Type::Unknown {
+            if !fits(expected, v.ty) {
                 self.report(Error::new(
                     v.pos,
                     format!("cannot assign {} to \"{}\", which is {}", v.ty.full_name(), name, expected.full_name()),
@@ -153,10 +219,15 @@ impl<'p> Checker<'p> {
                     self.hint(&v, b);
                 }
             }
-            other => self.report(
-                Error::new(v.pos, format!("cannot assign {} to a variable", other.name()))
-                    .with_hint("assign one element at a time, like v[i] = ..."),
-            ),
+            other => {
+                let var = self.var(t.place);
+                let message = if t.indices.is_empty() {
+                    format!("\"{}\" is {}, but here it gets {}", var.name, var.full_type().full_name(), other.full_name())
+                } else {
+                    format!("this element must be {}, here it gets {}", Type::Base(var.ty.unwrap_or(BaseType::Int)).full_name(), other.full_name())
+                };
+                self.report(Error::new(v.pos, message));
+            }
         }
         self.mark_assigned(&t);
         let ty = self.var(t.place).ty;
@@ -239,8 +310,8 @@ impl<'p> Checker<'p> {
                 let mut targets = Vec::new();
                 for a in args {
                     let target = match &a.kind {
-                        ExprKind::Var(n) => Target { name: n.clone(), indices: vec![], pos: a.pos },
-                        ExprKind::Index(n, ix) => Target { name: n.clone(), indices: ix.clone(), pos: a.pos },
+                        ExprKind::Var(n) => Target { name: n.clone(), indices: vec![], rest: vec![], pos: a.pos },
+                        ExprKind::Index(n, ix) => Target { name: n.clone(), indices: ix.clone(), rest: vec![], pos: a.pos },
                         _ => {
                             self.report_structural(Error::new(
                                 a.pos,
@@ -249,7 +320,24 @@ impl<'p> Checker<'p> {
                             continue;
                         }
                     };
+                    if let Some(p) = self.lookup(&target.name) {
+                        if matches!(self.var(p).full_type(), Type::Dict(..) | Type::ListOf(_)) {
+                            self.report(
+                                Error::new(a.pos, "input cannot read into a dictionary or a list of lists")
+                                    .with_hint("read into a variable, then assign it, like input(x) and then d[k] = x"),
+                            );
+                            continue;
+                        }
+                    }
                     let Some(t) = self.target(&target) else { continue };
+                    let var = self.var(t.place);
+                    if var.shape != Shape::Scalar && t.indices.is_empty() {
+                        self.report(Error::new(
+                            a.pos,
+                            format!("input reads one value at a time: write an element, like {}[i]", var.name),
+                        ));
+                        continue;
+                    }
                     self.mark_assigned(&t);
                     let ty = self.var(t.place).ty.unwrap_or(BaseType::Str);
                     targets.push((t, ty));
@@ -264,7 +352,7 @@ impl<'p> Checker<'p> {
                 }
                 let list = self.expr(&args[0]);
                 let second = self.expr(&args[1]);
-                let Type::List(elem) = list.ty else {
+                let Some(element) = list_elem(list.ty) else {
                     if list.ty != Type::Unknown {
                         self.report(Error::new(list.pos, format!("{} works only with lists (declared with list of)", name)));
                     }
@@ -273,6 +361,17 @@ impl<'p> Checker<'p> {
                 if name == "remove" {
                     let i = self.int_expr(second, "the position");
                     return Some(TStmt::Remove(list, i, pos));
+                }
+                let elem = element.base();
+                if elem.is_none() || !matches!(list.kind, TExprKind::Load(_)) {
+                    // nested lists, or a list reached through an expression like g[1]
+                    if !fits(element, second.ty) {
+                        self.report(Error::new(
+                            second.pos,
+                            format!("this list contains {}, here the value is {}", element.plural(), second.ty.full_name()),
+                        ));
+                    }
+                    return Some(TStmt::Append(list, convert(second, elem)));
                 }
                 match (second.ty, &list.kind) {
                     (Type::Base(b), TExprKind::Load(p)) => self.widen(*p, b, second.pos),

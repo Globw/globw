@@ -361,3 +361,24 @@ fn library_functions_are_typed() {
         "the value to look for must be an int, here it is a string"
     );
 }
+
+#[test]
+fn dictionaries_and_nested_lists_are_typed() {
+    let decl = "variables:\n    voti as dict of string to int\n    g as list of list of int\n    n as int\n";
+    let ok = format!("{}voti[\"a\"] = 8\nn = voti[\"a\"] + get(voti, \"b\", 0)\nappend(g, [1, 2])\nappend(g[1], 3)\ng[1][2] = n\nn = g[1][2] + length(g) + length(voti)\n", decl);
+    assert!(check_src(&ok).is_ok(), "{:?}", check_src(&ok).err());
+    assert_eq!(first_error(&format!("{}voti[3] = 1\n", decl)).message, "the key must be a string, here it is an int");
+    assert_eq!(
+        first_error(&format!("{}voti[\"a\"] = \"x\"\n", decl)).message,
+        "this element must be an int, here it gets a string"
+    );
+    assert_eq!(
+        first_error(&format!("{}append(g, [1, \"a\"])\n", decl)).message,
+        "all the elements of a list must have the same type"
+    );
+    assert_eq!(
+        first_error(&format!("{}append(g, 5)\n", decl)).message,
+        "this list contains lists of ints, here the value is an int"
+    );
+    assert_eq!(first_error(&format!("{}n = g[1]\n", decl)).message, "\"n\" is an int, but here it gets a list of ints");
+}

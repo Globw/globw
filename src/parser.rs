@@ -3,6 +3,7 @@
 use crate::ast::*;
 use crate::errors::{Error, Pos};
 use crate::lexer::{miscased_statement_keyword, Tok, Token};
+use crate::tir::Type;
 
 pub(crate) struct Parser {
     pub(crate) t: Vec<Token>,
@@ -227,9 +228,9 @@ impl Parser {
                 .map_err(|e: Error| e.with_hint("for example: x as int"));
         }
         self.advance();
-        let (shape, ty) = self.type_spec(false)?;
+        let (shape, ty, full) = self.type_spec(false)?;
         self.end_stmt()?;
-        Ok(names.into_iter().map(|(name, pos)| Decl { name, shape: shape.clone(), ty, pos }).collect())
+        Ok(names.into_iter().map(|(name, pos)| Decl { name, shape: shape.clone(), ty, full, pos }).collect())
     }
 
     fn base_type(&mut self) -> Result<crate::tir::BaseType, Error> {
@@ -251,18 +252,22 @@ impl Parser {
 
     /// A type after `as`. Parameters write arrays as `int[]` and matrices as
     /// `int[,]` (any size); declarations give the sizes.
-    fn type_spec(&mut self, param: bool) -> Result<(Shape, crate::tir::BaseType), Error> {
-        if self.is_name("list") {
-            self.advance();
-            if !self.is_name("of") {
-                return self.fail("expected \"of\" after \"list\", like list of int");
-            }
-            self.advance();
-            return Ok((Shape::List, self.base_type()?));
+    /// A type after `as`: its shape, its simple (element) type and the whole
+    /// type. Parameters write arrays as `int[]` and matrices as `int[,]`.
+    fn type_spec(&mut self, param: bool) -> Result<(Shape, crate::tir::BaseType, Type), Error> {
+        use crate::tir::BaseType;
+        if self.is_name("list") || self.is_name("dict") {
+            let full = self.collection_type()?;
+            let shape = if matches!(full, Type::Dict(..)) { Shape::Dict } else { Shape::List };
+            let base = full.base().or(match full {
+                Type::List(Some(b)) => Some(b),
+                _ => None,
+            });
+            return Ok((shape, base.unwrap_or(BaseType::Int), full));
         }
         let ty = self.base_type()?;
         if !self.accept(&Tok::LBracket) {
-            return Ok((Shape::Scalar, ty));
+            return Ok((Shape::Scalar, ty, Type::Base(ty)));
         }
         if param {
             let shape = if self.accept(&Tok::Comma) { Shape::Matrix(0, 0) } else { Shape::Array(0) };
@@ -270,23 +275,60 @@ impl Parser {
                 return self.fail("a parameter takes arrays of any size: write int[] or int[,]");
             }
             self.advance();
-            return Ok((shape, ty));
+            let full = if shape == Shape::Array(0) { Type::Array(Some(ty)) } else { Type::Matrix(Some(ty)) };
+            return Ok((shape, ty, full));
         }
         if self.is(&Tok::RBracket) {
             return self.fail("an array needs its size, like int[10]");
         }
         let a = self.dimension()?;
-        let shape = if self.accept(&Tok::Comma) {
+        let (shape, full) = if self.accept(&Tok::Comma) {
             let b = self.dimension()?;
             if a * b > MAX_ELEMENTS {
                 return self.fail(TOO_BIG);
             }
-            Shape::Matrix(a, b)
+            (Shape::Matrix(a, b), Type::Matrix(Some(ty)))
         } else {
-            Shape::Array(a)
+            (Shape::Array(a), Type::Array(Some(ty)))
         };
         self.expect(&Tok::RBracket, "\"]\"")?;
-        Ok((shape, ty))
+        Ok((shape, ty, full))
+    }
+
+    /// `list of T` or `dict of K to V`, where T and V may be collections too.
+    fn collection_type(&mut self) -> Result<Type, Error> {
+        use crate::tir::{dict_of, list_of, BaseType};
+        let is_list = self.is_name("list");
+        self.advance();
+        if !self.is_name("of") {
+            return self.fail(if is_list {
+                "expected \"of\" after \"list\", like list of int"
+            } else {
+                "expected \"of\" after \"dict\", like dict of string to int"
+            });
+        }
+        self.advance();
+        if is_list {
+            return Ok(list_of(self.element_type()?));
+        }
+        let key_pos = self.pos();
+        let key = self.base_type()?;
+        if key != BaseType::Int && key != BaseType::Str {
+            return Err(Error::new(key_pos, "dictionary keys must be int or string"));
+        }
+        if !self.accept(&Tok::To) {
+            return self.fail("expected \"to\" after the key type, like dict of string to int");
+        }
+        Ok(dict_of(key, self.element_type()?))
+    }
+
+    /// The type of the elements of a list or the values of a dictionary.
+    fn element_type(&mut self) -> Result<Type, Error> {
+        if self.is_name("list") || self.is_name("dict") {
+            self.collection_type()
+        } else {
+            Ok(Type::Base(self.base_type()?))
+        }
     }
 
     fn dimension(&mut self) -> Result<usize, Error> {
@@ -326,8 +368,8 @@ impl Parser {
                     return Err(Error::new(p, format!("parameter \"{}\" needs a type, like {} as int", name, name)));
                 }
                 self.advance();
-                let (shape, ty) = self.type_spec(true)?;
-                params.push(Decl { name, shape, ty, pos: p });
+                let (shape, ty, full) = self.type_spec(true)?;
+                params.push(Decl { name, shape, ty, full, pos: p });
                 if self.accept(&Tok::RParen) {
                     break;
                 }
@@ -552,6 +594,10 @@ impl Parser {
             return Ok(StmtKind::Call(name, args));
         }
         let indices = if self.is(&Tok::LBracket) { self.indices()? } else { Vec::new() };
+        let mut rest = Vec::new();
+        while self.is(&Tok::LBracket) {
+            rest.push(self.indices()?);
+        }
         if !self.accept(&Tok::Assign) {
             if self.is(&Tok::Eq) {
                 return Err(Error::new(self.pos(), "== compares two values, it does not assign")
@@ -561,7 +607,7 @@ impl Parser {
         }
         let value = self.expr()?;
         self.end_stmt()?;
-        Ok(StmtKind::Assign(Target { name, indices, pos }, value))
+        Ok(StmtKind::Assign(Target { name, indices, rest, pos }, value))
     }
 
     fn enter(&mut self) -> Result<(), Error> {
@@ -678,7 +724,18 @@ impl Parser {
         Ok(Expr { kind: ExprKind::Unary(op, Box::new(x?)), pos })
     }
 
+    /// A value followed by any number of `[...]` index groups.
     fn primary(&mut self) -> Result<Expr, Error> {
+        let mut e = self.atom()?;
+        while self.is(&Tok::LBracket) {
+            let pos = self.pos();
+            let idx = self.indices()?;
+            e = Expr { kind: ExprKind::Subscript(Box::new(e), idx), pos };
+        }
+        Ok(e)
+    }
+
+    fn atom(&mut self) -> Result<Expr, Error> {
         let t = self.advance();
         let kind = match t.tok {
             Tok::Int(n) => ExprKind::Int(n),
@@ -690,6 +747,19 @@ impl Parser {
                 let e = self.expr()?;
                 self.expect(&Tok::RParen, "\")\"")?;
                 return Ok(e);
+            }
+            Tok::LBracket => {
+                let mut items = Vec::new();
+                if !self.accept(&Tok::RBracket) {
+                    loop {
+                        items.push(self.expr()?);
+                        if self.accept(&Tok::RBracket) {
+                            break;
+                        }
+                        self.expect(&Tok::Comma, "\",\" or \"]\"")?;
+                    }
+                }
+                ExprKind::ListLit(items)
             }
             Tok::Name(n) => {
                 if self.is(&Tok::LParen) {
@@ -750,6 +820,8 @@ mod tests {
             ExprKind::Bool(b) => b.to_string(),
             ExprKind::Var(n) => n.clone(),
             ExprKind::Index(n, ix) => format!("{}[{}]", n, list(ix)),
+            ExprKind::Subscript(b, ix) => format!("{}[{}]", sx(b), list(ix)),
+            ExprKind::ListLit(items) => format!("[{}]", list(items)),
             ExprKind::Call(n, a) => format!("{}({})", n, list(a)),
             ExprKind::Unary(op, x) => format!("({:?} {})", op, sx(x)),
             ExprKind::Binary(op, a, b) => format!("({:?} {} {})", op, sx(a), sx(b)),
@@ -1040,5 +1112,32 @@ mod tests {
         assert_eq!(err("variables:\n    v as int[4294967297]\n").message, msg);
         assert_eq!(err("variables:\n    m as int[100000, 100000]\n").message, msg);
         assert!(parse_src("variables:\n    v as bool[10000000]\n").is_ok());
+    }
+
+    #[test]
+    fn nested_declarations() {
+        use crate::tir::{dict_of, list_of, Type};
+        let p = parse_src("variables:\n    g as list of list of int\n    d as dict of string to list of int\n    e as dict of int to string\n").unwrap();
+        let ints = list_of(Type::Base(crate::tir::BaseType::Int));
+        assert_eq!(p.locals[0].full, list_of(ints));
+        assert_eq!(p.locals[1].full, dict_of(crate::tir::BaseType::Str, ints));
+        assert_eq!(p.locals[1].shape, Shape::Dict);
+        assert_eq!(p.locals[2].full, dict_of(crate::tir::BaseType::Int, Type::Base(crate::tir::BaseType::Str)));
+        assert_eq!(err("variables:\n    d as dict of float to int\n").message, "dictionary keys must be int or string");
+    }
+
+    #[test]
+    fn list_literals_and_chained_indexing() {
+        assert_eq!(expr_of("[1, 2, [3]]").unwrap(), "[1,2,[3]]");
+        assert_eq!(expr_of("[]").unwrap(), "[]");
+        assert_eq!(expr_of("g[1][2] + d[\"a\"]").unwrap(), "(Add g[1][2] d[\"a\"])");
+        assert_eq!(expr_of("keys(d)[1]").unwrap(), "keys(d)[1]");
+        match &parse_src("g[1][2] = 3\n").unwrap().body[0].kind {
+            StmtKind::Assign(t, _) => {
+                assert_eq!(t.indices.len(), 1);
+                assert_eq!(t.rest.len(), 1);
+            }
+            other => panic!("{:?}", other),
+        }
     }
 }

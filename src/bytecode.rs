@@ -68,7 +68,8 @@ pub enum Op {
     /// new rows × cols matrix
     NewMatrix(Reg, u32, u32),
     NewList(Reg),
-    /// dst, collection, index (1-based)
+    NewDict(Reg),
+    /// dst, collection, index (1-based) or dictionary key
     GetElem(Reg, Reg, Reg),
     /// collection, index, src
     SetElem(Reg, Reg, Reg),

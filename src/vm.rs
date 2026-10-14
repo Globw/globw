@@ -20,6 +20,90 @@ pub enum Value {
     /// arrays and lists
     Seq(Rc<RefCell<Vec<Value>>>),
     Matrix(Rc<RefCell<Matrix>>),
+    Dict(Rc<RefCell<Dict>>),
+}
+
+/// A dictionary key: dictionaries are keyed by ints or strings.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Key {
+    Int(i64),
+    Str(Rc<str>),
+}
+
+impl Key {
+    pub fn of(v: &Value) -> Key {
+        match v {
+            Value::Int(n) => Key::Int(*n),
+            Value::Str(s) => Key::Str(s.clone()),
+            other => panic!("internal error: {:?} is not a dictionary key", other),
+        }
+    }
+
+    pub fn value(&self) -> Value {
+        match self {
+            Key::Int(n) => Value::Int(*n),
+            Key::Str(s) => Value::Str(s.clone()),
+        }
+    }
+
+    /// The key as written in a program, for error messages.
+    pub fn shown(&self) -> String {
+        match self {
+            Key::Int(n) => n.to_string(),
+            Key::Str(s) => format!("\"{}\"", s),
+        }
+    }
+}
+
+/// A dictionary that remembers the order in which keys were first added.
+#[derive(Debug, Default)]
+pub struct Dict {
+    entries: Vec<(Key, Value)>,
+    index: std::collections::HashMap<Key, usize>,
+}
+
+impl Dict {
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn get(&self, k: &Key) -> Option<&Value> {
+        self.index.get(k).map(|&i| &self.entries[i].1)
+    }
+
+    pub fn set(&mut self, k: Key, v: Value) {
+        match self.index.get(&k) {
+            Some(&i) => self.entries[i].1 = v,
+            None => {
+                self.index.insert(k.clone(), self.entries.len());
+                self.entries.push((k, v));
+            }
+        }
+    }
+
+    /// Removes a key; false if it was not there.
+    pub fn remove(&mut self, k: &Key) -> bool {
+        let Some(i) = self.index.remove(k) else { return false };
+        self.entries.remove(i);
+        for (_, j) in self.index.iter_mut() {
+            if *j > i {
+                *j -= 1;
+            }
+        }
+        true
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &Key> {
+        self.entries.iter().map(|(k, _)| k)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.entries.iter().map(|(_, v)| v)
+    }
+}
+
+pub fn missing_key(k: &Key) -> String {
+    format!("key {} is not in the dictionary", k.shown())
 }
 
 #[derive(Debug)]
@@ -101,7 +185,7 @@ pub(crate) fn display(v: &Value) -> String {
         Value::Bool(true) => "true".to_string(),
         Value::Bool(false) => "false".to_string(),
         Value::Str(s) => s.to_string(),
-        Value::Null | Value::Seq(_) | Value::Matrix(_) => panic!("internal error: cannot display {:?}", v),
+        Value::Null | Value::Seq(_) | Value::Matrix(_) | Value::Dict(_) => panic!("internal error: cannot display {:?}", v),
     }
 }
 
@@ -352,7 +436,17 @@ impl<'m> Vm<'m> {
                     reg!(d) = Value::Matrix(Rc::new(RefCell::new(Matrix { rows, cols, data })));
                 }
                 Op::NewList(d) => reg!(d) = Value::Seq(Rc::new(RefCell::new(Vec::new()))),
+                Op::NewDict(d) => reg!(d) = Value::Dict(Rc::new(RefCell::new(Dict::default()))),
                 Op::GetElem(d, c, i) => {
+                    if let Value::Dict(t) = &reg!(c) {
+                        let k = Key::of(&reg!(i));
+                        let v = t.borrow().get(&k).cloned();
+                        match v {
+                            Some(v) => reg!(d) = v,
+                            None => fail!(missing_key(&k)),
+                        }
+                        continue;
+                    }
                     let i = int(&reg!(i));
                     let v = {
                         let s = seq(&reg!(c)).borrow();
@@ -367,6 +461,11 @@ impl<'m> Vm<'m> {
                     reg!(d) = v;
                 }
                 Op::SetElem(c, i, s) => {
+                    if let Value::Dict(t) = &reg!(c) {
+                        let (k, v) = (Key::of(&reg!(i)), reg!(s).clone());
+                        t.borrow_mut().set(k, v);
+                        continue;
+                    }
                     let i = int(&reg!(i));
                     let v = reg!(s).clone();
                     let mut q = seq(&reg!(c)).borrow_mut();
@@ -413,6 +512,7 @@ impl<'m> Vm<'m> {
                 Op::Length(d, s) => {
                     let n = match &reg!(s) {
                         Value::Seq(q) => q.borrow().len(),
+                        Value::Dict(t) => t.borrow().len(),
                         Value::Str(t) => t.chars().count(),
                         other => panic!("internal error: length of {:?}", other),
                     };

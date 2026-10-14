@@ -20,12 +20,7 @@ pub(crate) fn float_hint(e: Error, expected: Type, actual: Type) -> Error {
 
 /// The type a declaration gives to its variable.
 pub(crate) fn declared_type(d: &Decl) -> Type {
-    match d.shape {
-        Shape::Scalar => Type::Base(d.ty),
-        Shape::Array(_) => Type::Array(Some(d.ty)),
-        Shape::Matrix(..) => Type::Matrix(Some(d.ty)),
-        Shape::List => Type::List(Some(d.ty)),
-    }
+    d.full
 }
 
 impl<'p> Checker<'p> {

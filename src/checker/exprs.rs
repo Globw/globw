@@ -83,7 +83,18 @@ impl<'p> Checker<'p> {
                     TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos }
                 }
             },
-            ExprKind::Index(name, indices) => self.index(name, indices, pos),
+            ExprKind::Index(name, indices) => match self.lookup(name) {
+                Some(p) if matches!(self.var(p).full_type(), Type::Dict(..) | Type::ListOf(_)) => {
+                    let container = TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos };
+                    self.subscript(container, indices, pos)
+                }
+                _ => self.index(name, indices, pos),
+            },
+            ExprKind::Subscript(base, indices) => {
+                let container = self.expr(base);
+                self.subscript(container, indices, pos)
+            }
+            ExprKind::ListLit(items) => self.list_literal(items, pos),
             ExprKind::Binary(op, a, b) => {
                 let a = self.expr(a);
                 let b = self.expr(b);
@@ -95,6 +106,70 @@ impl<'p> Checker<'p> {
             }
             ExprKind::Call(name, args) => self.call_expr(name, args, pos),
         }
+    }
+
+    /// `container[key]` where the container is any expression: a list
+    /// (nested or not), a dictionary, an array or a string.
+    pub(crate) fn subscript(&mut self, container: TExpr, indices: &[Expr], pos: Pos) -> TExpr {
+        if indices.len() != 1 {
+            self.report(Error::new(pos, "use one index at a time, like a[i][j]"));
+            return unknown(pos);
+        }
+        let key = self.expr(&indices[0]);
+        let element = match container.ty {
+            Type::Array(Some(b)) => Some(Type::Base(b)),
+            t => list_elem(t),
+        };
+        match (container.ty, element) {
+            (Type::Unknown, _) => unknown(pos),
+            (Type::Base(BaseType::Str), _) => {
+                let k = self.int_expr(key, "the index");
+                base(TExprKind::Char(Box::new(container), Box::new(k)), BaseType::Str, pos)
+            }
+            (_, Some(elem)) => {
+                let k = self.int_expr(key, "the index");
+                TExpr { kind: TExprKind::Index(Box::new(container), Box::new(k)), ty: elem, pos }
+            }
+            (Type::Dict(k, v), _) => {
+                if !fits(Type::Base(k), key.ty) {
+                    self.report(Error::new(key.pos, format!("the key must be {}, here it is {}", k.name(), key.ty.full_name())));
+                }
+                TExpr { kind: TExprKind::Index(Box::new(container), Box::new(key)), ty: resolve(v), pos }
+            }
+            (other, _) => {
+                self.report(Error::new(
+                    pos,
+                    format!("[ ] can be used on lists, dictionaries and strings, not on {}", other.full_name()),
+                ));
+                unknown(pos)
+            }
+        }
+    }
+
+    /// `[a, b, c]`: every element must have the same type (ints and floats mix as floats).
+    fn list_literal(&mut self, items: &[Expr], pos: Pos) -> TExpr {
+        let texprs: Vec<TExpr> = items.iter().map(|e| self.expr(e)).collect();
+        let empty = list_of(Type::Unknown);
+        let mut elem: Option<Type> = None;
+        for t in &texprs {
+            let next = match (elem, t.ty) {
+                (_, Type::Unknown) => elem,
+                (None, x) => Some(x),
+                (Some(Type::Base(a)), Type::Base(b)) => join(a, b).map(Type::Base),
+                (Some(a), b) if a == b => Some(a),
+                (Some(a), b) if a == empty && list_elem(b).is_some() => Some(b),
+                (Some(a), b) if b == empty && list_elem(a).is_some() => Some(a),
+                _ => None,
+            };
+            if next.is_none() {
+                self.report(Error::new(pos, "all the elements of a list must have the same type"));
+                return unknown(pos);
+            }
+            elem = next;
+        }
+        let elem = elem.unwrap_or(Type::Unknown);
+        let converted = texprs.into_iter().map(|t| convert(t, elem.base())).collect();
+        TExpr { kind: TExprKind::ListLit(converted), ty: list_of(elem), pos }
     }
 
     pub(crate) fn undeclared(&self, name: &str, pos: Pos) -> Error {
@@ -163,7 +238,7 @@ impl<'p> Checker<'p> {
                 self.report(Error::new(pos, format!("\"{}\" is a matrix: it needs 2 indices, like {}[i, j]", name, name)));
                 unknown(pos)
             }
-            Shape::Array(_) | Shape::List => {
+            Shape::Array(_) | Shape::List | Shape::Dict => {
                 self.report(Error::new(pos, format!("\"{}\" needs exactly 1 index, like {}[i]", name, name)));
                 unknown(pos)
             }
@@ -326,7 +401,7 @@ impl<'p> Checker<'p> {
                         self.hint(&x, BaseType::Str);
                         unknown(pos)
                     }
-                    Type::Array(_) | Type::List(_) | Type::Base(BaseType::Str) => {
+                    Type::Array(_) | Type::List(_) | Type::ListOf(_) | Type::Dict(..) | Type::Base(BaseType::Str) => {
                         base(TExprKind::Length(Box::new(x)), BaseType::Int, pos)
                     }
                     Type::Matrix(_) => {

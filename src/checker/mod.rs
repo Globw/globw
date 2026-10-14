@@ -34,11 +34,21 @@ pub(crate) struct Var {
     pub(crate) origin: Option<Pos>,
     pub(crate) conflict: Option<Error>,
     pub(crate) is_param: bool,
+    /// the whole declared type (lists and dictionaries may nest)
+    pub(crate) full: Type,
 }
 
 impl Var {
     pub(crate) fn declared(d: &Decl) -> Var {
-        Var { name: d.name.clone(), shape: d.shape.clone(), ty: Some(d.ty), origin: Some(d.pos), conflict: None, is_param: false }
+        Var {
+            name: d.name.clone(),
+            shape: d.shape.clone(),
+            ty: Some(d.ty),
+            origin: Some(d.pos),
+            conflict: None,
+            is_param: false,
+            full: d.full,
+        }
     }
 
     pub(crate) fn full_type(&self) -> Type {
@@ -46,7 +56,7 @@ impl Var {
             Shape::Scalar => self.ty.map_or(Type::Unknown, Type::Base),
             Shape::Array(_) => Type::Array(self.ty),
             Shape::Matrix(..) => Type::Matrix(self.ty),
-            Shape::List => Type::List(self.ty),
+            Shape::List | Shape::Dict => self.full,
         }
     }
 }

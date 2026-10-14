@@ -45,6 +45,7 @@ fn alloc(shape: &Shape, dst: Reg) -> Option<Op> {
         Shape::Array(n) => Some(Op::NewArray(dst, n as u32)),
         Shape::Matrix(r, c) => Some(Op::NewMatrix(dst, r as u32, c as u32)),
         Shape::List => Some(Op::NewList(dst)),
+        Shape::Dict => Some(Op::NewDict(dst)),
         Shape::Scalar => None,
     }
 }
@@ -282,6 +283,25 @@ impl<'a> FnCompiler<'a> {
                 let first = self.args(args);
                 self.emit(Op::Builtin { id: b.id(), first, argc: args.len() as u16, dst: d }, pos);
             }
+            TExprKind::Index(c, k) => {
+                let c = self.operand(c);
+                let k = self.operand(k);
+                self.emit(Op::GetElem(d, c, k), pos);
+            }
+            TExprKind::ListLit(items) => {
+                // build in a temporary: the items may read the variable being assigned
+                let r = if d < self.n_locals { self.temp() } else { d };
+                self.emit(Op::NewList(r), pos);
+                for item in items {
+                    let inner = self.next;
+                    let v = self.operand(item);
+                    self.emit(Op::Append(r, v), item.pos);
+                    self.next = inner;
+                }
+                if r != d {
+                    self.emit(Op::Move(d, r), pos);
+                }
+            }
         }
         self.next = mark;
     }
@@ -309,6 +329,12 @@ impl<'a> FnCompiler<'a> {
         let mark = self.next;
         match s {
             TStmt::Assign(t, v) => self.assign(t, v),
+            TStmt::SetIndex(c, k, v, pos) => {
+                let c = self.operand(c);
+                let k = self.operand(k);
+                let v = self.operand(v);
+                self.emit(Op::SetElem(c, k, v), *pos);
+            }
             TStmt::If(branches, other) => {
                 let mut exits = Vec::new();
                 for (c, body) in branches {
@@ -603,6 +629,45 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn dictionaries_and_nested_lists() {
+        let src = r#"variables:
+    voti as dict of string to int
+    g as list of list of int
+    classi as dict of string to list of string
+    k as list of string
+voti["Anna"] = 8
+voti["Luca"] = voti["Anna"] - 2
+voti["Anna"] = 9
+output(length(voti), " ", voti["Anna"], " ", voti["Luca"], " ", has_key(voti, "Marco"), " ", get(voti, "Marco", 0))
+k = keys(voti)
+output(join(k, ","), " ", join(values(voti), ","))
+remove_key(voti, "Anna")
+output(length(voti), " ", join(keys(voti), ","))
+append(g, [1, 2, 3])
+append(g, [])
+append(g[2], 7)
+g[1][2] = 9
+output(length(g), " ", g[1][2], " ", length(g[2]), " ", g[2][1], " ", join(g[1], " "))
+classi["3A"] = ["Anna", "Luca"]
+append(classi["3A"], "Sara")
+output(join(classi["3A"], ","), " ", length(classi))
+output([10, 20, 30][2], " ", length([[1], [2, 3]]), " ", [1.5, 2][2])
+output(voti["Zoe"])
+"#;
+        let out = run_src(src, "");
+        let expected = concat!(
+            "2 9 6 false 0\n",
+            "Anna,Luca 9,6\n",
+            "1 Luca\n",
+            "2 9 1 7 1 9 3\n",
+            "Anna,Luca,Sara 1\n",
+            "20 2 2.0\n",
+        );
+        assert!(out.starts_with(expected), "{}", out);
+        assert!(out.contains("key \"Zoe\" is not in the dictionary"), "{}", out);
     }
 
     #[test]

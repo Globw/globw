@@ -1,0 +1,39 @@
+' Dictionaries and lists of lists: a small class register.
+
+variables:
+    grades as dict of string to list of int
+    names as list of string
+    table as list of list of string
+    i, j, total as int
+
+grades["Anna"] = [8, 7, 9]
+grades["Luca"] = [6]
+append(grades["Luca"], 7)
+grades["Sara"] = []
+
+names = keys(grades)
+for(i from 1 to length(names))
+    total = 0
+    for(j from 1 to length(grades[names[i]]))
+        total = total + grades[names[i]][j]
+    end loop
+    if(length(grades[names[i]]) > 0)
+        output(names[i], ": ", join(grades[names[i]], " "), "  average ", round_to(total / length(grades[names[i]]), 2))
+    else
+        output(names[i], ": no grades yet")
+    end if
+end loop
+
+output("Marco has ", length(get(grades, "Marco", [])), " grades")
+remove_key(grades, "Sara")
+output(length(grades), " students left: ", join(keys(grades), ", "))
+
+' a 3x3 board as a list of lists
+for(i from 1 to 3)
+    append(table, [".", ".", "."])
+end loop
+table[2][2] = "X"
+table[1][3] = "O"
+for(i from 1 to 3)
+    output(join(table[i], " "))
+end loop

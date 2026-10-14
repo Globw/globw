@@ -57,6 +57,7 @@ test('declarations: variables, as, types', () => {
     assert.strictEqual(scope(line, 'as'), 'keyword.other.as.globw');
     assert.strictEqual(scope(line, 'float'), 'storage.type.primitive.globw');
     assert.strictEqual(scope('    items as list of string', 'list of'), 'storage.type.globw');
+    assert.strictEqual(scope('    d as dict of string to int', 'dict of'), 'storage.type.globw');
     assert.strictEqual(scope('variables:', 'variables:'), 'keyword.other.declaration.globw');
 });
 
@@ -77,6 +78,8 @@ test('functions: definition, parameters, calls', () => {
     assert.strictEqual(scope('w = text_width("hi")', 'text_width'), 'support.function.builtin.globw');
     assert.strictEqual(scope('n = to_int(s) + sum(l)', 'to_int'), 'support.function.builtin.globw');
     assert.strictEqual(scope('w = read_lines("a.txt")', 'read_lines'), 'support.function.builtin.globw');
+    assert.strictEqual(scope('n = get(d, "a", 0) + length(keys(d))', 'keys'), 'support.function.builtin.globw');
+    assert.strictEqual(scope('if(has_key(d, k))', 'has_key'), 'support.function.builtin.globw');
 });
 
 test('assignment and comparison', () => {

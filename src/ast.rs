@@ -1,7 +1,7 @@
 //! The syntax tree produced by the parser.
 
 use crate::errors::Pos;
-use crate::tir::BaseType;
+use crate::tir::{BaseType, Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinOp {
@@ -46,6 +46,10 @@ pub enum ExprKind {
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
     Call(String, Vec<Expr>),
+    /// indexing anything that is not a plain variable: `g[1][2]`, `keys(d)[1]`
+    Subscript(Box<Expr>, Vec<Expr>),
+    /// a list written in brackets: `[1, 2, 3]`
+    ListLit(Vec<Expr>),
 }
 
 /// The left side of an assignment: `x`, `v[i]` or `m[i, j]`.
@@ -53,6 +57,8 @@ pub enum ExprKind {
 pub struct Target {
     pub name: String,
     pub indices: Vec<Expr>,
+    /// further index groups: `g[1][2] = x` has indices `[1]` and rest `[[2]]`
+    pub rest: Vec<Vec<Expr>>,
     pub pos: Pos,
 }
 
@@ -79,6 +85,7 @@ pub enum Shape {
     Array(usize),
     Matrix(usize, usize),
     List,
+    Dict,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +94,8 @@ pub struct Decl {
     pub shape: Shape,
     /// for collections: the element type
     pub ty: BaseType,
+    /// the whole declared type (needed for nested lists and dictionaries)
+    pub full: Type,
     pub pos: Pos,
 }
 
