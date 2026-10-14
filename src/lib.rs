@@ -11,6 +11,7 @@ pub mod errors;
 pub mod fonts;
 pub mod graphics;
 pub mod lexer;
+pub mod library;
 pub mod parser;
 pub mod render3d;
 pub mod tir;

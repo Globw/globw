@@ -348,6 +348,89 @@ end loop
   - 2D commands draw on top of whatever is already in the window and do not hide later 3D shapes.
 - **Errors:** the same as for the 2D commands (§6.7). The camera and the rotation are reset when `window` opens a new window.
 
+### 6.11 Standard library
+
+Python-like functions, named in plain English in Globw's style. "Number" means `int` or `float`; "collection" means an array or a list (not a matrix). Positions count from 1. A collection argument is changed in place by the procedures that modify it.
+
+**Conversions**
+
+| Command | Result | Effect |
+|---|---|---|
+| `to_int(x)` | `int` | x is a string (`"42"`, spaces ignored), a float (truncated toward zero), an int or a bool (1/0); a string that is not a whole number is a run-time error |
+| `to_float(x)` | `float` | x is a string (`"3.5"` or `"3,5"`) or a number |
+| `to_text(x)` | `string` | any simple value, written as `output` writes it |
+| `char(code as int)` | `string` | the character with that Unicode code (`char(65)` is `"A"`) |
+| `code(c as string)` | `int` | the Unicode code of the first character |
+| `to_hex(n as int)`, `to_binary(n as int)` | `string` | `to_hex(255)` is `"ff"`, `to_binary(5)` is `"101"` |
+
+**Math** (angles in degrees, as for `sin` and `cos`)
+
+| Command | Result | Effect |
+|---|---|---|
+| `absolute(x)` | same as x | absolute value of a number |
+| `minimum(a, b)`, `maximum(a, b)` | int if both are ints, else float | the smaller / larger of two numbers |
+| `minimum(c)`, `maximum(c)` | element type | smallest / largest element of a collection of numbers or strings (run-time error if empty) |
+| `power(base, exponent)` | `float` | base raised to exponent |
+| `floor(x)`, `ceiling(x)`, `truncate(x)` | `int` | round down, up, toward zero |
+| `round_to(x, digits as int)` | `float` | x rounded to that many decimal digits |
+| `exponential(x)` | `float` | e to the power x |
+| `logarithm(x)`, `logarithm(x, base)` | `float` | natural logarithm, or in the given base |
+| `tan(a)`, `arcsin(x)`, `arccos(x)`, `arctan(x)`, `arctan2(y, x)` | `float` | tangent and inverse functions |
+| `pi()` | `float` | 3.14159… |
+| `random_float()` | `float` | a random number from 0 (included) to 1 (excluded) |
+
+**Strings**
+
+| Command | Result | Effect |
+|---|---|---|
+| `uppercase(s)`, `lowercase(s)`, `trim(s)` | `string` | change case; remove spaces at both ends |
+| `find(s, part)` | `int` | position of the first `part` in `s`, 0 if absent |
+| `count(s, part)` | `int` | how many times `part` appears (not overlapping) |
+| `replace(s, old, new)` | `string` | every `old` replaced by `new` |
+| `split(s, separator)` | `list of string` | the pieces between separators; an empty separator splits into characters |
+| `join(c, separator)` | `string` | the elements of a collection, as text, separated by `separator` |
+| `starts_with(s, part)`, `ends_with(s, part)` | `bool` | |
+| `substring(s, from, to)` | `string` | characters `from` to `to` included; positions outside the string are cut to it |
+| `contains(s, part)` | `bool` | `part` appears in `s` |
+
+**Collections**
+
+| Command | Result | Effect |
+|---|---|---|
+| `sum(c)` | element type | sum of a collection of numbers |
+| `contains(c, value)` | `bool` | the value is an element |
+| `index_of(c, value)` | `int` | position of the first element equal to value, 0 if absent |
+| `sort(c)` | procedure | sorts in increasing order (numbers, strings or bools) |
+| `reverse(c)` | procedure | reverses the order |
+| `insert(list, position, value)` | procedure | inserts before `position` (1 … length + 1) |
+| `take_last(list)` | element type | removes and returns the last element (run-time error if empty) |
+| `clear_list(list)` | procedure | removes every element |
+
+A list returned by a function (like `split` or `read_lines`) can be assigned to a list variable of the same type: `words = split(line_text, " ")`. Lists are assigned by reference.
+
+**Files** (relative paths start from the folder of the program; text is UTF-8)
+
+| Command | Result | Effect |
+|---|---|---|
+| `read_file(path)` | `string` | the whole file |
+| `read_lines(path)` | `list of string` | one element per line, without line endings |
+| `write_file(path, text)` | procedure | creates or replaces the file |
+| `append_file(path, text)` | procedure | adds at the end, creating the file if needed |
+| `file_exists(path)` | `bool` | |
+
+A file that cannot be read or written is a run-time error that names it.
+
+**System**
+
+| Command | Result | Effect |
+|---|---|---|
+| `wait(milliseconds as int)` | procedure | pauses the program |
+| `today()` | `string` | today's date, like `"2026-10-14"` |
+| `now()` | `string` | the time, like `"16:05:09"` |
+| `stop()` | procedure | ends the program at once (the window, if any, closes) |
+
+All these names are reserved like the other built-ins. Python features that need types Globw does not have (dictionaries, sets, tuples), functions as values (`map`, `filter`, `lambda`) or classes are not part of Globw.
+
 ## 7. Errors
 
 There is one format for all errors, with line, column and a marker under the offending code:
@@ -414,4 +497,4 @@ globw --check program.gw   only check for errors, do not run
 
 ## 10. Out of scope for v1
 
-File I/O, modules and imports, records/structs, other math functions, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.
+Modules and imports, records/structs, dictionaries and sets, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.

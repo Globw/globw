@@ -114,7 +114,7 @@ impl<'p> Checker<'p> {
             Shape::Array(_) | Shape::List => 1,
             Shape::Matrix(..) => 2,
         };
-        if indices.len() == needed {
+        if indices.len() == needed || (shape == Shape::List && indices.is_empty()) {
             return Some(TTarget { place: p, indices, pos: t.pos });
         }
         let err = match (&shape, indices.len()) {
@@ -134,6 +134,18 @@ impl<'p> Checker<'p> {
     }
 
     fn assign(&mut self, t: TTarget, v: TExpr) -> TStmt {
+        let var = self.var(t.place);
+        if var.shape != Shape::Scalar && t.indices.is_empty() {
+            // a whole list, like `words = split(s, " ")`
+            let (expected, name) = (var.full_type(), var.name.clone());
+            if v.ty != expected && v.ty != Type::Unknown {
+                self.report(Error::new(
+                    v.pos,
+                    format!("cannot assign {} to \"{}\", which is {}", v.ty.full_name(), name, expected.full_name()),
+                ));
+            }
+            return TStmt::Assign(t, v);
+        }
         match v.ty {
             Type::Base(b) => self.widen(t.place, b, v.pos),
             Type::Unknown => {

@@ -1,6 +1,6 @@
 variables:
     prime as bool[10000000]
-    i, j, n, count as int
+    i, j, n, primes as int
 n = 10000000
 for(i from 2 to n)
     prime[i] = true
@@ -15,10 +15,10 @@ for(i from 2 to n)
         end loop
     end if
 end loop
-count = 0
+primes = 0
 for(i from 1 to n)
     if(prime[i])
-        count = count + 1
+        primes = primes + 1
     end if
 end loop
-output(count)
+output(primes)

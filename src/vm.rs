@@ -94,7 +94,7 @@ pub fn format_real(r: f64) -> String {
     }
 }
 
-fn display(v: &Value) -> String {
+pub(crate) fn display(v: &Value) -> String {
     match v {
         Value::Int(n) => n.to_string(),
         Value::Real(r) => format_real(*r),
@@ -475,7 +475,11 @@ impl<'m> Vm<'m> {
                     let start = base + first as usize;
                     match self.env.call(b, &self.regs[start..start + argc as usize]) {
                         Ok(v) => {
-                            if b.ret().is_some() {
+                            if b == Builtin::Stop {
+                                self.env.close_window();
+                                return Ok(());
+                            }
+                            if b.is_function() {
                                 reg!(dst) = v;
                             }
                         }

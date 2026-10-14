@@ -1,7 +1,7 @@
 //! Calls to user-defined functions and procedures, and to built-ins.
 
 use crate::ast::{Decl, Expr, Shape};
-use crate::builtins::Builtin;
+use crate::builtins::{Builtin, CheckError};
 use crate::errors::{Error, Pos};
 use crate::lexer::miscased_statement_keyword;
 use crate::tir::*;
@@ -108,47 +108,48 @@ impl<'p> Checker<'p> {
     /// A call of a built-in procedure or function: arity, use and argument types.
     pub(crate) fn builtin_call(&mut self, b: Builtin, args: &[Expr], pos: Pos, in_expr: bool) -> TExpr {
         let name = b.name();
-        if in_expr && b.ret().is_none() {
+        if in_expr && !b.is_function() {
             self.report_structural(Error::new(
                 pos,
                 format!("{} does not return a value: use it as a statement on its own line", name),
             ));
             return unknown(pos);
         }
-        if !in_expr && b.ret().is_some() {
+        if !in_expr && b.is_function() {
             self.report_structural(Error::new(
                 pos,
                 format!("{} returns a value: use it in an expression, like v = {}(...)", name, name),
             ));
             return unknown(pos);
         }
-        let params = b.params();
-        if args.len() != params.len() {
-            let n = params.len();
-            self.report_structural(Error::new(
-                pos,
-                format!("\"{}\" takes {} value{}, here it gets {}", name, n, if n == 1 { "" } else { "s" }, args.len()),
-            ));
-            return unknown(pos);
-        }
-        let mut out = Vec::with_capacity(args.len());
-        for (k, (a, &p)) in args.iter().zip(params).enumerate() {
-            let t = self.expr(a);
-            let fits = match t.ty {
-                Type::Unknown => true,
-                Type::Base(x) => join(p, x) == Some(p),
-                _ => false,
-            };
-            if !fits {
+        let targs: Vec<TExpr> = args.iter().map(|a| self.expr(a)).collect();
+        let types: Vec<Type> = targs.iter().map(|t| t.ty).collect();
+        match b.check(&types) {
+            Ok(checked) => {
+                let out = targs.into_iter().zip(checked.convert).map(|(t, c)| convert(t, c)).collect();
+                TExpr { kind: TExprKind::Builtin(b, out), ty: checked.ret, pos }
+            }
+            Err(CheckError::Arity(n)) => {
+                self.report_structural(Error::new(
+                    pos,
+                    format!("\"{}\" takes {} value{}, here it gets {}", name, n, if n == 1 { "" } else { "s" }, args.len()),
+                ));
+                unknown(pos)
+            }
+            Err(CheckError::Arg { index, expected }) => {
+                let t = &targs[index];
                 let e = Error::new(
                     t.pos,
-                    format!("argument {} of \"{}\" must be {}, here it is {}", k + 1, name, p.name(), t.ty.full_name()),
+                    format!("argument {} of \"{}\" must be {}, here it is {}", index + 1, name, expected.full_name(), t.ty.full_name()),
                 );
-                self.report(float_hint(e, Type::Base(p), t.ty));
+                self.report(float_hint(e, expected, t.ty));
+                unknown(pos)
             }
-            out.push(convert(t, Some(p)));
+            Err(CheckError::Other(message)) => {
+                self.report(Error::new(pos, message));
+                unknown(pos)
+            }
         }
-        TExpr { kind: TExprKind::Builtin(b, out), ty: b.ret().map_or(Type::Unknown, Type::Base), pos }
     }
 
     pub(crate) fn unknown_function(&self, name: &str, pos: Pos) -> Error {

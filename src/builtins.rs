@@ -1,6 +1,7 @@
-//! Built-in procedures and functions beyond input/output and lists:
-//! the graphics window, dialog boxes, colors, random numbers and time.
-//! The checker reads their signatures here; the VM calls `Env::call`.
+//! Built-in procedures and functions beyond input/output and lists: the
+//! graphics window, dialog boxes, colors, random numbers, time and the
+//! standard library. The checker reads their signatures here; the VM calls
+//! `Env::call`.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -8,12 +9,15 @@ use crate::canvas::parse_color;
 use crate::dialogs;
 use crate::fonts::Fonts;
 use crate::graphics::Graphics;
+use crate::library;
 use crate::render3d::Vec3;
 use crate::tir::BaseType::{self, Bool, Int, Real, Str};
+use crate::tir::{join, Type};
 use crate::vm::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Builtin {
+    // graphics, dialogs and basics
     Window,
     Open,
     Show,
@@ -44,97 +48,235 @@ pub enum Builtin {
     Round,
     Font,
     TextWidth,
+    // standard library: conversions
+    ToInt,
+    ToFloat,
+    ToText,
+    Char,
+    Code,
+    ToHex,
+    ToBinary,
+    // math
+    Absolute,
+    Minimum,
+    Maximum,
+    Power,
+    Floor,
+    Ceiling,
+    Truncate,
+    RoundTo,
+    Exponential,
+    Logarithm,
+    Tan,
+    Arcsin,
+    Arccos,
+    Arctan,
+    Arctan2,
+    Pi,
+    RandomFloat,
+    // strings
+    Uppercase,
+    Lowercase,
+    Trim,
+    Find,
+    Count,
+    Replace,
+    Split,
+    Join,
+    StartsWith,
+    EndsWith,
+    Substring,
+    Contains,
+    // collections
+    Sum,
+    IndexOf,
+    Sort,
+    Reverse,
+    Insert,
+    TakeLast,
+    ClearList,
+    // files
+    ReadFile,
+    ReadLines,
+    WriteFile,
+    AppendFile,
+    FileExists,
+    // system
+    Wait,
+    Today,
+    Now,
+    Stop,
 }
 
 use Builtin::*;
 
-const ALL: [Builtin; 30] = [
-    Window, Open, Show, Clear, Rect, Circle, Line, Text, Key, MouseX, MouseY, Click, Message, Confirm, Ask, Rgb, Random,
-    Time, Camera, Rotate, Cube, Box3, Sphere, Triangle3, Sin, Cos, Sqrt, Round, Font, TextWidth,
+/// How a built-in is typed: a fixed list of parameters, or a rule in
+/// `library::check` (for those that accept several types).
+enum Sig {
+    Fixed(&'static [BaseType], Option<BaseType>),
+    Flexible { function: bool },
+}
+
+const R: BaseType = Real;
+const S: BaseType = Str;
+const I: BaseType = Int;
+
+#[rustfmt::skip]
+const TABLE: &[(Builtin, &str, Sig)] = &[
+    (Window, "window", Sig::Fixed(&[I, I, S], None)),
+    (Open, "open", Sig::Fixed(&[], Some(Bool))),
+    (Show, "show", Sig::Fixed(&[], None)),
+    (Clear, "clear", Sig::Fixed(&[S], None)),
+    (Rect, "rect", Sig::Fixed(&[R, R, R, R, S], None)),
+    (Circle, "circle", Sig::Fixed(&[R, R, R, S], None)),
+    (Line, "line", Sig::Fixed(&[R, R, R, R, S], None)),
+    (Text, "text", Sig::Fixed(&[R, R, S, S], None)),
+    (Key, "key", Sig::Fixed(&[S], Some(Bool))),
+    (MouseX, "mouse_x", Sig::Fixed(&[], Some(Int))),
+    (MouseY, "mouse_y", Sig::Fixed(&[], Some(Int))),
+    (Click, "click", Sig::Fixed(&[], Some(Bool))),
+    (Message, "message", Sig::Fixed(&[S], None)),
+    (Confirm, "confirm", Sig::Fixed(&[S], Some(Bool))),
+    (Ask, "ask", Sig::Fixed(&[S], Some(Str))),
+    (Rgb, "rgb", Sig::Fixed(&[I, I, I], Some(Str))),
+    (Random, "random", Sig::Fixed(&[I, I], Some(Int))),
+    (Time, "time", Sig::Fixed(&[], Some(Real))),
+    (Camera, "camera", Sig::Fixed(&[R, R, R, R, R], None)),
+    (Rotate, "rotate", Sig::Fixed(&[R, R, R], None)),
+    (Cube, "cube", Sig::Fixed(&[R, R, R, R, S], None)),
+    (Box3, "box", Sig::Fixed(&[R, R, R, R, R, R, S], None)),
+    (Sphere, "sphere", Sig::Fixed(&[R, R, R, R, S], None)),
+    (Triangle3, "triangle3d", Sig::Fixed(&[R, R, R, R, R, R, R, R, R, S], None)),
+    (Sin, "sin", Sig::Fixed(&[R], Some(Real))),
+    (Cos, "cos", Sig::Fixed(&[R], Some(Real))),
+    (Sqrt, "sqrt", Sig::Fixed(&[R], Some(Real))),
+    (Round, "round", Sig::Fixed(&[R], Some(Int))),
+    (Font, "font", Sig::Fixed(&[S, I], None)),
+    (TextWidth, "text_width", Sig::Fixed(&[S], Some(Int))),
+    (ToInt, "to_int", Sig::Flexible { function: true }),
+    (ToFloat, "to_float", Sig::Flexible { function: true }),
+    (ToText, "to_text", Sig::Flexible { function: true }),
+    (Char, "char", Sig::Fixed(&[I], Some(Str))),
+    (Code, "code", Sig::Fixed(&[S], Some(Int))),
+    (ToHex, "to_hex", Sig::Fixed(&[I], Some(Str))),
+    (ToBinary, "to_binary", Sig::Fixed(&[I], Some(Str))),
+    (Absolute, "absolute", Sig::Flexible { function: true }),
+    (Minimum, "minimum", Sig::Flexible { function: true }),
+    (Maximum, "maximum", Sig::Flexible { function: true }),
+    (Power, "power", Sig::Fixed(&[R, R], Some(Real))),
+    (Floor, "floor", Sig::Fixed(&[R], Some(Int))),
+    (Ceiling, "ceiling", Sig::Fixed(&[R], Some(Int))),
+    (Truncate, "truncate", Sig::Fixed(&[R], Some(Int))),
+    (RoundTo, "round_to", Sig::Fixed(&[R, I], Some(Real))),
+    (Exponential, "exponential", Sig::Fixed(&[R], Some(Real))),
+    (Logarithm, "logarithm", Sig::Flexible { function: true }),
+    (Tan, "tan", Sig::Fixed(&[R], Some(Real))),
+    (Arcsin, "arcsin", Sig::Fixed(&[R], Some(Real))),
+    (Arccos, "arccos", Sig::Fixed(&[R], Some(Real))),
+    (Arctan, "arctan", Sig::Fixed(&[R], Some(Real))),
+    (Arctan2, "arctan2", Sig::Fixed(&[R, R], Some(Real))),
+    (Pi, "pi", Sig::Fixed(&[], Some(Real))),
+    (RandomFloat, "random_float", Sig::Fixed(&[], Some(Real))),
+    (Uppercase, "uppercase", Sig::Fixed(&[S], Some(Str))),
+    (Lowercase, "lowercase", Sig::Fixed(&[S], Some(Str))),
+    (Trim, "trim", Sig::Fixed(&[S], Some(Str))),
+    (Find, "find", Sig::Fixed(&[S, S], Some(Int))),
+    (Count, "count", Sig::Fixed(&[S, S], Some(Int))),
+    (Replace, "replace", Sig::Fixed(&[S, S, S], Some(Str))),
+    (Split, "split", Sig::Flexible { function: true }),
+    (Join, "join", Sig::Flexible { function: true }),
+    (StartsWith, "starts_with", Sig::Fixed(&[S, S], Some(Bool))),
+    (EndsWith, "ends_with", Sig::Fixed(&[S, S], Some(Bool))),
+    (Substring, "substring", Sig::Fixed(&[S, I, I], Some(Str))),
+    (Contains, "contains", Sig::Flexible { function: true }),
+    (Sum, "sum", Sig::Flexible { function: true }),
+    (IndexOf, "index_of", Sig::Flexible { function: true }),
+    (Sort, "sort", Sig::Flexible { function: false }),
+    (Reverse, "reverse", Sig::Flexible { function: false }),
+    (Insert, "insert", Sig::Flexible { function: false }),
+    (TakeLast, "take_last", Sig::Flexible { function: true }),
+    (ClearList, "clear_list", Sig::Flexible { function: false }),
+    (ReadFile, "read_file", Sig::Fixed(&[S], Some(Str))),
+    (ReadLines, "read_lines", Sig::Flexible { function: true }),
+    (WriteFile, "write_file", Sig::Fixed(&[S, S], None)),
+    (AppendFile, "append_file", Sig::Fixed(&[S, S], None)),
+    (FileExists, "file_exists", Sig::Fixed(&[S], Some(Bool))),
+    (Wait, "wait", Sig::Fixed(&[I], None)),
+    (Today, "today", Sig::Fixed(&[], Some(Str))),
+    (Now, "now", Sig::Fixed(&[], Some(Str))),
+    (Stop, "stop", Sig::Fixed(&[], None)),
 ];
 
+/// Why a call does not fit a built-in's signature.
+pub enum CheckError {
+    /// the built-in takes this many values
+    Arity(usize),
+    /// argument `index` (0-based) should have this type
+    Arg { index: usize, expected: Type },
+    /// any other rule, as a complete message
+    Other(String),
+}
+
+/// A call that fits: how to convert each argument (int → float), and the result type.
+pub struct Checked {
+    pub convert: Vec<Option<BaseType>>,
+    pub ret: Type,
+}
+
 impl Builtin {
+    fn entry(self) -> &'static (Builtin, &'static str, Sig) {
+        TABLE.iter().find(|(b, _, _)| *b == self).expect("every builtin is in the table")
+    }
+
     pub fn name(self) -> &'static str {
-        match self {
-            Window => "window",
-            Open => "open",
-            Show => "show",
-            Clear => "clear",
-            Rect => "rect",
-            Circle => "circle",
-            Line => "line",
-            Text => "text",
-            Key => "key",
-            MouseX => "mouse_x",
-            MouseY => "mouse_y",
-            Click => "click",
-            Message => "message",
-            Confirm => "confirm",
-            Ask => "ask",
-            Rgb => "rgb",
-            Random => "random",
-            Time => "time",
-            Camera => "camera",
-            Rotate => "rotate",
-            Cube => "cube",
-            Box3 => "box",
-            Sphere => "sphere",
-            Triangle3 => "triangle3d",
-            Sin => "sin",
-            Cos => "cos",
-            Sqrt => "sqrt",
-            Round => "round",
-            Font => "font",
-            TextWidth => "text_width",
+        self.entry().1
+    }
+
+    /// Functions return a value and are used in expressions; procedures are statements.
+    pub fn is_function(self) -> bool {
+        match self.entry().2 {
+            Sig::Fixed(_, ret) => ret.is_some(),
+            Sig::Flexible { function } => function,
         }
     }
 
-    pub fn params(self) -> &'static [BaseType] {
-        match self {
-            Window => &[Int, Int, Str],
-            Open | Show | MouseX | MouseY | Click | Time => &[],
-            Clear | Key | Message | Confirm | Ask => &[Str],
-            Rect => &[Real, Real, Real, Real, Str],
-            Circle => &[Real, Real, Real, Str],
-            Line => &[Real, Real, Real, Real, Str],
-            Text => &[Real, Real, Str, Str],
-            Rgb => &[Int, Int, Int],
-            Random => &[Int, Int],
-            Camera => &[Real, Real, Real, Real, Real],
-            Rotate => &[Real, Real, Real],
-            Cube | Sphere => &[Real, Real, Real, Real, Str],
-            Box3 => &[Real, Real, Real, Real, Real, Real, Str],
-            Triangle3 => &[Real, Real, Real, Real, Real, Real, Real, Real, Real, Str],
-            Sin | Cos | Sqrt | Round => &[Real],
-            Font => &[Str, Int],
-            TextWidth => &[Str],
-        }
-    }
-
-    /// The return type of a function; `None` for a procedure.
-    pub fn ret(self) -> Option<BaseType> {
-        match self {
-            Open | Key | Click | Confirm => Some(Bool),
-            MouseX | MouseY | Random => Some(Int),
-            Ask | Rgb => Some(Str),
-            Time | Sin | Cos | Sqrt => Some(Real),
-            Round | TextWidth => Some(Int),
-            Window | Show | Clear | Rect | Circle | Line | Text | Message | Camera | Rotate | Cube | Box3 | Sphere
-            | Triangle3 | Font => None,
+    /// Checks the argument types of a call.
+    pub fn check(self, args: &[Type]) -> Result<Checked, CheckError> {
+        match &self.entry().2 {
+            Sig::Fixed(params, ret) => {
+                if args.len() != params.len() {
+                    return Err(CheckError::Arity(params.len()));
+                }
+                for (index, (&a, &p)) in args.iter().zip(params.iter()).enumerate() {
+                    let fits = match a {
+                        Type::Unknown => true,
+                        Type::Base(x) => join(p, x) == Some(p),
+                        _ => false,
+                    };
+                    if !fits {
+                        return Err(CheckError::Arg { index, expected: Type::Base(p) });
+                    }
+                }
+                Ok(Checked {
+                    convert: params.iter().map(|&p| Some(p)).collect(),
+                    ret: ret.map_or(Type::Unknown, Type::Base),
+                })
+            }
+            Sig::Flexible { .. } => library::check(self, args),
         }
     }
 
     pub fn id(self) -> u16 {
-        ALL.iter().position(|&b| b == self).expect("every builtin is listed") as u16
+        TABLE.iter().position(|(b, _, _)| *b == self).expect("every builtin is in the table") as u16
     }
 
     pub fn from_id(id: u16) -> Builtin {
-        ALL[id as usize]
+        TABLE[id as usize].0
     }
 }
 
 pub fn lookup(name: &str) -> Option<Builtin> {
-    ALL.iter().copied().find(|b| b.name() == name)
+    TABLE.iter().find(|(_, n, _)| *n == name).map(|(b, _, _)| *b)
 }
 
 const NO_WINDOW: &str = "there is no window: call window(...) first";
@@ -271,6 +413,8 @@ impl Env {
                 Value::Null
             }
             TextWidth => Value::Int(self.fonts.width(text(&args[0]))?),
+            RandomFloat => Value::Real((self.next_random() >> 11) as f64 / (1u64 << 53) as f64),
+            Stop => Value::Null, // the VM ends the program after this call
             Key => Value::Bool(self.window()?.key(text(&args[0]))?),
             MouseX => Value::Int(self.window()?.mouse().0),
             MouseY => Value::Int(self.window()?.mouse().1),
@@ -318,7 +462,13 @@ impl Env {
                 g.scene.triangle(&mut g.canvas, p(0), p(3), p(6), c, true);
                 Value::Null
             }
+            _ => library::call(b, args)?,
         })
+    }
+
+    /// Closes the window, if any (used by `stop`).
+    pub fn close_window(&mut self) {
+        self.graphics = None;
     }
 
     /// At the end of the program an open window keeps showing its last frame

@@ -1,10 +1,10 @@
 global variables:
-    count as int
+    counter as int
 procedure tick()
-    count = count + 1
+    counter = counter + 1
 end procedure
-count = 0
+counter = 0
 tick()
 tick()
 tick()
-output("count = ", count)
+output("counter = ", counter)

@@ -1,0 +1,42 @@
+' ==================================================
+'  PROVA DELLA LIBRERIA STANDARD
+'  Conversioni, matematica, testo, liste e file.
+' ==================================================
+
+variables:
+    frase, risposta as string
+    parole, righe as list of string
+    numeri as list of int
+    i, n as int
+    media as float
+
+' --- testo ---
+frase = "  il gatto e il cane e il topo  "
+parole = split(trim(frase), " ")
+output("Parole: ", length(parole), "  ->  ", join(parole, " | "))
+output("Maiuscolo: ", uppercase(trim(frase)))
+output("\"il\" compare ", count(frase, "il"), " volte, la prima alla posizione ", find(frase, "il"))
+output("Sostituito: ", replace(trim(frase), "il", "un"))
+
+' --- conversioni e matematica ---
+risposta = "17"
+n = to_int(risposta) * 2
+output(risposta, " x 2 = ", n, "   in esadecimale: ", to_hex(n), "   in binario: ", to_binary(n))
+output("pi greco con 3 decimali: ", round_to(pi(), 3), "   radice di 2: ", round_to(sqrt(2), 4))
+output("2 alla 10: ", power(2, 10), "   arrotondamenti di 2,6: ", floor(2.6), " ", ceiling(2.6), " ", round(2.6))
+
+' --- liste ---
+for(i from 1 to 8)
+    append(numeri, random(1, 100))
+end loop
+output("Numeri: ", join(numeri, ", "))
+sort(numeri)
+output("Ordinati: ", join(numeri, ", "))
+media = sum(numeri) / length(numeri)
+output("Minimo ", minimum(numeri), ", massimo ", maximum(numeri), ", media ", round_to(media, 2))
+
+' --- file: un piccolo diario con data e ora ---
+append_file("diario.txt", today() + " " + now() + " - media dei numeri: " + round_to(media, 2) + "\n")
+righe = read_lines("diario.txt")
+output("Il diario ha ", length(righe), " righe; l'ultima è:")
+output(righe[length(righe)])

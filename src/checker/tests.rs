@@ -332,3 +332,32 @@ fn float_argument_for_int_parameter_suggests_round() {
     let e = first_error("variables:\n    r as int\nfunction f() as int\n    return 2.5\nend function\nr = f()\n");
     assert_eq!(e.hint.as_deref(), Some("use round(x) to turn a float into an int, or div to divide integers"));
 }
+
+#[test]
+fn library_functions_are_typed() {
+    let ok = "variables:\n    w as list of string\n    n as int\n    f as float\nw = split(\"a b\", \" \")\nn = maximum(2, 3)\nf = maximum(2, 3.5)\nn = to_int(\"4\")\nf = sum(split(\"1\", \",\")) \n";
+    let e = first_error(ok);
+    assert_eq!(e.message, "sum works with an array or list of numbers");
+    assert!(check_src("variables:\n    w as list of string\n    n as int\n    f as float\nw = split(\"a b\", \" \")\nn = maximum(2, 3)\nf = maximum(2, 3.5)\nn = to_int(\"4\")\n").is_ok());
+    assert_eq!(
+        first_error("variables:\n    n as int\nn = maximum(2, 3.5)\n").message,
+        "\"n\" is an int, but here it gets a float"
+    );
+    assert_eq!(
+        first_error("variables:\n    n as int\nn = minimum(\"a\")\n").message,
+        "minimum works with two numbers, or with an array or list"
+    );
+    assert_eq!(
+        first_error("variables:\n    l as list of int\n    n as int\nn = clear_list(l)\n").message,
+        "clear_list does not return a value: use it as a statement on its own line"
+    );
+    assert_eq!(first_error("variables:\n    count as int\n").message, "\"count\" is a built-in name: choose another one");
+    assert_eq!(
+        first_error("variables:\n    w as list of int\nw = split(\"a\", \",\")\n").message,
+        "cannot assign a list of strings to \"w\", which is a list of ints"
+    );
+    assert_eq!(
+        first_error("variables:\n    l as list of int\n    b as bool\nb = contains(l, \"x\")\n").message,
+        "the value to look for must be an int, here it is a string"
+    );
+}

@@ -75,6 +75,8 @@ test('functions: definition, parameters, calls', () => {
     assert.strictEqual(scope('triangle3d(0, 0, 0, 1, 0, 0, 0, 1, 0, c)', 'triangle3d'), 'support.function.builtin.globw');
     assert.strictEqual(scope('x = sin(a) + round(b)', 'sin'), 'support.function.builtin.globw');
     assert.strictEqual(scope('w = text_width("hi")', 'text_width'), 'support.function.builtin.globw');
+    assert.strictEqual(scope('n = to_int(s) + sum(l)', 'to_int'), 'support.function.builtin.globw');
+    assert.strictEqual(scope('w = read_lines("a.txt")', 'read_lines'), 'support.function.builtin.globw');
 });
 
 test('assignment and comparison', () => {

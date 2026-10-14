@@ -528,6 +528,84 @@ output(a, \" \", b)
     }
 
     #[test]
+    fn standard_library() {
+        let src = r#"variables:
+    l as list of int
+    w as list of string
+    a as int[4]
+    s as string
+output(to_int("42") + 1, " ", to_int(3.9), " ", to_int(-3.9), " ", to_int(true))
+output(to_float("3,5") * 2, " ", to_float(2), " ", to_text(7) + to_text(true))
+output(char(65), code("a"), " ", to_hex(255), " ", to_binary(5))
+output(absolute(-3), " ", absolute(-2.5), " ", minimum(3, 7), " ", maximum(2, 2.5))
+output(power(2, 10), " ", floor(-2.5), " ", ceiling(2.1), " ", truncate(-2.9))
+output(round_to(3.14159, 2), " ", round_to(logarithm(100, 10), 6), " ", exponential(0), " ", logarithm(1))
+output(tan(45) > 0.99, " ", round_to(arctan2(1, 1), 6), " ", pi() > 3.14, " ", random_float() < 1)
+s = "  Ciao Mondo  "
+output("[", trim(s), "] ", uppercase("abc"), lowercase("ÀB"))
+output(find("banana", "na"), " ", find("banana", "x"), " ", count("banana", "a"), " ", replace("banana", "a", "o"))
+w = split("a,b,,c", ",")
+output(length(w), " ", join(w, "-"), " ", starts_with("hello", "he"), " ", ends_with("hello", "x"), " ", substring("hello", 2, 4), " ", substring("hi", 0, 99), " ", contains("hello", "ell"))
+output(length(split("abc", "")))
+append(l, 5)
+append(l, 2)
+append(l, 9)
+sort(l)
+output(join(l, ","), " ", sum(l), " ", minimum(l), " ", maximum(l), " ", index_of(l, 9), " ", contains(l, 4))
+insert(l, 1, 7)
+reverse(l)
+output(join(l, ","), " ", take_last(l), " ", length(l))
+clear_list(l)
+output(length(l))
+a[1] = 4
+a[2] = 1
+a[3] = 3
+a[4] = 2
+sort(a)
+output(join(a, " "))
+write_file("target/globw_library_test.txt", "riga 1\n")
+append_file("target/globw_library_test.txt", "riga 2\n")
+w = read_lines("target/globw_library_test.txt")
+output(file_exists("target/globw_library_test.txt"), " ", length(w), " ", w[2], " ", length(read_file("target/globw_library_test.txt")), " ", file_exists("target/nope.txt"))
+output(length(today()), " ", length(now()))
+wait(1)
+output("before")
+stop()
+output("after")
+"#;
+        let expected = concat!(
+            "43 3 -3 1\n",
+            "7.0 2.0 7true\n",
+            "A97 ff 101\n",
+            "3 2.5 3 2.5\n",
+            "1024.0 -3 3 -2\n",
+            "3.14 2.0 1.0 0.0\n",
+            "true 45.0 true true\n",
+            "[Ciao Mondo] ABCàb\n",
+            "3 0 3 bonono\n",
+            "4 a-b--c true false ell hi true\n",
+            "3\n",
+            "2,5,9 16 2 9 3 false\n",
+            "9,5,2,7 7 3\n",
+            "0\n",
+            "1 2 3 4\n",
+            "true 2 riga 2 14 false\n",
+            "10 8\n",
+            "before\n",
+        );
+        assert_eq!(run_src(src, ""), expected);
+    }
+
+    #[test]
+    fn standard_library_errors() {
+        assert!(run_src("variables:\n    n as int\nn = to_int(\"abc\")\n", "").contains("to_int: \"abc\" is not a whole number"));
+        assert!(run_src("variables:\n    l as list of int\n    n as int\nn = take_last(l)\n", "").contains("take_last: the list is empty"));
+        assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
+        assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
+        assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
     fn graphics_need_a_window() {
         assert!(run_src("rect(0, 0, 10, 10, \"red\")\n", "").contains("there is no window: call window(...) first"));
         assert!(run_src("cube(0, 0, 5, 1, \"red\")\n", "").contains("there is no window: call window(...) first"));
