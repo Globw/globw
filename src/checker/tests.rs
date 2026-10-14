@@ -161,7 +161,6 @@ fn errors_are_collected_and_sorted() {
 #[test]
 fn misc_statement_errors() {
     assert_eq!(first_error("return\n").message, "return can only be used inside a function or procedure");
-    assert_eq!(first_error("variables:\n    v as int[2]\noutput(v)\n").message, "output prints only simple values");
     assert_eq!(
         first_error("variables:\n    v as int[2]\nappend(v, 1)\n").message,
         "append works only with lists (declared with list of)"
@@ -185,7 +184,7 @@ fn function_call_has_the_declared_return_type() {
     let p = check_src(&format!("variables:\n    r as int\n{}r = double(4)\n", DOUBLE)).unwrap();
     assert_eq!(p.functions.len(), 2);
     assert_eq!(p.functions[1].name, "double");
-    assert_eq!(p.functions[1].ret, Some(Int));
+    assert_eq!(p.functions[1].ret, Some(Type::Base(Int)));
 }
 
 #[test]

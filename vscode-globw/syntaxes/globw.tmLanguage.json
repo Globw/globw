@@ -62,7 +62,7 @@
       "patterns": [
         {
           "name": "keyword.control.globw",
-          "match": "\\b(lazy|import|if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure)\\b"
+          "match": "\\b(lazy|import|break|continue|in|if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure)\\b"
         },
         {
           "name": "storage.type.function.globw",

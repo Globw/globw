@@ -188,12 +188,24 @@ end loop
 repeat                          ' runs at least once,
     ...                         ' then repeats while cond is true
 while(cond)
+
+for(x in collection)            ' each element of a list or array,
+    ...                         ' each key of a dictionary,
+end loop                        ' each character of a string
+
+break                           ' leaves the innermost loop
+continue                        ' goes on with its next round
 ```
 - In `for`:
   - `i` must be a declared `int` variable.
   - `start`, `end` and `step` are integers, evaluated once on entry. `step 0` is a run-time error.
   - With a positive step the loop runs while `i <= end`; with a negative step, while `i >= end`.
   - After the loop, `i` holds the first value that failed the test, as in C. If the loop never ran, it holds `start`.
+- In `for(x in c)`:
+  - `x` must be a declared variable whose type fits the elements (the keys, for a dictionary; one-character strings, for a string). An `int` element goes into a `float` variable.
+  - Lists are visited by position while the position is within their current length, as in Python: elements appended during the loop are visited too. Dictionaries are visited in the order their keys were added, through a copy of the keys taken when the loop starts.
+  - If the collection is empty the body never runs, and `x` keeps its previous state.
+- `break` and `continue` work in every loop. In a `repeat`, `continue` goes to the `while(cond)` test.
 - `end loop` closes `while` and `for`. `repeat` is closed by `while(cond)`.
 - Inside a `repeat`, a `while(...)` line **at the same indentation as the `repeat` (or less)** closes it. A **more indented** one opens a normal `while ... end loop` loop inside the `repeat`.
 
@@ -213,11 +225,13 @@ end procedure
 - **Definition**:
   - Functions and procedures are defined only at top level, never nested. Recursion is allowed.
   - Parameters are local variables and do not go in `variables:`. Each parameter has a type: `name as T`, `name as T[]` (an array of any size), `name as T[,]` (a matrix of any size), `name as list of T` or `name as dict of K to V` (nesting included). Collections are passed by reference.
-  - A `function` declares its return type after the parentheses: `) as T`, where T is one of the four simple types. A `procedure` has none.
+  - A `function` declares its return type after the parentheses: `) as T`, where T is a simple type, a list or a dictionary (`) as list of int`, `) as dict of string to list of int`). Arrays and matrices cannot be returned. A `procedure` has no return type.
+  - A parameter can have a **default value**, written directly: `size as int = 10`, `name as string = "?"`, `items as list of int = []`. Parameters with a default come after those without. Every call gets a new copy of a default list.
 - **Returning**:
   - A `function` must execute `return value` on every path. This is checked before the program runs.
   - A `procedure` may use a bare `return` to leave early.
 - **Calling**:
+  - Values can be passed by position or **by name**, as in Python: `area(height = 3, base = 4)`, `greet("Anna", mark = "?")`. Named values come after the positional ones. Parameters left out take their default value. Built-in functions take positional values only.
   - A `procedure` cannot be used inside an expression.
   - A `function` called as a statement on its own is allowed; its value is discarded.
 - **Types**:
@@ -235,6 +249,7 @@ output("Sum: ", s)
   - Writes its arguments one after another, without separators, then a newline.
   - Reals are printed in the shortest form that represents them, always with a decimal point (`2.5`, `3.0`).
   - Booleans are printed as `true` / `false`.
+  - Lists, arrays, matrices and dictionaries are printed as Python does: `[1, 2, 3]`, `['a', 'b']`, `[[1, 2], [3]]`, `{'Anna': 8, 'Luca': 6}`. Strings inside a collection are quoted; an array element with no value yet is printed `?`. `to_text(c)` gives the same text.
 - **`input`**:
   - It can also read into an element: `input(grades[i])`.
   - For a `float` it accepts both `3.5` and `3,5`, but not `nan` or infinite values.

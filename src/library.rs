@@ -59,8 +59,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
         ToText => {
             arity(1)?;
             match a[0] {
-                Type::Base(_) => ok(none(1), Type::Base(Str)),
-                t => other(format!("to_text works with simple values, not with {}", t.full_name())),
+                _ => ok(none(1), Type::Base(Str)),
             }
         }
         Absolute => {

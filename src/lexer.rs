@@ -33,6 +33,8 @@ pub enum Tok {
     Mod,
     True,
     False,
+    Break,
+    Continue,
     // symbols
     Assign,
     Eq,
@@ -84,6 +86,8 @@ pub fn keyword(word: &str) -> Option<Tok> {
         "mod" => Tok::Mod,
         "true" => Tok::True,
         "false" => Tok::False,
+        "break" => Tok::Break,
+        "continue" => Tok::Continue,
         _ => return None,
     })
 }
@@ -99,7 +103,10 @@ fn miscased(name: &str, words: &[&str]) -> Option<String> {
 
 /// `IF` → `if`: a keyword that starts a statement, written in the wrong case.
 pub fn miscased_statement_keyword(name: &str) -> Option<String> {
-    miscased(name, &["if", "else", "while", "for", "repeat", "end", "function", "procedure", "return", "global"])
+    miscased(
+        name,
+        &["if", "else", "while", "for", "repeat", "end", "function", "procedure", "return", "global", "break", "continue"],
+    )
 }
 
 /// `TRUE` → `true`: a keyword used inside expressions, written in the wrong case.

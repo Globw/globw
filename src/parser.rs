@@ -44,6 +44,8 @@ fn text(t: &Tok) -> &'static str {
         Tok::To => "to",
         Tok::Step => "step",
         Tok::Repeat => "repeat",
+        Tok::Break => "break",
+        Tok::Continue => "continue",
         Tok::EndLoop => "end loop",
         Tok::Function => "function",
         Tok::EndFunction => "end function",
@@ -80,6 +82,17 @@ fn text(t: &Tok) -> &'static str {
 }
 
 
+
+/// Whether `e` is written directly (a literal, a negative number, or a list
+/// of those), so that it can be a default value.
+fn is_constant(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_) => true,
+        ExprKind::Unary(UnOp::Neg, x) => matches!(x.kind, ExprKind::Int(_) | ExprKind::Real(_)),
+        ExprKind::ListLit(items) => items.iter().all(is_constant),
+        _ => false,
+    }
+}
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
     Parser { t: tokens, i: 0, depth: 0, ops: 0 }.program()
@@ -310,7 +323,7 @@ impl Parser {
         self.advance();
         let (shape, ty, full) = self.type_spec(false)?;
         self.end_stmt()?;
-        Ok(names.into_iter().map(|(name, pos)| Decl { name, shape: shape.clone(), ty, full, pos }).collect())
+        Ok(names.into_iter().map(|(name, pos)| Decl { name, shape: shape.clone(), ty, full, default: None, pos }).collect())
     }
 
     fn base_type(&mut self) -> Result<crate::tir::BaseType, Error> {
@@ -449,7 +462,20 @@ impl Parser {
                 }
                 self.advance();
                 let (shape, ty, full) = self.type_spec(true)?;
-                params.push(Decl { name, shape, ty, full, pos: p });
+                let default = if self.accept(&Tok::Assign) {
+                    let e = self.expr()?;
+                    if !is_constant(&e) {
+                        return Err(Error::new(e.pos, "a default value must be written directly, like 0, \"text\" or []"));
+                    }
+                    Some(e)
+                } else {
+                    if params.iter().any(|d: &Decl| d.default.is_some()) {
+                        return Err(Error::new(p, format!("\"{}\" needs a default value: it comes after parameters that have one", name))
+                            .with_hint(format!("write {} as ... = value, or move it before them", name)));
+                    }
+                    None
+                };
+                params.push(Decl { name, shape, ty, full, default, pos: p });
                 if self.accept(&Tok::RParen) {
                     break;
                 }
@@ -461,13 +487,9 @@ impl Parser {
                 return self.fail("a function must declare its return type, like ) as int");
             }
             self.advance();
-            const SIMPLE_ONLY: &str = "a function can only return int, float, string or bool";
-            if self.is_name("list") {
-                return self.fail(SIMPLE_ONLY);
-            }
-            let ty = self.base_type()?;
+            let ty = self.element_type()?;
             if self.is(&Tok::LBracket) {
-                return self.fail(SIMPLE_ONLY);
+                return self.fail("a function cannot return an array: return a list, like ) as list of int");
             }
             Some(ty)
         } else {
@@ -581,6 +603,11 @@ impl Parser {
                 self.end_stmt()?;
                 StmtKind::Repeat(body, cond)
             }
+            Tok::Break | Tok::Continue => {
+                let kind = if self.advance().tok == Tok::Break { StmtKind::Break } else { StmtKind::Continue };
+                self.end_stmt()?;
+                kind
+            }
             Tok::Return => {
                 self.advance();
                 let value = if self.is(&Tok::Newline) || self.is(&Tok::Eof) { None } else { Some(self.expr()?) };
@@ -649,6 +676,19 @@ impl Parser {
             }
             other => return self.fail(format!("expected the loop variable name, found {}", describe(&other))),
         };
+        if self.is_name("in") {
+            self.advance();
+            let iter = self.expr()?;
+            self.expect(&Tok::RParen, "\")\"")?;
+            self.end_stmt()?;
+            let body = self.block(&[Tok::EndLoop], opened, "for", "end loop", None)?;
+            self.advance();
+            self.end_stmt()?;
+            return Ok(StmtKind::ForEach { var, var_pos, iter, body });
+        }
+        if !self.is(&Tok::From) {
+            return self.fail("expected \"from\" or \"in\": for(i from 1 to n) or for(x in list)");
+        }
         self.expect(&Tok::From, "from")?;
         let from = self.expr()?;
         self.expect(&Tok::To, "to")?;
@@ -868,7 +908,21 @@ impl Parser {
             return Ok(v);
         }
         loop {
-            v.push(self.expr()?);
+            match (self.tok().clone(), self.peek_tok(1)) {
+                (Tok::Name(n), Tok::Assign) if !n.contains('.') => {
+                    let pos = self.pos();
+                    self.advance();
+                    self.advance();
+                    let value = self.expr()?;
+                    v.push(Expr { kind: ExprKind::Named(n, Box::new(value)), pos });
+                }
+                _ => {
+                    if v.iter().any(|e: &Expr| matches!(e.kind, ExprKind::Named(..))) {
+                        return self.fail("after a named value, all the others must be named too");
+                    }
+                    v.push(self.expr()?)
+                }
+            }
             if self.accept(&Tok::RParen) {
                 return Ok(v);
             }
@@ -909,6 +963,7 @@ mod tests {
             ExprKind::Call(n, a) => format!("{}({})", n, list(a)),
             ExprKind::Unary(op, x) => format!("({:?} {})", op, sx(x)),
             ExprKind::Binary(op, a, b) => format!("({:?} {} {})", op, sx(a), sx(b)),
+            ExprKind::Named(n, v) => format!("{}={}", n, sx(v)),
         }
     }
 
@@ -990,7 +1045,7 @@ mod tests {
             p.subprograms[i].params.iter().map(|d| (d.name.clone(), d.shape.clone(), d.ty)).collect()
         };
         assert_eq!(params(0), vec![("b".into(), Shape::Scalar, Real), ("h".into(), Shape::Scalar, Real)]);
-        assert_eq!(p.subprograms[0].ret, Some(Real));
+        assert_eq!(p.subprograms[0].ret, Some(crate::tir::Type::Base(Real)));
         assert_eq!(
             params(1),
             vec![("v".into(), Shape::Array(0), Int), ("m".into(), Shape::Matrix(0, 0), Real), ("l".into(), Shape::List, Int)]
@@ -1164,10 +1219,19 @@ mod tests {
     }
 
     #[test]
-    fn function_returns_only_simple_types() {
-        let msg = "a function can only return int, float, string or bool";
-        assert_eq!(err("function f() as int[]\n    return 1\nend function\n").message, msg);
-        assert_eq!(err("function f() as list of int\n    return 1\nend function\n").message, msg);
+    fn function_return_types() {
+        assert_eq!(
+            err("function f() as int[]
+    return 1
+end function
+").message,
+            "a function cannot return an array: return a list, like ) as list of int"
+        );
+        let p = parse_src("function f() as dict of string to list of int
+    return 1
+end function
+").unwrap();
+        assert_eq!(p.subprograms[0].ret.unwrap().full_name(), "a dictionary from strings to lists of ints");
     }
 
     #[test]

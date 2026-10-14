@@ -50,6 +50,8 @@ pub enum ExprKind {
     Subscript(Box<Expr>, Vec<Expr>),
     /// a list written in brackets: `[1, 2, 3]`
     ListLit(Vec<Expr>),
+    /// a value passed by parameter name in a call: `f(size = 3)`
+    Named(String, Box<Expr>),
 }
 
 /// The left side of an assignment: `x`, `v[i]` or `m[i, j]`.
@@ -75,6 +77,10 @@ pub enum StmtKind {
     While(Expr, Vec<Stmt>),
     For { var: String, var_pos: Pos, from: Expr, to: Expr, step: Option<Expr>, body: Vec<Stmt> },
     Repeat(Vec<Stmt>, Expr),
+    /// `for(x in collection)`: lists, arrays, dictionary keys, string characters
+    ForEach { var: String, var_pos: Pos, iter: Expr, body: Vec<Stmt> },
+    Break,
+    Continue,
     Call(String, Vec<Expr>),
     Return(Option<Expr>),
     /// runs the start-up code of a module (procedure `init`) unless the
@@ -118,6 +124,8 @@ pub struct Decl {
     pub ty: BaseType,
     /// the whole declared type (needed for nested lists and dictionaries)
     pub full: Type,
+    /// for parameters: the value used when a call leaves it out
+    pub default: Option<Expr>,
     pub pos: Pos,
 }
 
@@ -128,7 +136,7 @@ pub struct Subprogram {
     /// array and matrix parameters have size 0: any size is accepted
     pub params: Vec<Decl>,
     /// the declared return type of a FUNCTION; None for a PROCEDURE
-    pub ret: Option<BaseType>,
+    pub ret: Option<Type>,
     pub locals: Vec<Decl>,
     pub body: Vec<Stmt>,
     pub pos: Pos,

@@ -1,0 +1,13 @@
+[1, 4, 9, 16, 25] [9, 16] [4, 9]
+Hello Anna! Hello Luca? Hi Sara!
+{'b': 1, 'a': 3, 'n': 2}
+b appears 1 times
+a appears 3 times
+n appears 2 times
+square: 1
+square: 4
+square: 16
+[2, 4, 6, 8, 10]
+[1, 2] sum 3
+[3, 4, 5] sum 12
+["it's", 'fine'] [1.5, 2.0]

@@ -23,8 +23,29 @@ impl<'p> Checker<'p> {
     }
 
     fn stmt(&mut self, s: &Stmt) -> Option<TStmt> {
+        let is_loop = matches!(
+            s.kind,
+            StmtKind::While(..) | StmtKind::For { .. } | StmtKind::Repeat(..) | StmtKind::ForEach { .. }
+        );
+        self.loops += is_loop as usize;
+        let out = self.stmt_kind(s);
+        self.loops -= is_loop as usize;
+        out
+    }
+
+    fn stmt_kind(&mut self, s: &Stmt) -> Option<TStmt> {
         let pos = s.pos;
         match &s.kind {
+            StmtKind::ForEach { var, var_pos, iter, body } => self.for_each(var, *var_pos, iter, body, pos),
+            StmtKind::Break | StmtKind::Continue => {
+                let is_break = matches!(s.kind, StmtKind::Break);
+                if self.loops == 0 {
+                    let word = if is_break { "break" } else { "continue" };
+                    self.report_structural(Error::new(pos, format!("{} can only be used inside a loop", word)));
+                    return None;
+                }
+                Some(if is_break { TStmt::Break(pos) } else { TStmt::Continue(pos) })
+            }
             StmtKind::Assign(target, value) => {
                 let v = self.expr(value);
                 if self.needs_general_target(target) {
@@ -244,6 +265,48 @@ impl<'p> Checker<'p> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn for_each(&mut self, var: &str, var_pos: Pos, iter: &Expr, body: &[Stmt], pos: Pos) -> Option<TStmt> {
+        let it = self.expr(iter);
+        let (elem, kind) = match it.ty {
+            Type::Unknown => (Type::Unknown, IterKind::Items),
+            Type::Base(BaseType::Str) => (Type::Base(BaseType::Str), IterKind::Chars),
+            Type::Array(Some(b)) => (Type::Base(b), IterKind::Items),
+            Type::Dict(k, _) => (Type::Base(k), IterKind::Keys),
+            t => match list_elem(t) {
+                Some(e) => (e, IterKind::Items),
+                None => {
+                    self.report(Error::new(
+                        it.pos,
+                        format!("for ... in works with lists, arrays, dictionaries and strings, not with {}", t.full_name()),
+                    ));
+                    (Type::Unknown, IterKind::Items)
+                }
+            },
+        };
+        let Some(p) = self.lookup(var) else {
+            let err = self.undeclared(var, var_pos);
+            self.report_structural(err);
+            return None;
+        };
+        let declared = self.var(p).full_type();
+        if !fits(declared, elem) {
+            let what = if kind == IterKind::Keys { "the keys" } else { "the elements" };
+            self.report(Error::new(
+                var_pos,
+                format!("\"{}\" is {}, but {} are {}", var, declared.full_name(), what, elem.plural()),
+            ));
+        }
+        let to_real = declared == Type::Base(BaseType::Real) && elem == Type::Base(BaseType::Int);
+        // the body may not run at all: the variable keeps its state from before the loop
+        let before = self.assigned.clone();
+        if let Place::Local(i) = p {
+            self.assigned[i as usize] = true;
+        }
+        let body = self.block(body);
+        self.assigned = before;
+        Some(TStmt::ForEach { var: p, iter: it, kind, to_real, body, pos })
+    }
+
     fn for_stmt(
         &mut self,
         var: &str,
@@ -297,20 +360,7 @@ impl<'p> Checker<'p> {
 
     fn call_stmt(&mut self, name: &str, args: &[Expr], pos: Pos) -> Option<TStmt> {
         match name {
-            "output" => {
-                let mut out = Vec::new();
-                for a in args {
-                    let t = self.expr(a);
-                    if !matches!(t.ty, Type::Base(_) | Type::Unknown) {
-                        self.report(
-                            Error::new(t.pos, "output prints only simple values")
-                                .with_hint("to print an array use a for loop"),
-                        );
-                    }
-                    out.push(t);
-                }
-                Some(TStmt::Output(out))
-            }
+            "output" => Some(TStmt::Output(args.iter().map(|a| self.expr(a)).collect())),
             "input" => {
                 if args.is_empty() {
                     self.report_structural(Error::new(pos, "input needs at least one variable"));
@@ -448,29 +498,19 @@ impl<'p> Checker<'p> {
             (Some(false), None) => Some(TStmt::Return(None, pos)),
             (Some(true), Some(e)) => {
                 let v = self.expr(e);
-                match v.ty {
-                    Type::Base(b) => self.widen_return(b, v.pos),
-                    Type::Unknown => {}
-                    other => self.report(Error::new(
+                let declared = self.instances[cur].ret.unwrap_or(Type::Unknown);
+                if !fits(declared, v.ty) {
+                    let e = Error::new(
                         v.pos,
-                        format!("a function can only return a simple value, not {}", other.name()),
-                    )),
+                        format!("this function returns {}, here it returns {}", declared.full_name(), v.ty.full_name()),
+                    );
+                    self.report(super::calls::float_hint(e, declared, v.ty));
                 }
-                let ret = self.instances[cur].ret;
-                Some(TStmt::Return(Some(convert(v, ret)), pos))
+                Some(TStmt::Return(Some(convert(v, declared.base())), pos))
             }
         };
         // code after RETURN is unreachable: treat everything as assigned there
         self.assigned.iter_mut().for_each(|a| *a = true);
         out
-    }
-
-    fn widen_return(&mut self, t: BaseType, pos: Pos) {
-        if let Some(declared) = self.instances[self.current].ret {
-            if join(declared, t) != Some(declared) {
-                let e = Error::new(pos, format!("this function returns {}, here it returns {}", declared.name(), t.name()));
-                self.report(super::calls::float_hint(e, Type::Base(declared), Type::Base(t)));
-            }
-        }
     }
 }

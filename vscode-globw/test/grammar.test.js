@@ -83,6 +83,10 @@ test('functions: definition, parameters, calls', () => {
     assert.strictEqual(scope('lazy import shapes as s', 'lazy'), 'keyword.control.globw');
     assert.strictEqual(scope('lazy import shapes as s', 'import'), 'keyword.control.globw');
     assert.strictEqual(scope('from shapes import area', 'from'), 'keyword.control.globw');
+    assert.strictEqual(scope('for(x in items)', 'in'), 'keyword.control.globw');
+    assert.strictEqual(scope('        break', 'break'), 'keyword.control.globw');
+    assert.strictEqual(scope('        continue', 'continue'), 'keyword.control.globw');
+    assert.strictEqual(scope('for(x in items)', 'items'), 'variable.other.globw');
     assert.strictEqual(scope('x = s.area(1, 2)', 'area'), 'entity.name.function.globw');
 });
 

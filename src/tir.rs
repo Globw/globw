@@ -238,6 +238,21 @@ pub enum TStmt {
     SetIndex(TExpr, TExpr, TExpr, Pos),
     /// runs function `func` (a module's start-up code) unless global `flag` is true
     LoadModule { flag: u16, func: usize, pos: Pos },
+    /// `for(x in c)`; `to_real` converts int elements for a float variable
+    ForEach { var: Place, iter: TExpr, kind: IterKind, to_real: bool, body: Vec<TStmt>, pos: Pos },
+    Break(Pos),
+    Continue(Pos),
+}
+
+/// What a `for ... in` goes through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IterKind {
+    /// the elements of a list or an array
+    Items,
+    /// the keys of a dictionary
+    Keys,
+    /// the characters of a string
+    Chars,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -254,7 +269,7 @@ pub struct TFunction {
     pub n_params: usize,
     /// parameters first, then declared locals; slot k lives in register k
     pub locals: Vec<Slot>,
-    pub ret: Option<BaseType>,
+    pub ret: Option<Type>,
     pub body: Vec<TStmt>,
 }
 

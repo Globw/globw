@@ -1,0 +1,69 @@
+' Functions that return collections, default and named parameters,
+' for ... in, break and continue, printing lists and dictionaries.
+
+variables:
+    squares_list, evens as list of int
+    letters as dict of string to int
+    k as string
+    x as int
+    rows as list of list of int
+    row as list of int
+
+function squares(n as int, start as int = 1) as list of int
+    variables:
+        out as list of int
+        i as int
+    for(i from start to n)
+        append(out, i * i)
+    end loop
+    return out
+end function
+
+function count_letters(words as string) as dict of string to int
+    variables:
+        result as dict of string to int
+        c as string
+    for(c in words)
+        result[c] = get(result, c, 0) + 1
+    end loop
+    return result
+end function
+
+function greet(name as string, greeting as string = "Hello", mark as string = "!") as string
+    return greeting + " " + name + mark
+end function
+
+squares_list = squares(5)
+output(squares_list, " ", squares(4, start = 3), " ", squares(start = 2, n = 3))
+output(greet("Anna"), " ", greet("Luca", mark = "?"), " ", greet(greeting = "Hi", name = "Sara"))
+
+letters = count_letters("banana")
+output(letters)
+for(k in letters)
+    output(k, " appears ", letters[k], " times")
+end loop
+
+for(x in squares_list)
+    if(x == 9)
+        continue
+    end if
+    if(x > 16)
+        break
+    end if
+    output("square: ", x)
+end loop
+
+' elements appended during the loop are visited too
+evens = [2]
+for(x in evens)
+    if(x < 10)
+        append(evens, x + 2)
+    end if
+end loop
+output(evens)
+
+rows = [[1, 2], [3, 4, 5]]
+for(row in rows)
+    output(row, " sum ", sum(row))
+end loop
+output(["it's", "fine"], " ", to_text([1.5, 2]))

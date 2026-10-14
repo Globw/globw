@@ -65,7 +65,7 @@ impl Var {
 pub(crate) struct Instance {
     pub(crate) sub: Option<usize>,
     pub(crate) locals: Vec<Var>,
-    pub(crate) ret: Option<BaseType>,
+    pub(crate) ret: Option<Type>,
     pub(crate) final_index: Option<usize>,
 }
 
@@ -90,6 +90,8 @@ pub(crate) struct Checker<'p> {
     /// definite assignment state of the current instance's locals
     pub(crate) assigned: Vec<bool>,
     pub(crate) final_queue: Vec<usize>,
+    /// how many loops enclose the statement being checked (for break and continue)
+    pub(crate) loops: usize,
 }
 
 pub fn check(prog: &Program) -> Result<TProgram, Vec<Error>> {
@@ -156,6 +158,7 @@ impl<'p> Checker<'p> {
             visited: HashSet::new(),
             assigned: Vec::new(),
             final_queue: Vec::new(),
+            loops: 0,
         }
     }
 
@@ -246,6 +249,7 @@ impl<'p> Checker<'p> {
     pub(crate) fn visit(&mut self, i: usize) -> Vec<TStmt> {
         let prog = self.prog;
         self.current = i;
+        self.loops = 0;
         self.assigned = self.instances[i].locals.iter().map(|v| v.is_param || v.shape != Shape::Scalar).collect();
         let body = match self.instances[i].sub {
             None => &prog.body,

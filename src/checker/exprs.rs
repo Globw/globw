@@ -95,6 +95,13 @@ impl<'p> Checker<'p> {
                 self.subscript(container, indices, pos)
             }
             ExprKind::ListLit(items) => self.list_literal(items, pos),
+            ExprKind::Named(..) => {
+                self.report_structural(Error::new(
+                    pos,
+                    "a value with a name (like size = 3) can only be passed to a function or procedure of the program",
+                ));
+                unknown(pos)
+            }
             ExprKind::Binary(op, a, b) => {
                 let a = self.expr(a);
                 let b = self.expr(b);

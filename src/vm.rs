@@ -180,12 +180,36 @@ pub fn format_real(r: f64) -> String {
 
 pub(crate) fn display(v: &Value) -> String {
     match v {
+        Value::Str(s) => s.to_string(),
+        other => repr(other),
+    }
+}
+
+/// A value as Python writes it inside a collection: strings in quotes,
+/// lists in [ ], dictionaries in { }. An element with no value yet is "?".
+fn repr(v: &Value) -> String {
+    let items = |values: &mut dyn Iterator<Item = &Value>| values.map(repr).collect::<Vec<_>>().join(", ");
+    match v {
+        Value::Null => "?".to_string(),
         Value::Int(n) => n.to_string(),
         Value::Real(r) => format_real(*r),
         Value::Bool(true) => "true".to_string(),
         Value::Bool(false) => "false".to_string(),
-        Value::Str(s) => s.to_string(),
-        Value::Null | Value::Seq(_) | Value::Matrix(_) | Value::Dict(_) => panic!("internal error: cannot display {:?}", v),
+        Value::Str(s) if s.contains('\'') && !s.contains('"') => format!("\"{}\"", s),
+        Value::Str(s) => format!("'{}'", s.replace('\'', "\\'")),
+        Value::Seq(q) => format!("[{}]", items(&mut q.borrow().iter())),
+        Value::Matrix(m) => {
+            let m = m.borrow();
+            let rows: Vec<String> =
+                m.data.chunks(m.cols.max(1)).map(|row| format!("[{}]", items(&mut row.iter()))).collect();
+            format!("[{}]", rows.join(", "))
+        }
+        Value::Dict(d) => {
+            let d = d.borrow();
+            let pairs: Vec<String> =
+                d.keys().zip(d.values()).map(|(k, v)| format!("{}: {}", repr(&k.value()), repr(v))).collect();
+            format!("{{{}}}", pairs.join(", "))
+        }
     }
 }
 

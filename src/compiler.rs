@@ -100,12 +100,30 @@ struct FnCompiler<'a> {
     n_locals: Reg,
     next: Reg,
     max: Reg,
+    /// jumps of `break` and `continue` to patch, one entry per enclosing loop
+    loops: Vec<LoopJumps>,
+}
+
+#[derive(Default)]
+struct LoopJumps {
+    breaks: Vec<usize>,
+    continues: Vec<usize>,
 }
 
 impl<'a> FnCompiler<'a> {
     fn new(f: &'a TFunction, globals: Option<&'a [Slot]>, strings: &'a mut Strings) -> FnCompiler<'a> {
         let n = f.locals.len() as Reg;
-        FnCompiler { f, globals, strings, code: Vec::new(), positions: Vec::new(), n_locals: n, next: n, max: n }
+        FnCompiler {
+            f,
+            globals,
+            strings,
+            code: Vec::new(),
+            positions: Vec::new(),
+            n_locals: n,
+            next: n,
+            max: n,
+            loops: Vec::new(),
+        }
     }
 
     fn finish(mut self) -> Function {
@@ -360,18 +378,33 @@ impl<'a> FnCompiler<'a> {
                 let top = self.here();
                 let exit = self.jump_unless(c);
                 self.next = mark;
-                self.block(body);
+                self.loop_body(body);
                 self.emit(Op::Jump(top), c.pos);
                 let end = self.here();
                 self.patch(exit, end);
+                self.close_loop(top, end);
             }
             TStmt::Repeat(body, c) => {
                 let top = self.here();
-                self.block(body);
+                self.loop_body(body);
+                let check = self.here();
                 let r = self.operand(c);
                 self.emit(Op::JumpIfTrue(r, top), c.pos);
+                let end = self.here();
+                self.close_loop(check, end);
             }
             TStmt::For { var, from, to, step, body, pos } => self.for_loop(*var, from, to, step.as_ref(), body, *pos),
+            TStmt::ForEach { var, iter, kind, to_real, body, pos } => {
+                self.for_each(*var, iter, *kind, *to_real, body, *pos)
+            }
+            TStmt::Break(pos) => {
+                let j = self.emit(Op::Jump(0), *pos);
+                self.loops.last_mut().expect("break outside a loop").breaks.push(j);
+            }
+            TStmt::Continue(pos) => {
+                let j = self.emit(Op::Jump(0), *pos);
+                self.loops.last_mut().expect("continue outside a loop").continues.push(j);
+            }
             TStmt::Call(f, args, pos) => {
                 let first = self.args(args);
                 let dst = self.temp();
@@ -485,7 +518,8 @@ impl<'a> FnCompiler<'a> {
         if let Place::Global(g) = var {
             self.emit(Op::SetGlobal(g, counter), pos);
         }
-        self.block(body);
+        self.loop_body(body);
+        let next = self.here();
         if let Place::Global(g) = var {
             self.emit(Op::GetGlobal(counter, g), pos);
         }
@@ -496,6 +530,69 @@ impl<'a> FnCompiler<'a> {
             // like a local counter, the global ends at the first value that failed the test
             self.emit(Op::SetGlobal(g, counter), pos);
         }
+        let end = self.here();
+        self.close_loop(next, end);
+    }
+
+    /// Compiles a loop body, collecting its `break` and `continue` jumps.
+    fn loop_body(&mut self, body: &[TStmt]) {
+        self.loops.push(LoopJumps::default());
+        self.block(body);
+    }
+
+    /// Points the `continue` jumps of the innermost loop at `next` and its
+    /// `break` jumps at `end`.
+    fn close_loop(&mut self, next: u32, end: u32) {
+        let jumps = self.loops.pop().expect("a loop was opened");
+        for j in jumps.continues {
+            self.patch(j, next);
+        }
+        for j in jumps.breaks {
+            self.patch(j, end);
+        }
+    }
+
+    /// `for(x in c)`: goes by position while the position is within the
+    /// current length, so elements appended during the loop are visited too.
+    /// Dictionaries go through a copy of their keys.
+    fn for_each(&mut self, var: Place, iter: &TExpr, kind: IterKind, to_real: bool, body: &[TStmt], pos: Pos) {
+        let c = self.temp();
+        self.expr_into(iter, c);
+        if kind == IterKind::Keys {
+            self.emit(Op::Builtin { id: crate::builtins::Builtin::Keys.id(), first: c, argc: 1, dst: c }, pos);
+        }
+        let i = self.temp();
+        self.emit(Op::LoadInt(i, 1), pos);
+        let one = self.temp();
+        self.emit(Op::LoadInt(one, 1), pos);
+        let n = self.temp();
+        let x = match var {
+            Place::Local(r) if !to_real => r,
+            _ => self.temp(),
+        };
+        let top = self.here();
+        self.emit(Op::Length(n, c), pos);
+        let exit = self.emit(Op::JumpUnlessI(Cmp::LtEq, i, n, 0), pos);
+        self.emit(if kind == IterKind::Chars { Op::CharAt(x, c, i) } else { Op::GetElem(x, c, i) }, pos);
+        match var {
+            Place::Local(r) if to_real => {
+                self.emit(Op::ToReal(r, x), pos);
+            }
+            Place::Local(_) => {}
+            Place::Global(g) => {
+                if to_real {
+                    self.emit(Op::ToReal(x, x), pos);
+                }
+                self.emit(Op::SetGlobal(g, x), pos);
+            }
+        }
+        self.loop_body(body);
+        let next = self.here();
+        self.emit(Op::AddI(i, i, one), pos);
+        self.emit(Op::Jump(top), pos);
+        let end = self.here();
+        self.patch(exit, end);
+        self.close_loop(next, end);
     }
 }
 

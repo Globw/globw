@@ -1,6 +1,6 @@
 //! Calls to user-defined functions and procedures, and to built-ins.
 
-use crate::ast::{Decl, Expr, Shape};
+use crate::ast::{Decl, Expr, ExprKind, Shape};
 use crate::builtins::{Builtin, CheckError};
 use crate::errors::{Error, Pos};
 use crate::lexer::miscased_statement_keyword;
@@ -36,13 +36,10 @@ impl<'p> Checker<'p> {
         };
         let sub = &prog.subprograms[s];
         let n = sub.params.len();
-        if args.len() != n {
-            self.report_structural(Error::new(
-                pos,
-                format!("\"{}\" takes {} value{}, here it gets {}", name, n, if n == 1 { "" } else { "s" }, args.len()),
-            ));
+        let Some(args) = self.arrange(name, &sub.params, args, pos) else {
             return unknown(pos);
-        }
+        };
+        let args = &args[..];
         if in_expr && !sub.is_function {
             self.report_structural(Error::new(pos, format!("procedure \"{}\" does not return a value", name)));
             return unknown(pos);
@@ -53,12 +50,7 @@ impl<'p> Checker<'p> {
         let mut out = Vec::with_capacity(n);
         for (k, (t, d)) in targs.into_iter().zip(&sub.params).enumerate() {
             let expected = declared_type(d);
-            let fits = match (t.ty, expected) {
-                (Type::Unknown, _) => true,
-                (Type::Base(a), Type::Base(p)) => join(p, a) == Some(p),
-                (a, p) => a == p,
-            };
-            if !fits {
+            if !fits(expected, t.ty) {
                 let e = Error::new(
                     t.pos,
                     format!(
@@ -74,8 +66,60 @@ impl<'p> Checker<'p> {
             out.push(if d.shape == Shape::Scalar { convert(t, Some(d.ty)) } else { t });
         }
         let ret = self.instances[inst].ret;
-        let ty = if in_expr { ret.map_or(Type::Unknown, Type::Base) } else { Type::Unknown };
+        let ty = if in_expr { ret.unwrap_or(Type::Unknown) } else { Type::Unknown };
         TExpr { kind: TExprKind::Call(index, out), ty, pos }
+    }
+
+    /// The values of a call in parameter order: positional ones first, then
+    /// named ones (`size = 3`), then the defaults of the parameters left out.
+    fn arrange(&mut self, name: &str, params: &[Decl], args: &[Expr], pos: Pos) -> Option<Vec<Expr>> {
+        let n = params.len();
+        let required = params.iter().filter(|d| d.default.is_none()).count();
+        let positional = args.iter().take_while(|a| !matches!(a.kind, ExprKind::Named(..))).count();
+        let named = args.len() > positional;
+        let takes = if required == n { n.to_string() } else { format!("{} to {}", required, n) };
+        if positional > n || (!named && positional < required) {
+            self.report_structural(Error::new(
+                pos,
+                format!("\"{}\" takes {} value{}, here it gets {}", name, takes, if n == 1 { "" } else { "s" }, positional),
+            ));
+            return None;
+        }
+        let mut out: Vec<Option<Expr>> = vec![None; n];
+        for (slot, a) in out.iter_mut().zip(&args[..positional]) {
+            *slot = Some(a.clone());
+        }
+        let mut ok = true;
+        for a in &args[positional..] {
+            let ExprKind::Named(p, value) = &a.kind else { continue };
+            match params.iter().position(|d| &d.name == p) {
+                None => {
+                    self.report_structural(Error::new(a.pos, format!("\"{}\" has no parameter called \"{}\"", name, p)));
+                    ok = false;
+                }
+                Some(i) if out[i].is_some() => {
+                    self.report_structural(Error::new(a.pos, format!("parameter \"{}\" gets two values", p)));
+                    ok = false;
+                }
+                Some(i) => out[i] = Some((**value).clone()),
+            }
+        }
+        for (slot, d) in out.iter_mut().zip(params) {
+            if slot.is_none() {
+                match &d.default {
+                    Some(e) => *slot = Some(Expr { kind: e.kind.clone(), pos }),
+                    None => {
+                        self.report_structural(Error::new(pos, format!("parameter \"{}\" of \"{}\" gets no value", d.name, name)));
+                        ok = false;
+                    }
+                }
+            }
+        }
+        if ok {
+            Some(out.into_iter().map(|e| e.expect("filled above")).collect())
+        } else {
+            None
+        }
     }
 
     /// The single instance of subprogram `s`, created on first use with its

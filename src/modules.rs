@@ -223,6 +223,7 @@ fn merge(mut modules: Vec<Module>, by_name: &HashMap<String, usize>) -> Result<P
                 shape: Shape::Scalar,
                 ty: BaseType::Bool,
                 full: Type::Base(BaseType::Bool),
+                default: None,
                 pos,
             });
             out.subprograms.push(Subprogram {
@@ -358,6 +359,12 @@ impl Scope<'_> {
                 *body = self.block(std::mem::take(body));
                 self.expr(cond);
             }
+            StmtKind::ForEach { var, var_pos, iter, body } => {
+                *var = self.resolve(var, *var_pos, false);
+                self.expr(iter);
+                *body = self.block(std::mem::take(body));
+            }
+            StmtKind::Break | StmtKind::Continue => {}
             StmtKind::Call(name, args) => {
                 *name = self.resolve(name, pos, true);
                 args.iter_mut().for_each(|e| self.expr(e));
@@ -393,6 +400,7 @@ impl Scope<'_> {
                 idx.iter_mut().for_each(|e| self.expr(e));
             }
             ExprKind::ListLit(items) => items.iter_mut().for_each(|e| self.expr(e)),
+            ExprKind::Named(_, value) => self.expr(value),
             ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_) => {}
         }
     }
