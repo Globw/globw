@@ -2,7 +2,8 @@
   "name": "globw",
   "displayName": "Globw",
   "description": "Syntax colors, run button and live errors for the Globw language (.gw)",
-  "version": "1.7.0",
+  "version": "1.8.0",
+  "icon": "images/icon.png",
   "publisher": "local",
   "engines": {
     "vscode": "^1.80.0"
@@ -25,6 +26,10 @@
         "extensions": [
           ".gw"
         ],
+        "icon": {
+          "light": "./images/gw-light.svg",
+          "dark": "./images/gw-dark.svg"
+        },
         "configuration": "./language-configuration.json"
       }
     ],
