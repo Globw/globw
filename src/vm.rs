@@ -21,6 +21,14 @@ pub enum Value {
     Seq(Rc<RefCell<Vec<Value>>>),
     Matrix(Rc<RefCell<Matrix>>),
     Dict(Rc<RefCell<Dict>>),
+    Object(Rc<RefCell<Obj>>),
+}
+
+/// An object: its class id and the values of its fields, in slot order.
+#[derive(Debug)]
+pub struct Obj {
+    pub class: u16,
+    pub fields: Vec<Value>,
 }
 
 /// A dictionary key: dictionaries are keyed by ints or strings.
@@ -123,6 +131,13 @@ fn seq(v: &Value) -> &Rc<RefCell<Vec<Value>>> {
     }
 }
 
+fn object(v: &Value) -> &Rc<RefCell<Obj>> {
+    match v {
+        Value::Object(o) => o,
+        other => panic!("internal error: expected an object, found {:?}", other),
+    }
+}
+
 fn matrix(v: &Value) -> &Rc<RefCell<Matrix>> {
     match v {
         Value::Matrix(m) => m,
@@ -188,7 +203,16 @@ pub(crate) fn display(v: &Value) -> String {
 /// A value as Python writes it inside a collection: strings in quotes,
 /// lists in [ ], dictionaries in { }. An element with no value yet is "?".
 fn repr(v: &Value) -> String {
-    let items = |values: &mut dyn Iterator<Item = &Value>| values.map(repr).collect::<Vec<_>>().join(", ");
+    repr_at(v, 0)
+}
+
+/// Like `repr`, but stops at a fixed depth so cyclic structures cannot loop.
+fn repr_at(v: &Value, depth: usize) -> String {
+    if depth > 12 {
+        return "...".to_string();
+    }
+    let items =
+        |values: &mut dyn Iterator<Item = &Value>| values.map(|x| repr_at(x, depth + 1)).collect::<Vec<_>>().join(", ");
     match v {
         Value::Null => "?".to_string(),
         Value::Int(n) => n.to_string(),
@@ -206,9 +230,19 @@ fn repr(v: &Value) -> String {
         }
         Value::Dict(d) => {
             let d = d.borrow();
-            let pairs: Vec<String> =
-                d.keys().zip(d.values()).map(|(k, v)| format!("{}: {}", repr(&k.value()), repr(v))).collect();
+            let pairs: Vec<String> = d
+                .keys()
+                .zip(d.values())
+                .map(|(k, v)| format!("{}: {}", repr_at(&k.value(), depth + 1), repr_at(v, depth + 1)))
+                .collect();
             format!("{{{}}}", pairs.join(", "))
+        }
+        Value::Object(o) => {
+            let o = o.borrow();
+            let names = crate::tir::class_field_names(o.class);
+            let pairs: Vec<String> =
+                names.iter().zip(&o.fields).map(|(n, f)| format!("{}={}", n, repr_at(f, depth + 1))).collect();
+            format!("{}({})", crate::tir::class_name(o.class), pairs.join(", "))
         }
     }
 }
@@ -461,6 +495,32 @@ impl<'m> Vm<'m> {
                 }
                 Op::NewList(d) => reg!(d) = Value::Seq(Rc::new(RefCell::new(Vec::new()))),
                 Op::NewDict(d) => reg!(d) = Value::Dict(Rc::new(RefCell::new(Dict::default()))),
+                Op::NewObject(d, class, _n) => {
+                    let fields = crate::tir::class_field_kinds(class as u16)
+                        .into_iter()
+                        .map(|kind| match kind {
+                            1 => Value::Seq(Rc::new(RefCell::new(Vec::new()))),
+                            2 => Value::Dict(Rc::new(RefCell::new(Dict::default()))),
+                            3 => Value::Int(0),
+                            4 => Value::Real(0.0),
+                            5 => Value::Bool(false),
+                            6 => Value::Str("".into()),
+                            _ => Value::Null,
+                        })
+                        .collect();
+                    reg!(d) = Value::Object(Rc::new(RefCell::new(Obj { class: class as u16, fields })));
+                }
+                Op::GetField(d, o, slot) => {
+                    let v = object(&reg!(o)).borrow().fields[slot as usize].clone();
+                    if let Value::Null = v {
+                        fail!("this field has no value yet");
+                    }
+                    reg!(d) = v;
+                }
+                Op::SetField(o, slot, s) => {
+                    let v = reg!(s).clone();
+                    object(&reg!(o)).borrow_mut().fields[slot as usize] = v;
+                }
                 Op::GetElem(d, c, i) => {
                     if let Value::Dict(t) = &reg!(c) {
                         let k = Key::of(&reg!(i));

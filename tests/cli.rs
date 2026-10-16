@@ -89,3 +89,23 @@ fn module_locals_may_share_names_with_other_files_functions() {
     let (code, stdout, stderr) = globw(&[dir.join("main.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "4.0\n"), "{}", stderr);
 }
+
+#[test]
+fn unknown_type_is_reported() {
+    let dir = std::env::temp_dir().join("globw_unknown_type_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("p.gw"), "variables:\n    x as integer\n").unwrap();
+    let (code, _, stderr) = globw(&["--check", dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("unknown type \"integer\""), "{}", stderr);
+}
+
+#[test]
+fn classes_run_end_to_end() {
+    let dir = std::env::temp_dir().join("globw_classes_cli_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "variables:\n    a as Box\n    b as Box\nclass Box\n    variables:\n        n as int\n    procedure new(n as int)\n        self.n = n\n    end procedure\n    procedure add(k as int)\n        self.n = self.n + k\n    end procedure\nend class\na = new Box(10)\nb = a\na.add(5)\noutput(b.n, \" \", a)\n";
+    std::fs::write(dir.join("c.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("c.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "15 Box(n=15)\n"), "{}", stderr);
+}

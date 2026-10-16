@@ -73,19 +73,24 @@ impl<'p> Checker<'p> {
             ExprKind::Str(s) => base(TExprKind::Str(s.as_str().into()), BaseType::Str, pos),
             ExprKind::Bool(b) => base(TExprKind::Bool(*b), BaseType::Bool, pos),
             ExprKind::Var(name) => match self.lookup(name) {
+                Some(p) => {
+                    self.check_assigned(p, name, pos);
+                    TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos }
+                }
+                None if name.contains('.') => self.field_chain(name, pos),
                 None => {
                     let err = self.undeclared(name, pos);
                     self.report_structural(err);
                     unknown(pos)
                 }
-                Some(p) => {
-                    self.check_assigned(p, name, pos);
-                    TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos }
-                }
             },
             ExprKind::Index(name, indices) => match self.lookup(name) {
                 Some(p) if matches!(self.var(p).full_type(), Type::Dict(..) | Type::ListOf(_)) => {
                     let container = TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos };
+                    self.subscript(container, indices, pos)
+                }
+                None if name.contains('.') => {
+                    let container = self.field_chain(name, pos);
                     self.subscript(container, indices, pos)
                 }
                 _ => self.index(name, indices, pos),
@@ -95,6 +100,12 @@ impl<'p> Checker<'p> {
                 self.subscript(container, indices, pos)
             }
             ExprKind::ListLit(items) => self.list_literal(items, pos),
+            ExprKind::New(class, args) => self.construct(class, args, pos),
+            ExprKind::Field(obj, field) => {
+                let object = self.expr(obj);
+                self.get_field(object, field, pos)
+            }
+            ExprKind::MethodCall(obj, method, args) => self.method_on(obj, method, args, pos, true),
             ExprKind::Named(..) => {
                 self.report_structural(Error::new(
                     pos,
@@ -177,6 +188,45 @@ impl<'p> Checker<'p> {
         let elem = elem.unwrap_or(Type::Unknown);
         let converted = texprs.into_iter().map(|t| convert(t, elem.base())).collect();
         TExpr { kind: TExprKind::ListLit(converted), ty: list_of(elem), pos }
+    }
+
+    /// Reads `base.field.field...` where `base` is a variable and the rest are
+    /// object fields.
+    pub(crate) fn field_chain(&mut self, name: &str, pos: Pos) -> TExpr {
+        let mut segs = name.split('.');
+        let base = segs.next().expect("a name has at least one segment");
+        let Some(p) = self.lookup(base) else {
+            let err = self.undeclared(base, pos);
+            self.report_structural(err);
+            return unknown(pos);
+        };
+        self.check_assigned(p, base, pos);
+        let mut cur = TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos };
+        for field in segs {
+            cur = self.get_field(cur, field, pos);
+        }
+        cur
+    }
+
+    /// Reads one field of an object expression.
+    pub(crate) fn get_field(&mut self, object: TExpr, field: &str, pos: Pos) -> TExpr {
+        match object.ty {
+            Type::Unknown => unknown(pos),
+            Type::Object(cid) => match crate::tir::class_field(cid, field) {
+                Some((slot, ty)) => TExpr { kind: TExprKind::GetField(Box::new(object), slot), ty, pos },
+                None => {
+                    self.report(Error::new(
+                        pos,
+                        format!("class \"{}\" has no field \"{}\"", crate::tir::class_name(cid), field),
+                    ));
+                    unknown(pos)
+                }
+            },
+            other => {
+                self.report(Error::new(pos, format!("only objects have fields; {} does not", other.full_name())));
+                unknown(pos)
+            }
+        }
     }
 
     pub(crate) fn undeclared(&self, name: &str, pos: Pos) -> Error {

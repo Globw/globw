@@ -501,6 +501,50 @@ shapes.calls = 0
 - Errors in a module name its file: `Error in shapes.gw at line 4, column 12: ...`.
 - Errors: a module that does not exist, a name the module does not define, `m.name` without `import m`, a variable or function named like an imported module or name, an import after other statements, a module importing itself or the main program.
 
+### 6.13 Classes
+
+A class groups data (fields) and the operations on it (methods). Objects are made with `new`.
+
+```
+class Point
+    variables:
+        x, y as float
+
+    procedure new(x as float, y as float)      ' the constructor
+        self.x = x
+        self.y = y
+    end procedure
+
+    function distance(other as Point) as float
+        return sqrt((self.x - other.x) * (self.x - other.x) + (self.y - other.y) * (self.y - other.y))
+    end function
+
+    procedure move(dx as float, dy as float)
+        self.x = self.x + dx
+        self.y = self.y + dy
+    end procedure
+end class
+
+variables:
+    p as Point
+    line as list of Point
+
+p = new Point(3, 4)
+output(p.x, " ", p.distance(new Point(0, 0)))
+p.move(1, -1)
+append(line, new Point(0, 0))
+output(line[1].x)
+```
+
+- **Definition:** `class Name ... end class`, at the top level like functions, after the main `variables:` block. Fields go in one or more `variables:` blocks; methods are `function`/`procedure` definitions. A class can be used before it is defined. (For now classes are defined only in the main program, not in imported modules.)
+- **Type:** a class name is a type, so a variable, parameter, field or return value can be an object: `p as Point`, `) as Point`, `list of Point`, `dict of string to Point`. Fields cannot be fixed arrays or matrices (use a list).
+- **`self`** is the current object inside a method; `self.field` and `self.method(...)` reach its own fields and methods. `self` is reserved.
+- **Constructor:** the method `new`, a procedure, run by `new Class(args)`. Without a constructor, `new Class()` takes no values. Every object starts with its number fields at 0, bool fields `false`, string fields `""`, list and dictionary fields empty, and object fields with no value yet.
+- **Objects are references,** like lists and dictionaries: `b = a` makes `b` another name for the same object, and passing an object to a function lets it change the object. They can go in lists, dictionaries and other objects.
+- **Fields and methods:** `object.field` reads or assigns a field; `object.method(args)` calls a method. These work on any object expression, like `line[i].x` or `line[i].move(1, 0)`.
+- **Printing:** `output(p)` prints an object as `Point(x=3.0, y=4.0)`.
+- **Errors:** an unknown class, a field or method a class does not have, the wrong number of constructor or method values, assigning the wrong type to a field, a field or variable named `self`, a duplicate class, field or method, or a constructor written as a function.
+
 ## 7. Errors
 
 There is one format for all errors, with line, column and a marker under the offending code:

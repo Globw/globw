@@ -11,6 +11,7 @@ pub mod errors;
 pub mod fonts;
 pub mod graphics;
 pub mod lexer;
+pub mod classes;
 pub mod library;
 pub mod modules;
 pub mod parser;
@@ -36,7 +37,10 @@ pub fn compile_program(
     dir: &std::path::Path,
 ) -> (Vec<SourceFile>, Result<bytecode::Module, Vec<Error>>) {
     let (files, program) = modules::load(main, dir);
-    let result = program.and_then(|p| checker::check(&p)).map(|t| compiler::compile(&t));
+    let result = program
+        .and_then(|mut p| classes::lower(&mut p).map(|()| p))
+        .and_then(|p| checker::check(&p))
+        .map(|t| compiler::compile(&t));
     (files, result)
 }
 

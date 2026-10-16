@@ -48,6 +48,9 @@ impl<'p> Checker<'p> {
             }
             StmtKind::Assign(target, value) => {
                 let v = self.expr(value);
+                if self.is_member_target(target) {
+                    return self.assign_member(target, v);
+                }
                 if self.needs_general_target(target) {
                     return self.assign_element(target, v);
                 }
@@ -95,6 +98,20 @@ impl<'p> Checker<'p> {
             }
             StmtKind::Call(name, args) => self.call_stmt(name, args, pos),
             StmtKind::Return(value) => self.return_stmt(value.as_ref(), pos),
+            StmtKind::SetMember(lvalue, value) => {
+                let v = self.expr(value);
+                self.assign_lvalue(lvalue, v, pos)
+            }
+            StmtKind::Eval(e) => match &e.kind {
+                ExprKind::MethodCall(obj, method, args) => match self.method_on(obj, method, args, e.pos, false).kind {
+                    TExprKind::Call(idx, a) => Some(TStmt::Call(idx, a, e.pos)),
+                    _ => None,
+                },
+                _ => {
+                    self.report_structural(Error::new(pos, "only a method call can be a statement on its own"));
+                    None
+                }
+            },
             StmtKind::LoadModule { init, flag } => {
                 let s = self.sub_by_name[init.as_str()];
                 let inst = self.instance(s);
@@ -138,8 +155,89 @@ impl<'p> Checker<'p> {
             self.report_structural(err);
             return None;
         };
-        let mut container = TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos: t.pos };
+        let container = TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos: t.pos };
         let groups: Vec<&Vec<Expr>> = std::iter::once(&t.indices).chain(t.rest.iter()).collect();
+        self.set_in_container(container, groups, v, t.pos)
+    }
+
+    /// Whether the target is an object field, like `p.x` or `self.pos.y`.
+    fn is_member_target(&self, t: &Target) -> bool {
+        if !t.name.contains('.') || self.lookup(&t.name).is_some() {
+            return false;
+        }
+        let first = t.name.split('.').next().expect("a name has at least one segment");
+        first == "self" || self.lookup(first).is_some_and(|p| matches!(self.var(p).full_type(), Type::Object(_)))
+    }
+
+    fn assign_member(&mut self, t: &Target, v: TExpr) -> Option<TStmt> {
+        let (prefix, field) = t.name.rsplit_once('.').expect("a member target has a dot");
+        let object = self.field_chain(prefix, t.pos);
+        let Type::Object(cid) = object.ty else {
+            return None;
+        };
+        let Some((slot, fty)) = crate::tir::class_field(cid, field) else {
+            self.report(Error::new(
+                t.pos,
+                format!("class \"{}\" has no field \"{}\"", crate::tir::class_name(cid), field),
+            ));
+            return None;
+        };
+        if t.indices.is_empty() && t.rest.is_empty() {
+            if !fits(fty, v.ty) {
+                self.report(Error::new(
+                    v.pos,
+                    format!("field \"{}\" is {}, here it gets {}", field, fty.full_name(), v.ty.full_name()),
+                ));
+            }
+            return Some(TStmt::SetField(object, slot, convert(v, fty.base()), t.pos));
+        }
+        let container = TExpr { kind: TExprKind::GetField(Box::new(object), slot), ty: fty, pos: t.pos };
+        let groups: Vec<&Vec<Expr>> = std::iter::once(&t.indices).chain(t.rest.iter()).collect();
+        self.set_in_container(container, groups, v, t.pos)
+    }
+
+    /// Assignment to a field or element reached through an arbitrary
+    /// expression: `people[i].name = x`, `line[i].cells[j] = 0`.
+    fn assign_lvalue(&mut self, lvalue: &Expr, v: TExpr, pos: Pos) -> Option<TStmt> {
+        match &lvalue.kind {
+            ExprKind::Field(obj, field) => {
+                let object = self.expr(obj);
+                let Type::Object(cid) = object.ty else {
+                    if object.ty != Type::Unknown {
+                        self.report(Error::new(pos, format!("only objects have fields; {} does not", object.ty.full_name())));
+                    }
+                    return None;
+                };
+                let Some((slot, fty)) = crate::tir::class_field(cid, field) else {
+                    self.report(Error::new(
+                        pos,
+                        format!("class \"{}\" has no field \"{}\"", crate::tir::class_name(cid), field),
+                    ));
+                    return None;
+                };
+                if !fits(fty, v.ty) {
+                    self.report(Error::new(
+                        v.pos,
+                        format!("field \"{}\" is {}, here it gets {}", field, fty.full_name(), v.ty.full_name()),
+                    ));
+                }
+                Some(TStmt::SetField(object, slot, convert(v, fty.base()), pos))
+            }
+            ExprKind::Subscript(base, idx) => {
+                let container = self.expr(base);
+                self.set_in_container(container, vec![idx], v, pos)
+            }
+            _ => {
+                self.report_structural(Error::new(pos, "this cannot be assigned to"));
+                None
+            }
+        }
+    }
+
+    /// Sets an element inside a list, array or dictionary reached through
+    /// `container` and the chain of index groups.
+    fn set_in_container(&mut self, mut container: TExpr, groups: Vec<&Vec<Expr>>, v: TExpr, pos: Pos) -> Option<TStmt> {
+        let t = Target { name: String::new(), indices: vec![], rest: vec![], pos };
         let (last, path) = groups.split_last().expect("at least one index group");
         for group in path {
             container = self.subscript(container, group, t.pos);
@@ -231,8 +329,9 @@ impl<'p> Checker<'p> {
 
     fn assign(&mut self, t: TTarget, v: TExpr) -> TStmt {
         let var = self.var(t.place);
-        if var.shape != Shape::Scalar && t.indices.is_empty() {
-            // a whole list, like `words = split(s, " ")`
+        let whole = var.shape != Shape::Scalar || matches!(var.full_type(), Type::Object(_));
+        if whole && t.indices.is_empty() {
+            // a whole list, dictionary or object, like `words = split(s, " ")` or `p = new Point(1, 2)`
             let (expected, name) = (var.full_type(), var.name.clone());
             if !fits(expected, v.ty) {
                 self.report(Error::new(
@@ -240,6 +339,7 @@ impl<'p> Checker<'p> {
                     format!("cannot assign {} to \"{}\", which is {}", v.ty.full_name(), name, expected.full_name()),
                 ));
             }
+            self.mark_assigned(&t);
             return TStmt::Assign(t, v);
         }
         match v.ty {

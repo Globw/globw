@@ -193,14 +193,34 @@ fn merge(mut modules: Vec<Module>, by_name: &HashMap<String, usize>) -> Result<P
             }
         }
     }
+    for (k, m) in modules.iter().enumerate() {
+        if k != 0 {
+            if let Some(c) = m.program.classes.first() {
+                errors.push(Error::new(
+                    c.pos,
+                    "classes can only be defined in the main program (not in an imported module) for now",
+                ));
+            }
+        }
+    }
     if !errors.is_empty() {
         return Err(errors);
     }
 
     let mut out = Program::default();
     for (k, m) in modules.iter_mut().enumerate() {
-        let p = std::mem::take(&mut m.program);
+        let mut p = std::mem::take(&mut m.program);
+        let classes = std::mem::take(&mut p.classes);
         let mut scope = Scope { k, t: &t, locals: HashSet::new(), uses: Vec::new(), errors: &mut errors };
+        for mut c in classes {
+            for meth in &mut c.methods {
+                scope.locals = meth.params.iter().chain(&meth.locals).map(|d| d.name.clone()).collect();
+                scope.locals.insert("self".to_string());
+                let body = std::mem::take(&mut meth.body);
+                meth.body = scope.block(body);
+            }
+            out.classes.push(c);
+        }
         for d in p.globals {
             out.globals.push(Decl { name: t.qualified(k, &d.name), ..d });
         }
@@ -265,6 +285,10 @@ impl Scope<'_> {
     fn resolve(&mut self, name: &str, pos: Pos, call: bool) -> String {
         let (t, k) = (self.t, self.k);
         if let Some((prefix, rest)) = name.split_once('.') {
+            if prefix == "self" || self.locals.contains(prefix) {
+                // field or method access on an object: resolved by the checker
+                return name.to_string();
+            }
             let Some(&m) = t.aliases[k].get(prefix) else {
                 if t.from[k].contains_key(prefix) || t.defines(k, prefix) || self.locals.contains(prefix) {
                     self.errors.push(Error::new(pos, format!("\"{}\" is not a module: \".\" cannot be used on it", prefix)));
@@ -374,6 +398,11 @@ impl Scope<'_> {
                     self.expr(v);
                 }
             }
+            StmtKind::Eval(e) => self.expr(e),
+            StmtKind::SetMember(l, v) => {
+                self.expr(l);
+                self.expr(v);
+            }
             StmtKind::LoadModule { .. } => {}
         }
     }
@@ -401,6 +430,12 @@ impl Scope<'_> {
             }
             ExprKind::ListLit(items) => items.iter_mut().for_each(|e| self.expr(e)),
             ExprKind::Named(_, value) => self.expr(value),
+            ExprKind::New(_, args) => args.iter_mut().for_each(|e| self.expr(e)),
+            ExprKind::Field(b, _) => self.expr(b),
+            ExprKind::MethodCall(b, _, args) => {
+                self.expr(b);
+                args.iter_mut().for_each(|e| self.expr(e));
+            }
             ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_) => {}
         }
     }

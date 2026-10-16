@@ -48,6 +48,11 @@ pub enum Type {
     ListOf(TypeId),
     /// a dictionary from simple keys to values of any type (made with `dict_of`)
     Dict(BaseType, TypeId),
+    /// a class name written in a declaration, before it is linked to a class
+    /// (resolved to `Object` by the class loader)
+    Named(u32),
+    /// an object of the class with this id
+    Object(u16),
 }
 
 /// A type stored in the type table, so that `Type` stays small and `Copy`
@@ -73,6 +78,94 @@ pub fn intern(t: Type) -> TypeId {
 
 pub fn resolve(id: TypeId) -> Type {
     TYPES.with(|table| table.borrow()[id.0 as usize])
+}
+
+thread_local! {
+    static NAMED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static CLASSES: std::cell::RefCell<Vec<ClassInfo>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A class as the checker and compiler see it.
+#[derive(Debug, Clone)]
+pub struct ClassInfo {
+    pub name: String,
+    /// fields in slot order, each with its (resolved) type
+    pub fields: Vec<(String, Type)>,
+    /// method name -> index of its subprogram in the program
+    pub methods: Vec<(String, usize)>,
+}
+
+/// Interns a class name written in a declaration, giving it a stable id.
+pub fn intern_name(name: &str) -> u32 {
+    NAMED.with(|t| {
+        let mut t = t.borrow_mut();
+        let i = t.iter().position(|n| n == name).unwrap_or_else(|| {
+            t.push(name.to_string());
+            t.len() - 1
+        });
+        i as u32
+    })
+}
+
+pub fn named_name(id: u32) -> String {
+    NAMED.with(|t| t.borrow()[id as usize].clone())
+}
+
+/// Replaces the class table (called once by the class loader, before checking).
+pub fn set_classes(list: Vec<ClassInfo>) {
+    CLASSES.with(|t| *t.borrow_mut() = list);
+}
+
+pub fn class_name(id: u16) -> String {
+    CLASSES.with(|t| t.borrow()[id as usize].name.clone())
+}
+
+pub fn class_id(name: &str) -> Option<u16> {
+    CLASSES.with(|t| t.borrow().iter().position(|c| c.name == name).map(|i| i as u16))
+}
+
+/// The (slot, type) of a field of a class, or None if it has no such field.
+pub fn class_field(id: u16, field: &str) -> Option<(usize, Type)> {
+    CLASSES.with(|t| {
+        let c = &t.borrow()[id as usize];
+        c.fields.iter().position(|(n, _)| n == field).map(|i| (i, c.fields[i].1))
+    })
+}
+
+pub fn class_field_count(id: u16) -> usize {
+    CLASSES.with(|t| t.borrow()[id as usize].fields.len())
+}
+
+pub fn class_field_names(id: u16) -> Vec<String> {
+    CLASSES.with(|t| t.borrow()[id as usize].fields.iter().map(|(n, _)| n.clone()).collect())
+}
+
+/// For each field, how a fresh object must initialize it: 1 = empty list,
+/// 2 = empty dictionary, 0 = no value yet.
+pub fn class_field_kinds(id: u16) -> Vec<u8> {
+    CLASSES.with(|t| {
+        t.borrow()[id as usize]
+            .fields
+            .iter()
+            .map(|(_, ty)| match ty {
+                Type::List(_) | Type::ListOf(_) => 1,
+                Type::Dict(..) => 2,
+                Type::Base(BaseType::Int) => 3,
+                Type::Base(BaseType::Real) => 4,
+                Type::Base(BaseType::Bool) => 5,
+                Type::Base(BaseType::Str) => 6,
+                _ => 0,
+            })
+            .collect()
+    })
+}
+
+/// The subprogram index of a method of a class, or None.
+pub fn class_method(id: u16, method: &str) -> Option<usize> {
+    CLASSES.with(|t| {
+        let c = &t.borrow()[id as usize];
+        c.methods.iter().find(|(n, _)| n == method).map(|(_, i)| *i)
+    })
 }
 
 /// The list type with elements of type `elem` (simple elements keep the `List` form).
@@ -120,6 +213,7 @@ impl Type {
             Type::Matrix(_) => "a matrix",
             Type::List(_) | Type::ListOf(_) => "a list",
             Type::Dict(..) => "a dictionary",
+            Type::Named(_) | Type::Object(_) => "an object",
         }
     }
 
@@ -130,6 +224,8 @@ impl Type {
             Type::Matrix(Some(b)) => format!("a matrix of {}", b.plural()),
             Type::List(Some(_)) | Type::ListOf(_) => format!("a list of {}", list_elem(self).map_or("values".into(), Type::plural)),
             Type::Dict(k, v) => format!("a dictionary from {} to {}", k.plural(), resolve(v).plural()),
+            Type::Object(id) => format!("a {}", class_name(id)),
+            Type::Named(id) => format!("a {}", named_name(id)),
             other => other.name().to_string(),
         }
     }
@@ -142,6 +238,7 @@ impl Type {
             Type::Dict(k, v) => format!("dictionaries from {} to {}", k.plural(), resolve(v).plural()),
             Type::Array(_) => "arrays".to_string(),
             Type::Matrix(_) => "matrices".to_string(),
+            Type::Object(id) => format!("{} objects", class_name(id)),
             _ => "values".to_string(),
         }
     }
@@ -210,6 +307,10 @@ pub enum TExprKind {
     Index(Box<TExpr>, Box<TExpr>),
     /// a list written in brackets
     ListLit(Vec<TExpr>),
+    /// makes an object of a class and runs its constructor (if any)
+    New { class: u16, ctor: Option<usize>, args: Vec<TExpr> },
+    /// the value of a field of an object: `object.field`
+    GetField(Box<TExpr>, usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +337,8 @@ pub enum TStmt {
     Builtin(Builtin, Vec<TExpr>, Pos),
     /// `container[key] = value` for lists and dictionaries reached through any expression
     SetIndex(TExpr, TExpr, TExpr, Pos),
+    /// `object.field = value`
+    SetField(TExpr, usize, TExpr, Pos),
     /// runs function `func` (a module's start-up code) unless global `flag` is true
     LoadModule { flag: u16, func: usize, pos: Pos },
     /// `for(x in c)`; `to_real` converts int elements for a float variable

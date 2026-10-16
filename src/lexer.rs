@@ -35,6 +35,9 @@ pub enum Tok {
     False,
     Break,
     Continue,
+    Class,
+    EndClass,
+    New,
     // symbols
     Assign,
     Eq,
@@ -52,6 +55,7 @@ pub enum Tok {
     LBracket,
     RBracket,
     Comma,
+    Dot,
     Newline,
     Eof,
 }
@@ -88,6 +92,8 @@ pub fn keyword(word: &str) -> Option<Tok> {
         "false" => Tok::False,
         "break" => Tok::Break,
         "continue" => Tok::Continue,
+        "class" => Tok::Class,
+        "new" => Tok::New,
         _ => return None,
     })
 }
@@ -105,7 +111,10 @@ fn miscased(name: &str, words: &[&str]) -> Option<String> {
 pub fn miscased_statement_keyword(name: &str) -> Option<String> {
     miscased(
         name,
-        &["if", "else", "while", "for", "repeat", "end", "function", "procedure", "return", "global", "break", "continue"],
+        &[
+            "if", "else", "while", "for", "repeat", "end", "function", "procedure", "return", "global", "break",
+            "continue", "class",
+        ],
     )
 }
 
@@ -290,10 +299,11 @@ impl Scanner {
                 "loop" => Tok::EndLoop,
                 "function" => Tok::EndFunction,
                 "procedure" => Tok::EndProcedure,
+                "class" => Tok::EndClass,
                 _ => {
                     return Err(Error::new(
                         Pos::new(line, col, 3),
-                        "end must be followed by if, loop, function or procedure",
+                        "end must be followed by if, loop, function, procedure or class",
                     )
                     .with_hint("for example: end if or end loop"))
                 }
@@ -367,6 +377,7 @@ impl Scanner {
             ('[', _) => (Tok::LBracket, 1),
             (']', _) => (Tok::RBracket, 1),
             (',', _) => (Tok::Comma, 1),
+            ('.', _) => (Tok::Dot, 1),
             _ => return Err(Error::new(Pos::new(line, col, 1), format!("invalid character '{}'", c))),
         };
         self.push(tok, line, col, len);
@@ -460,7 +471,7 @@ mod tests {
     fn errors() {
         let msg = |s: &str| tokenize(s).unwrap_err().message;
         assert_eq!(msg("\"abc"), "unterminated string");
-        assert_eq!(msg("end x"), "end must be followed by if, loop, function or procedure");
+        assert_eq!(msg("end x"), "end must be followed by if, loop, function, procedure or class");
         assert_eq!(msg("a # b"), "invalid character '#'");
         assert_eq!(msg("a <> b"), "invalid operator <>");
         assert_eq!(msg("99999999999999999999"), "integer too large");

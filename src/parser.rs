@@ -46,6 +46,10 @@ fn text(t: &Tok) -> &'static str {
         Tok::Repeat => "repeat",
         Tok::Break => "break",
         Tok::Continue => "continue",
+        Tok::Class => "class",
+        Tok::EndClass => "end class",
+        Tok::New => "new",
+        Tok::Dot => "\".\"",
         Tok::EndLoop => "end loop",
         Tok::Function => "function",
         Tok::EndFunction => "end function",
@@ -82,6 +86,11 @@ fn text(t: &Tok) -> &'static str {
 }
 
 
+
+/// Whether a word is one of the four built-in simple types.
+fn is_base_type_word(w: &str) -> bool {
+    matches!(w, "int" | "float" | "string" | "bool")
+}
 
 /// Whether `e` is written directly (a literal, a negative number, or a list
 /// of those), so that it can be a default value.
@@ -176,7 +185,9 @@ impl Parser {
         }
         p.locals = self.local_decls()?;
         while !self.is(&Tok::Eof) {
-            if self.is(&Tok::Function) || self.is(&Tok::Procedure) {
+            if self.is(&Tok::Class) {
+                p.classes.push(self.class_def()?);
+            } else if self.is(&Tok::Function) || self.is(&Tok::Procedure) {
                 let sub = self.subprogram()?;
                 p.subprograms.push(sub);
             } else {
@@ -358,6 +369,13 @@ impl Parser {
             });
             return Ok((shape, base.unwrap_or(BaseType::Int), full));
         }
+        if let Tok::Name(n) = self.tok() {
+            if !is_base_type_word(n) {
+                let id = crate::tir::intern_name(n);
+                self.advance();
+                return Ok((Shape::Scalar, BaseType::Int, Type::Named(id)));
+            }
+        }
         let ty = self.base_type()?;
         if !self.accept(&Tok::LBracket) {
             return Ok((Shape::Scalar, ty, Type::Base(ty)));
@@ -419,6 +437,14 @@ impl Parser {
     fn element_type(&mut self) -> Result<Type, Error> {
         if self.is_name("list") || self.is_name("dict") {
             self.collection_type()
+        } else if let Tok::Name(n) = self.tok() {
+            if is_base_type_word(n) {
+                Ok(Type::Base(self.base_type()?))
+            } else {
+                let id = crate::tir::intern_name(n);
+                self.advance();
+                Ok(Type::Named(id))
+            }
         } else {
             Ok(Type::Base(self.base_type()?))
         }
@@ -435,6 +461,35 @@ impl Parser {
         }
     }
 
+    fn class_def(&mut self) -> Result<Class, Error> {
+        let pos = self.pos();
+        self.advance(); // class
+        let name = match self.tok().clone() {
+            Tok::Name(n) => {
+                self.advance();
+                n
+            }
+            other => return self.fail(format!("expected the class name, found {}", describe(&other))),
+        };
+        if self.is_name("is") {
+            return self.fail("inheritance with \"is\" is not available yet");
+        }
+        self.end_stmt()?;
+        self.skip_newlines();
+        let fields = self.local_decls()?;
+        let mut methods = Vec::new();
+        while self.is(&Tok::Function) || self.is(&Tok::Procedure) {
+            methods.push(self.subprogram()?);
+            self.skip_newlines();
+        }
+        if !self.is(&Tok::EndClass) {
+            return self.fail(format!("expected a method or \"end class\" to close class \"{}\"", name));
+        }
+        self.advance();
+        self.end_stmt()?;
+        Ok(Class { name, parent: None, fields, methods, pos })
+    }
+
     fn subprogram(&mut self) -> Result<Subprogram, Error> {
         let is_function = self.advance().tok == Tok::Function;
         let pos = self.pos();
@@ -442,6 +497,10 @@ impl Parser {
             Tok::Name(n) => {
                 self.advance();
                 n
+            }
+            Tok::New => {
+                self.advance();
+                "new".to_string()
             }
             other => return self.fail(format!("expected the function name, found {}", describe(&other))),
         };
@@ -727,6 +786,33 @@ impl Parser {
         while self.is(&Tok::LBracket) {
             rest.push(self.indices()?);
         }
+        if self.is(&Tok::Dot) {
+            // a method call on an indexed receiver, like people[i].move(1, 0)
+            let mut base = Expr { kind: ExprKind::Var(name.clone()), pos };
+            for group in std::iter::once(indices).chain(rest) {
+                base = Expr { kind: ExprKind::Subscript(Box::new(base), group), pos };
+            }
+            let e = self.postfix(base)?;
+            match e.kind {
+                ExprKind::MethodCall(..) => {
+                    self.end_stmt()?;
+                    return Ok(StmtKind::Eval(e));
+                }
+                ExprKind::Field(..) | ExprKind::Subscript(..) => {
+                    if !self.accept(&Tok::Assign) {
+                        if self.is(&Tok::Eq) {
+                            return Err(Error::new(self.pos(), "== compares two values, it does not assign")
+                                .with_hint("to assign write the field = value"));
+                        }
+                        return self.fail("expected = to assign this field, or a method call");
+                    }
+                    let value = self.expr()?;
+                    self.end_stmt()?;
+                    return Ok(StmtKind::SetMember(e, value));
+                }
+                _ => return self.fail("only a method call or a field assignment can be a statement here"),
+            }
+        }
         if !self.accept(&Tok::Assign) {
             if self.is(&Tok::Eq) {
                 return Err(Error::new(self.pos(), "== compares two values, it does not assign")
@@ -855,13 +941,42 @@ impl Parser {
 
     /// A value followed by any number of `[...]` index groups.
     fn primary(&mut self) -> Result<Expr, Error> {
-        let mut e = self.atom()?;
-        while self.is(&Tok::LBracket) {
-            let pos = self.pos();
-            let idx = self.indices()?;
-            e = Expr { kind: ExprKind::Subscript(Box::new(e), idx), pos };
+        let e = self.atom()?;
+        self.postfix(e)
+    }
+
+    /// Continues parsing `[...]`, `.field` and `.method(...)` after `e`.
+    fn postfix(&mut self, mut e: Expr) -> Result<Expr, Error> {
+        loop {
+            if self.is(&Tok::LBracket) {
+                let pos = self.pos();
+                let idx = self.indices()?;
+                e = Expr { kind: ExprKind::Subscript(Box::new(e), idx), pos };
+            } else if self.is(&Tok::Dot) {
+                let pos = self.advance().pos;
+                // the lexer merges `a.b.c` into one name, so one dot token may
+                // carry a whole chain of fields ending in a field or a method
+                let name = match self.tok().clone() {
+                    Tok::Name(n) => {
+                        self.advance();
+                        n
+                    }
+                    other => return self.fail(format!("expected a field or method name after \".\", found {}", describe(&other))),
+                };
+                let mut segs: Vec<&str> = name.split('.').collect();
+                let last = segs.pop().expect("a name has at least one segment").to_string();
+                for seg in segs {
+                    e = Expr { kind: ExprKind::Field(Box::new(e), seg.to_string()), pos };
+                }
+                e = if self.is(&Tok::LParen) {
+                    Expr { kind: ExprKind::MethodCall(Box::new(e), last, self.args()?), pos }
+                } else {
+                    Expr { kind: ExprKind::Field(Box::new(e), last), pos }
+                };
+            } else {
+                return Ok(e);
+            }
         }
-        Ok(e)
     }
 
     fn atom(&mut self) -> Result<Expr, Error> {
@@ -889,6 +1004,16 @@ impl Parser {
                     }
                 }
                 ExprKind::ListLit(items)
+            }
+            Tok::New => {
+                let class = match self.tok().clone() {
+                    Tok::Name(n) => {
+                        self.advance();
+                        n
+                    }
+                    other => return self.fail(format!("expected a class name after \"new\", found {}", describe(&other))),
+                };
+                ExprKind::New(class, self.args()?)
             }
             Tok::Name(n) => {
                 if self.is(&Tok::LParen) {
@@ -969,6 +1094,9 @@ mod tests {
             ExprKind::Unary(op, x) => format!("({:?} {})", op, sx(x)),
             ExprKind::Binary(op, a, b) => format!("({:?} {} {})", op, sx(a), sx(b)),
             ExprKind::Named(n, v) => format!("{}={}", n, sx(v)),
+            ExprKind::New(c, a) => format!("new {}({})", c, list(a)),
+            ExprKind::Field(b, f) => format!("{}.{}", sx(b), f),
+            ExprKind::MethodCall(b, m, a) => format!("{}.{}({})", sx(b), m, list(a)),
         }
     }
 
@@ -1075,9 +1203,8 @@ mod tests {
         let e = err("variables: a, b\n");
         assert_eq!(e.message, "\"variables:\" must be followed by a new line with the declarations");
         assert_eq!(e.hint.as_deref(), Some("put each declaration on its own indented line below, like \"    a as int\""));
-        let e = err("variables:\n    x as integer\n");
-        assert_eq!(e.message, "unknown type \"integer\"");
-        assert_eq!(e.hint.as_deref(), Some("the types are int, float, string, bool"));
+        // an unknown type now parses as a class name and is reported by the class loader
+        assert!(parse_src("variables:\n    x as integer\n").is_ok());
         assert_eq!(err("variables:\nx as int\n").message, "the declarations under \"variables:\" must be indented");
         assert_eq!(
             err("variables:\n    v as int[]\n").message,

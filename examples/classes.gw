@@ -1,0 +1,56 @@
+' Classes: fields, methods, the constructor "new", and objects.
+
+variables:
+    deck as Deck
+    players as list of Player
+    p as Player
+    i as int
+
+class Player
+    variables:
+        name as string
+        hand as list of string
+    procedure new(name as string)
+        self.name = name
+    end procedure
+    procedure take(card as string)
+        append(self.hand, card)
+    end procedure
+    function count() as int
+        return length(self.hand)
+    end function
+end class
+
+class Deck
+    variables:
+        cards as list of string
+        drawn as int
+    procedure new()
+        append(self.cards, "Ace")
+        append(self.cards, "King")
+        append(self.cards, "Queen")
+        append(self.cards, "Jack")
+    end procedure
+    function size() as int
+        return length(self.cards) - self.drawn
+    end function
+    function draw() as string
+        self.drawn = self.drawn + 1
+        return self.cards[self.drawn]
+    end function
+end class
+
+deck = new Deck()
+append(players, new Player("Ann"))
+append(players, new Player("Bob"))
+
+for(i from 1 to 4)
+    p = players[(i - 1) mod 2 + 1]
+    p.take(deck.draw())
+end loop
+
+for(i from 1 to length(players))
+    output(players[i].name, " has ", players[i].count(), " cards: ", players[i].hand)
+end loop
+output("Cards left in the deck: ", deck.size())
+output(players[1])

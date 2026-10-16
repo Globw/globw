@@ -1,0 +1,4 @@
+Ann has 2 cards: ['Ace', 'Queen']
+Bob has 2 cards: ['King', 'Jack']
+Cards left in the deck: 0
+Player(name='Ann', hand=['Ace', 'Queen'])

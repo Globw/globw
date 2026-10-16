@@ -306,6 +306,27 @@ impl<'a> FnCompiler<'a> {
                 let k = self.operand(k);
                 self.emit(Op::GetElem(d, c, k), pos);
             }
+            TExprKind::GetField(obj, slot) => {
+                let o = self.operand(obj);
+                self.emit(Op::GetField(d, o, *slot as u16), pos);
+            }
+            TExprKind::New { class, ctor, args } => {
+                let nfields = crate::tir::class_field_count(*class) as u32;
+                let obj = self.temp();
+                self.emit(Op::NewObject(obj, *class as u32, nfields), pos);
+                if let Some(ctor) = ctor {
+                    let first = self.next;
+                    let selfreg = self.temp();
+                    self.emit(Op::Move(selfreg, obj), pos);
+                    for a in args {
+                        let t = self.temp();
+                        self.expr_into(a, t);
+                    }
+                    let throwaway = self.temp();
+                    self.emit(Op::Call { func: *ctor as u32, first, argc: 1 + args.len() as u16, dst: throwaway }, pos);
+                }
+                self.emit(Op::Move(d, obj), pos);
+            }
             TExprKind::ListLit(items) => {
                 // build in a temporary: the items may read the variable being assigned
                 let r = if d < self.n_locals { self.temp() } else { d };
@@ -355,6 +376,11 @@ impl<'a> FnCompiler<'a> {
                 let k = self.operand(k);
                 let v = self.operand(v);
                 self.emit(Op::SetElem(c, k, v), *pos);
+            }
+            TStmt::SetField(obj, slot, v, pos) => {
+                let o = self.operand(obj);
+                let v = self.operand(v);
+                self.emit(Op::SetField(o, *slot as u16, v), *pos);
             }
             TStmt::If(branches, other) => {
                 let mut exits = Vec::new();
@@ -729,6 +755,66 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn classes_objects_and_methods() {
+        let src = r#"variables:
+    a, b as Counter
+    people as list of Person
+    i as int
+class Counter
+    variables:
+        value as int
+    procedure new(start as int)
+        self.value = start
+    end procedure
+    procedure add(n as int)
+        self.value = self.value + n
+    end procedure
+    function get() as int
+        return self.value
+    end function
+end class
+class Person
+    variables:
+        name as string
+        scores as list of int
+    procedure new(name as string)
+        self.name = name
+    end procedure
+    procedure note(s as int)
+        append(self.scores, s)
+    end procedure
+    function best() as int
+        return maximum(self.scores)
+    end function
+end class
+a = new Counter(10)
+b = a
+a.add(5)
+output(a.get(), " ", b.get())
+b.add(100)
+output(a.get(), " ", a.value)
+append(people, new Person("Ann"))
+append(people, new Person("Bob"))
+people[1].note(7)
+people[1].note(9)
+people[2].note(6)
+for(i from 1 to length(people))
+    output(people[i].name, ": best ", people[i].best())
+end loop
+output(new Counter(3))
+"#;
+        assert_eq!(
+            run_src(src, ""),
+            "15 15
+115 115
+Ann: best 9
+Bob: best 6
+Counter(value=3)
+"
+        );
     }
 
     #[test]

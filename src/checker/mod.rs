@@ -53,6 +53,7 @@ impl Var {
 
     pub(crate) fn full_type(&self) -> Type {
         match self.shape {
+            Shape::Scalar if matches!(self.full, Type::Object(_)) => self.full,
             Shape::Scalar => self.ty.map_or(Type::Unknown, Type::Base),
             Shape::Array(_) => Type::Array(self.ty),
             Shape::Matrix(..) => Type::Matrix(self.ty),

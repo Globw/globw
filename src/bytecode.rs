@@ -69,6 +69,12 @@ pub enum Op {
     NewMatrix(Reg, u32, u32),
     NewList(Reg),
     NewDict(Reg),
+    /// dst, class id, number of fields
+    NewObject(Reg, u32, u32),
+    /// dst, object, field slot
+    GetField(Reg, Reg, u16),
+    /// object, field slot, src
+    SetField(Reg, u16, Reg),
     /// dst, collection, index (1-based) or dictionary key
     GetElem(Reg, Reg, Reg),
     /// collection, index, src
