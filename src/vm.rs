@@ -132,6 +132,13 @@ fn seq(v: &Value) -> &Rc<RefCell<Vec<Value>>> {
     }
 }
 
+fn dict(v: &Value) -> &Rc<RefCell<Dict>> {
+    match v {
+        Value::Dict(d) => d,
+        other => panic!("internal error: expected a dictionary, found {:?}", other),
+    }
+}
+
 fn object(v: &Value) -> &Rc<RefCell<Obj>> {
     match v {
         Value::Object(o) => o,
@@ -580,16 +587,19 @@ impl<'m> Vm<'m> {
                     let v = reg!(s).clone();
                     object(&reg!(o)).borrow_mut().fields[slot as usize] = v;
                 }
-                Op::GetElem(d, c, i) => {
-                    if let Value::Dict(t) = &reg!(c) {
-                        let k = Key::of(&reg!(i));
-                        let v = t.borrow().get(&k).cloned();
-                        match v {
-                            Some(v) => reg!(d) = v,
-                            None => fail!(missing_key(&k)),
-                        }
-                        continue;
+                Op::GetKey(d, c, i) => {
+                    let k = Key::of(&reg!(i));
+                    let v = dict(&reg!(c)).borrow().get(&k).cloned();
+                    match v {
+                        Some(v) => reg!(d) = v,
+                        None => fail!(missing_key(&k)),
                     }
+                }
+                Op::SetKey(c, i, s) => {
+                    let (k, v) = (Key::of(&reg!(i)), reg!(s).clone());
+                    dict(&reg!(c)).borrow_mut().set(k, v);
+                }
+                Op::GetElem(d, c, i) => {
                     let i = int(&reg!(i));
                     let v = {
                         let s = seq(&reg!(c)).borrow();
@@ -604,11 +614,6 @@ impl<'m> Vm<'m> {
                     reg!(d) = v;
                 }
                 Op::SetElem(c, i, s) => {
-                    if let Value::Dict(t) = &reg!(c) {
-                        let (k, v) = (Key::of(&reg!(i)), reg!(s).clone());
-                        t.borrow_mut().set(k, v);
-                        continue;
-                    }
                     let i = int(&reg!(i));
                     let v = reg!(s).clone();
                     let mut q = seq(&reg!(c)).borrow_mut();
@@ -681,10 +686,17 @@ impl<'m> Vm<'m> {
                     }
                     let callee = &m.functions[f as usize];
                     let new_base = self.regs.len();
-                    self.regs.resize(new_base + callee.n_regs as usize, Value::Null);
+                    let n_regs = callee.n_regs as usize;
+                    // push the arguments straight into the callee's registers, then
+                    // fill the remaining locals with "no value yet" in one pass
+                    let start = base + first as usize;
+                    self.regs.reserve(n_regs);
                     for k in 0..argc as usize {
-                        let v = self.regs[base + first as usize + k].clone();
-                        self.regs[new_base + k] = v;
+                        let v = self.regs[start + k].clone();
+                        self.regs.push(v);
+                    }
+                    for _ in argc as usize..n_regs {
+                        self.regs.push(Value::Null);
                     }
                     self.frames.push(Frame { func, ip, base, dst });
                     func = f as usize;

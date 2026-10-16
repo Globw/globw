@@ -368,9 +368,10 @@ impl<'a> FnCompiler<'a> {
                 self.emit(Op::Builtin { id: b.id(), first, argc: args.len() as u16, dst: d }, pos);
             }
             TExprKind::Index(c, k) => {
+                let is_dict = matches!(c.ty, Type::Dict(..));
                 let c = self.operand(c);
                 let k = self.operand(k);
-                self.emit(Op::GetElem(d, c, k), pos);
+                self.emit(if is_dict { Op::GetKey(d, c, k) } else { Op::GetElem(d, c, k) }, pos);
             }
             TExprKind::GetField(obj, slot) => {
                 let o = self.operand(obj);
@@ -438,10 +439,11 @@ impl<'a> FnCompiler<'a> {
                 self.emit(Op::Ensure { flag: *flag, func: *func as u32 }, *pos);
             }
             TStmt::SetIndex(c, k, v, pos) => {
+                let is_dict = matches!(c.ty, Type::Dict(..));
                 let c = self.operand(c);
                 let k = self.operand(k);
                 let v = self.operand(v);
-                self.emit(Op::SetElem(c, k, v), *pos);
+                self.emit(if is_dict { Op::SetKey(c, k, v) } else { Op::SetElem(c, k, v) }, *pos);
             }
             TStmt::SetField(obj, slot, v, pos) => {
                 let o = self.operand(obj);

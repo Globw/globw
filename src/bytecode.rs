@@ -85,10 +85,14 @@ pub enum Op {
     GetField(Reg, Reg, u16),
     /// object, field slot, src
     SetField(Reg, u16, Reg),
-    /// dst, collection, index (1-based) or dictionary key
+    /// dst, array/list, index (1-based)
     GetElem(Reg, Reg, Reg),
-    /// collection, index, src
+    /// array/list, index, src
     SetElem(Reg, Reg, Reg),
+    /// dst, dictionary, key
+    GetKey(Reg, Reg, Reg),
+    /// dictionary, key, src
+    SetKey(Reg, Reg, Reg),
     /// dst, matrix, row, column
     GetElem2(Reg, Reg, Reg, Reg),
     /// matrix, row, column, src
@@ -167,6 +171,8 @@ impl Op {
             Op::GetField(..) => "GetField",
             Op::SetField(..) => "SetField",
             Op::GetElem(..) => "GetElem",
+            Op::GetKey(..) => "GetKey",
+            Op::SetKey(..) => "SetKey",
             Op::SetElem(..) => "SetElem",
             Op::GetElem2(..) => "GetElem2",
             Op::SetElem2(..) => "SetElem2",
