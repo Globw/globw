@@ -106,6 +106,19 @@ impl<'p> Checker<'p> {
                 self.get_field(object, field, pos)
             }
             ExprKind::MethodCall(obj, method, args) => self.method_on(obj, method, args, pos, true),
+            ExprKind::IsType(obj, class) => {
+                let object = self.expr(obj);
+                if !matches!(object.ty, Type::Object(_) | Type::Unknown) {
+                    self.report(Error::new(pos, format!("\"is\" tests an object; {} is not one", object.ty.full_name())));
+                }
+                match crate::tir::class_id(class) {
+                    Some(cid) => base(TExprKind::IsType(Box::new(object), cid), BaseType::Bool, pos),
+                    None => {
+                        self.report_structural(Error::new(pos, format!("unknown class \"{}\"", class)));
+                        base(TExprKind::Bool(false), BaseType::Bool, pos)
+                    }
+                }
+            }
             ExprKind::Named(..) => {
                 self.report_structural(Error::new(
                     pos,

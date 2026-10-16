@@ -105,6 +105,7 @@ impl<'p> Checker<'p> {
             StmtKind::Eval(e) => match &e.kind {
                 ExprKind::MethodCall(obj, method, args) => match self.method_on(obj, method, args, e.pos, false).kind {
                     TExprKind::Call(idx, a) => Some(TStmt::Call(idx, a, e.pos)),
+                    TExprKind::VCall { slot, args } => Some(TStmt::VCall(slot, args, e.pos)),
                     _ => None,
                 },
                 _ => {
@@ -570,6 +571,7 @@ impl<'p> Checker<'p> {
                 let call = self.call(name, args, pos, false);
                 match call.kind {
                     TExprKind::Call(f, args) => Some(TStmt::Call(f, args, pos)),
+                    TExprKind::VCall { slot, args } => Some(TStmt::VCall(slot, args, pos)),
                     _ => None,
                 }
             }

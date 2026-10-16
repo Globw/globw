@@ -62,11 +62,15 @@
       "patterns": [
         {
           "name": "variable.language.self.globw",
+          "match": "\\bparent\\b"
+        },
+        {
+          "name": "variable.language.self.globw",
           "match": "\\bself\\b"
         },
         {
           "name": "keyword.control.globw",
-          "match": "\\b(lazy|import|break|continue|in|if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure|end\\s+class|class|new)\\b"
+          "match": "\\b(lazy|import|break|continue|in|if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure|end\\s+class|class|new|is)\\b"
         },
         {
           "name": "storage.type.function.globw",

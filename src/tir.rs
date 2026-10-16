@@ -83,15 +83,45 @@ pub fn resolve(id: TypeId) -> Type {
 thread_local! {
     static NAMED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
     static CLASSES: std::cell::RefCell<Vec<ClassInfo>> = const { std::cell::RefCell::new(Vec::new()) };
+    static METHOD_SLOTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static METHOD_TARGETS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Records, for each subprogram index, the index of its compiled function
+/// (or -1). The vtable uses it to turn method subprograms into call targets.
+pub fn set_method_targets(targets: Vec<i32>) {
+    METHOD_TARGETS.with(|t| *t.borrow_mut() = targets);
+}
+
+fn method_target(sub: usize) -> i32 {
+    METHOD_TARGETS.with(|t| t.borrow().get(sub).copied().unwrap_or(-1))
+}
+
+/// The dispatch slot for a method name, assigning a new one if needed. All
+/// methods with the same name share a slot, so dispatch is an array lookup.
+pub fn method_slot(name: &str) -> usize {
+    METHOD_SLOTS.with(|t| {
+        let mut t = t.borrow_mut();
+        t.iter().position(|n| n == name).unwrap_or_else(|| {
+            t.push(name.to_string());
+            t.len() - 1
+        })
+    })
+}
+
+pub fn method_slot_count() -> usize {
+    METHOD_SLOTS.with(|t| t.borrow().len())
 }
 
 /// A class as the checker and compiler see it.
 #[derive(Debug, Clone)]
 pub struct ClassInfo {
     pub name: String,
-    /// fields in slot order, each with its (resolved) type
+    /// the parent class, if any (its fields come first, at the same slots)
+    pub parent: Option<u16>,
+    /// fields in slot order (inherited first), each with its (resolved) type
     pub fields: Vec<(String, Type)>,
-    /// method name -> index of its subprogram in the program
+    /// method name -> subprogram index, inherited methods included, overrides resolved
     pub methods: Vec<(String, usize)>,
 }
 
@@ -120,12 +150,40 @@ pub fn class_count() -> usize {
     CLASSES.with(|t| t.borrow().len())
 }
 
+/// The dispatch row of a class: for each method slot, the subprogram index of
+/// its implementation, or -1 if the class has no method in that slot.
+pub fn class_vtable(id: u16) -> Vec<i32> {
+    let n = method_slot_count();
+    let mut row = vec![-1i32; n];
+    let methods: Vec<(String, usize)> = CLASSES.with(|t| t.borrow()[id as usize].methods.clone());
+    for (name, f) in methods {
+        row[method_slot(&name)] = method_target(f);
+    }
+    row
+}
+
 pub fn class_name(id: u16) -> String {
     CLASSES.with(|t| t.borrow()[id as usize].name.clone())
 }
 
 pub fn class_id(name: &str) -> Option<u16> {
     CLASSES.with(|t| t.borrow().iter().position(|c| c.name == name).map(|i| i as u16))
+}
+
+pub fn class_parent(id: u16) -> Option<u16> {
+    CLASSES.with(|t| t.borrow()[id as usize].parent)
+}
+
+/// Whether class `sub` is `sup` or inherits from it.
+pub fn is_subclass(sub: u16, sup: u16) -> bool {
+    let mut cur = Some(sub);
+    while let Some(c) = cur {
+        if c == sup {
+            return true;
+        }
+        cur = class_parent(c);
+    }
+    false
 }
 
 /// The (slot, type) of a field of a class, or None if it has no such field.
@@ -256,6 +314,7 @@ pub fn fits(expected: Type, actual: Type) -> bool {
         (_, Type::Unknown) | (Type::Unknown, _) => true,
         (Type::Base(e), Type::Base(a)) => join(e, a) == Some(e),
         (e, a) if list_elem(e).is_some() && list_elem(a) == Some(Type::Unknown) => true,
+        (Type::Object(e), Type::Object(a)) => is_subclass(a, e),
         (e, a) => e == a,
     }
 }
@@ -315,6 +374,10 @@ pub enum TExprKind {
     New { class: u16, ctor: Option<usize>, args: Vec<TExpr> },
     /// the value of a field of an object: `object.field`
     GetField(Box<TExpr>, usize),
+    /// a virtual method call dispatched on the runtime class of `args[0]` (self)
+    VCall { slot: usize, args: Vec<TExpr> },
+    /// `object is Class`: true when the object's class is that class or a subclass
+    IsType(Box<TExpr>, u16),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -332,6 +395,8 @@ pub enum TStmt {
     For { var: Place, from: TExpr, to: TExpr, step: Option<TExpr>, body: Vec<TStmt>, pos: Pos },
     Repeat(Vec<TStmt>, TExpr),
     Call(usize, Vec<TExpr>, Pos),
+    /// a virtual method call used as a statement (procedure method)
+    VCall(usize, Vec<TExpr>, Pos),
     Output(Vec<TExpr>),
     Input(Vec<(TTarget, BaseType)>),
     Append(TExpr, TExpr),

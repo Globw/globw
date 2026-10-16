@@ -285,8 +285,8 @@ impl Scope<'_> {
     fn resolve(&mut self, name: &str, pos: Pos, call: bool) -> String {
         let (t, k) = (self.t, self.k);
         if let Some((prefix, rest)) = name.split_once('.') {
-            if prefix == "self" || self.locals.contains(prefix) {
-                // field or method access on an object: resolved by the checker
+            if prefix == "self" || prefix == "parent" || self.locals.contains(prefix) {
+                // field or method access on an object, or a super call: resolved by the checker
                 return name.to_string();
             }
             let Some(&m) = t.aliases[k].get(prefix) else {
@@ -436,6 +436,7 @@ impl Scope<'_> {
                 self.expr(b);
                 args.iter_mut().for_each(|e| self.expr(e));
             }
+            ExprKind::IsType(b, _) => self.expr(b),
             ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_) => {}
         }
     }

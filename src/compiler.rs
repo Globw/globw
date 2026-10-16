@@ -19,12 +19,17 @@ pub fn compile(p: &TProgram) -> Module {
             FnCompiler::new(f, globals, &mut strings).finish()
         })
         .collect();
-    let class_fields = (0..crate::tir::class_count() as u16).map(crate::tir::class_field_kinds).collect();
+    let n_classes = crate::tir::class_count() as u16;
+    let class_fields = (0..n_classes).map(crate::tir::class_field_kinds).collect();
+    let vtable = (0..n_classes).map(crate::tir::class_vtable).collect();
+    let class_parents = (0..n_classes).map(|c| crate::tir::class_parent(c).map_or(-1, |p| p as i32)).collect();
     Module {
         functions,
         strings: strings.list,
         globals: p.globals.iter().map(|s| s.name.clone()).collect(),
         class_fields,
+        vtable,
+        class_parents,
     }
 }
 
@@ -359,6 +364,14 @@ impl<'a> FnCompiler<'a> {
                 let first = self.args(args);
                 self.emit(Op::Call { func: *f as u32, first, argc: args.len() as u16, dst: d }, pos);
             }
+            TExprKind::VCall { slot, args } => {
+                let first = self.args(args);
+                self.emit(Op::CallMethod { slot: *slot as u32, first, argc: args.len() as u16, dst: d }, pos);
+            }
+            TExprKind::IsType(obj, cid) => {
+                let r = self.operand(obj);
+                self.emit(Op::IsClass(d, r, *cid as u32), pos);
+            }
             TExprKind::Length(x) => {
                 let r = self.operand(x);
                 self.emit(Op::Length(d, r), pos);
@@ -503,6 +516,11 @@ impl<'a> FnCompiler<'a> {
                 let first = self.args(args);
                 let dst = self.temp();
                 self.emit(Op::Call { func: *f as u32, first, argc: args.len() as u16, dst }, *pos);
+            }
+            TStmt::VCall(slot, args, pos) => {
+                let first = self.args(args);
+                let dst = self.temp();
+                self.emit(Op::CallMethod { slot: *slot as u32, first, argc: args.len() as u16, dst }, *pos);
             }
             TStmt::Output(args) => {
                 for a in args {
@@ -824,6 +842,53 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn inheritance_overrides_and_dynamic_dispatch() {
+        let src = r#"variables:
+    shapes as list of Shape
+    i as int
+class Shape
+    function area() as float
+        return 0
+    end function
+    function describe() as string
+        return "area " + self.area()
+    end function
+end class
+class Square is Shape
+    variables:
+        side as float
+    procedure new(side as float)
+        self.side = side
+    end procedure
+    function area() as float
+        return self.side * self.side
+    end function
+end class
+class Cube is Square
+    function area() as float
+        return 6 * parent.area()
+    end function
+    function describe() as string
+        return "cube " + parent.describe()
+    end function
+end class
+append(shapes, new Square(3))
+append(shapes, new Cube(2))
+append(shapes, new Shape())
+for(i from 1 to length(shapes))
+    output(shapes[i].describe(), "  square? ", shapes[i] is Square)
+end loop
+"#;
+        assert_eq!(
+            run_src(src, ""),
+            "area 9.0  square? true
+cube area 24.0  square? true
+area 0.0  square? false
+"
+        );
     }
 
     #[test]

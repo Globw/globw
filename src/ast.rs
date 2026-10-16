@@ -58,6 +58,8 @@ pub enum ExprKind {
     Field(Box<Expr>, String),
     /// `expr.method(args)` on any expression
     MethodCall(Box<Expr>, String, Vec<Expr>),
+    /// `expr is ClassName`: true if the object is of that class or a subclass
+    IsType(Box<Expr>, String),
 }
 
 /// The left side of an assignment: `x`, `v[i]` or `m[i, j]`.

@@ -543,7 +543,10 @@ output(line[1].x)
 - **Objects are references,** like lists and dictionaries: `b = a` makes `b` another name for the same object, and passing an object to a function lets it change the object. They can go in lists, dictionaries and other objects.
 - **Fields and methods:** `object.field` reads or assigns a field; `object.method(args)` calls a method. These work on any object expression, like `line[i].x` or `line[i].move(1, 0)`.
 - **Printing:** `output(p)` prints an object as `Point(x=3.0, y=4.0)`.
-- **Errors:** an unknown class, a field or method a class does not have, the wrong number of constructor or method values, assigning the wrong type to a field, a field or variable named `self`, a duplicate class, field or method, or a constructor written as a function.
+- **Inheritance:** `class Child is Parent` makes `Child` inherit the fields and methods of `Parent` (single inheritance). A `Child` object can be used wherever a `Parent` is expected (variable, parameter, list element). `Child` can **override** a method by redefining it with the same parameters and return type; the version that runs is chosen by the object's real class (dynamic dispatch), even through an inherited method that calls `self.method(...)`.
+- **`parent`** inside a method calls the parent class's version: `parent.new(...)` in a constructor, `parent.area()` in an overridden method. The constructor `new` may take different parameters from the parent's.
+- **`object is Class`** is `true` when the object's class is `Class` or a subclass of it.
+- **Errors:** an unknown class, a field or method a class does not have, the wrong number of constructor or method values, assigning the wrong type to a field, a field or variable named `self`, a duplicate class, field or method, or a constructor written as a function, an unknown parent, an inheritance cycle, or an override whose parameters or return type differ.
 
 ## 7. Errors
 

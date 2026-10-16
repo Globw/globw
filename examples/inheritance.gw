@@ -1,0 +1,44 @@
+' Inheritance: a class can extend another with "is", override its methods,
+' and call the parent's version with "parent".
+
+variables:
+    staff as list of Employee
+    e as Employee
+
+class Employee
+    variables:
+        name as string
+        salary as float
+    procedure new(name as string, salary as float)
+        self.name = name
+        self.salary = salary
+    end procedure
+    function pay() as float
+        return self.salary
+    end function
+    function describe() as string
+        return self.name + " earns " + round_to(self.pay(), 2)
+    end function
+end class
+
+class Manager is Employee
+    variables:
+        bonus as float
+    procedure new(name as string, salary as float, bonus as float)
+        parent.new(name, salary)
+        self.bonus = bonus
+    end procedure
+    function pay() as float
+        return self.salary + self.bonus
+    end function
+end class
+
+append(staff, new Employee("Ann", 2000))
+append(staff, new Manager("Bob", 3000, 500))
+
+for(e in staff)
+    output(e.describe())
+    if(e is Manager)
+        output("  (a manager)")
+    end if
+end loop

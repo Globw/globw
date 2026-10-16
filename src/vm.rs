@@ -680,6 +680,43 @@ impl<'m> Vm<'m> {
                         Err(msg) => fail!(msg),
                     }
                 }
+                Op::CallMethod { slot, first, argc, dst } => {
+                    if self.frames.len() >= MAX_CALL_DEPTH {
+                        fail!("too many nested calls (maybe a recursion that never ends)");
+                    }
+                    let class = object(&self.regs[base + first as usize]).borrow().class as usize;
+                    let f = m.vtable[class][slot as usize] as usize;
+                    let callee = &m.functions[f];
+                    let new_base = self.regs.len();
+                    let n_regs = callee.n_regs as usize;
+                    let start = base + first as usize;
+                    self.regs.reserve(n_regs);
+                    for k in 0..argc as usize {
+                        let v = self.regs[start + k].clone();
+                        self.regs.push(v);
+                    }
+                    for _ in argc as usize..n_regs {
+                        self.regs.push(Value::Null);
+                    }
+                    self.frames.push(Frame { func, ip, base, dst });
+                    func = f;
+                    code = &callee.code;
+                    ip = 0;
+                    base = new_base;
+                }
+                Op::IsClass(d, o, cls) => {
+                    let mut c = object(&reg!(o)).borrow().class as i32;
+                    let target = cls as i32;
+                    let mut found = false;
+                    while c >= 0 {
+                        if c == target {
+                            found = true;
+                            break;
+                        }
+                        c = m.class_parents[c as usize];
+                    }
+                    reg!(d) = Value::Bool(found);
+                }
                 Op::Call { func: f, first, argc, dst } => {
                     if self.frames.len() >= MAX_CALL_DEPTH {
                         fail!("too many nested calls (maybe a recursion that never ends)");
@@ -789,6 +826,8 @@ mod tests {
             strings: strings.iter().map(|s| Rc::from(*s)).collect(),
             globals: vec![],
             class_fields: vec![],
+            vtable: vec![],
+            class_parents: vec![],
         };
         let mut out = Vec::new();
         run(&module, &mut input.as_bytes(), &mut out)?;
@@ -972,6 +1011,8 @@ mod tests {
             strings: vec![],
             globals: vec!["g".into()],
             class_fields: vec![],
+            vtable: vec![],
+            class_parents: vec![],
         }
     }
 

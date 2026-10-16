@@ -49,6 +49,7 @@ fn text(t: &Tok) -> &'static str {
         Tok::Class => "class",
         Tok::EndClass => "end class",
         Tok::New => "new",
+        Tok::Is => "is",
         Tok::Dot => "\".\"",
         Tok::EndLoop => "end loop",
         Tok::Function => "function",
@@ -471,9 +472,18 @@ impl Parser {
             }
             other => return self.fail(format!("expected the class name, found {}", describe(&other))),
         };
-        if self.is_name("is") {
-            return self.fail("inheritance with \"is\" is not available yet");
-        }
+        let parent = if self.accept(&Tok::Is) {
+            let ppos = self.pos();
+            match self.tok().clone() {
+                Tok::Name(n) if !n.contains('.') => {
+                    self.advance();
+                    Some((n, ppos))
+                }
+                other => return self.fail(format!("expected the parent class name after \"is\", found {}", describe(&other))),
+            }
+        } else {
+            None
+        };
         self.end_stmt()?;
         self.skip_newlines();
         let fields = self.local_decls()?;
@@ -487,7 +497,7 @@ impl Parser {
         }
         self.advance();
         self.end_stmt()?;
-        Ok(Class { name, parent: None, fields, methods, pos })
+        Ok(Class { name, parent, fields, methods, pos })
     }
 
     fn subprogram(&mut self) -> Result<Subprogram, Error> {
@@ -870,6 +880,17 @@ impl Parser {
 
     fn comparison(&mut self) -> Result<Expr, Error> {
         let a = self.additive()?;
+        if self.is(&Tok::Is) {
+            let pos = self.advance().pos;
+            let class = match self.tok().clone() {
+                Tok::Name(n) if !n.contains('.') => {
+                    self.advance();
+                    n
+                }
+                other => return self.fail(format!("expected a class name after \"is\", found {}", describe(&other))),
+            };
+            return Ok(Expr { kind: ExprKind::IsType(Box::new(a), class), pos });
+        }
         if self.is(&Tok::Assign) {
             return Err(Error::new(self.pos(), "a single = assigns a value")
                 .with_hint("to compare two values use =="));
@@ -1097,6 +1118,7 @@ mod tests {
             ExprKind::New(c, a) => format!("new {}({})", c, list(a)),
             ExprKind::Field(b, f) => format!("{}.{}", sx(b), f),
             ExprKind::MethodCall(b, m, a) => format!("{}.{}({})", sx(b), m, list(a)),
+            ExprKind::IsType(b, c) => format!("({} is {})", sx(b), c),
         }
     }
 

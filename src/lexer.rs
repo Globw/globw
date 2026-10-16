@@ -38,6 +38,7 @@ pub enum Tok {
     Class,
     EndClass,
     New,
+    Is,
     // symbols
     Assign,
     Eq,
@@ -94,6 +95,7 @@ pub fn keyword(word: &str) -> Option<Tok> {
         "continue" => Tok::Continue,
         "class" => Tok::Class,
         "new" => Tok::New,
+        "is" => Tok::Is,
         _ => return None,
     })
 }

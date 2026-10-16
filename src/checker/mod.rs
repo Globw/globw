@@ -319,6 +319,13 @@ impl<'p> Checker<'p> {
         for e in conflicts {
             self.report(e);
         }
+        let mut targets = vec![-1i32; self.prog.subprograms.len()];
+        for (k, &i) in self.final_queue.iter().enumerate() {
+            if let Some(s) = self.instances[i].sub {
+                targets[s] = k as i32;
+            }
+        }
+        crate::tir::set_method_targets(targets);
         self.errors.sort_by_key(|e| (e.pos.line, e.pos.col));
         TProgram { globals: self.globals.iter().map(slot).collect(), functions }
     }

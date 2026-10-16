@@ -213,7 +213,8 @@ impl<'p> Checker<'p> {
     fn try_method_call(&mut self, name: &str, args: &[Expr], pos: Pos, in_expr: bool) -> Option<TExpr> {
         let (recv, method) = name.rsplit_once('.')?;
         let first = recv.split('.').next().expect("a name has at least one segment");
-        let is_object = self.lookup(first).is_some_and(|p| matches!(self.var(p).full_type(), Type::Object(_)));
+        let is_object =
+            recv == "parent" || self.lookup(first).is_some_and(|p| matches!(self.var(p).full_type(), Type::Object(_)));
         if !is_object {
             return None;
         }
@@ -223,6 +224,10 @@ impl<'p> Checker<'p> {
 
     /// A method call on an already-parsed receiver expression.
     pub(crate) fn method_on(&mut self, recv: &Expr, method: &str, args: &[Expr], pos: Pos, in_expr: bool) -> TExpr {
+        // `parent.method(...)` calls the parent class's version directly (super)
+        if matches!(&recv.kind, ExprKind::Var(n) if n == "parent") {
+            return self.parent_call(method, args, pos, in_expr);
+        }
         let cid = match self.expr(recv).ty {
             Type::Unknown => return unknown(pos),
             Type::Object(cid) => cid,
@@ -231,14 +236,53 @@ impl<'p> Checker<'p> {
                 return unknown(pos);
             }
         };
-        let class = class_name(cid);
-        let full = format!("{}{}{}", class, crate::classes::SEP, method);
-        if !self.sub_by_name.contains_key(&full) {
-            self.report(Error::new(pos, format!("class \"{}\" has no method \"{}\"", class, method)));
+        let Some(fn_index) = class_method(cid, method) else {
+            self.report(Error::new(pos, format!("class \"{}\" has no method \"{}\"", class_name(cid), method)));
             return unknown(pos);
-        }
+        };
+        let full = self.prog.subprograms[fn_index].name.clone();
         let mut full_args = Vec::with_capacity(args.len() + 1);
         full_args.push(recv.clone());
+        full_args.extend_from_slice(args);
+        let tx = self.call(&full, &full_args, pos, in_expr);
+        // dispatch on the object's runtime class; make sure every class that
+        // could be the object has its version checked and compiled
+        if let TExprKind::Call(_, out) = tx.kind {
+            for c in 0..class_count() as u16 {
+                if is_subclass(c, cid) {
+                    if let Some(f) = class_method(c, method) {
+                        let inst = self.instance(f);
+                        self.reach(inst);
+                    }
+                }
+            }
+            TExpr { kind: TExprKind::VCall { slot: method_slot(method), args: out }, ty: tx.ty, pos }
+        } else {
+            tx
+        }
+    }
+
+    /// `parent.method(...)` inside a method: a direct call to the parent class's
+    /// version, passing the current `self`.
+    fn parent_call(&mut self, method: &str, args: &[Expr], pos: Pos, in_expr: bool) -> TExpr {
+        let Some(p) = self.lookup("self") else {
+            self.report_structural(Error::new(pos, "\"parent\" can only be used inside a method"));
+            return unknown(pos);
+        };
+        let Type::Object(cid) = self.var(p).full_type() else {
+            return unknown(pos);
+        };
+        let Some(parent) = class_parent(cid) else {
+            self.report(Error::new(pos, format!("class \"{}\" has no parent class", class_name(cid))));
+            return unknown(pos);
+        };
+        let Some(fn_index) = class_method(parent, method) else {
+            self.report(Error::new(pos, format!("the parent class \"{}\" has no method \"{}\"", class_name(parent), method)));
+            return unknown(pos);
+        };
+        let full = self.prog.subprograms[fn_index].name.clone();
+        let mut full_args = Vec::with_capacity(args.len() + 1);
+        full_args.push(Expr { kind: ExprKind::Var("self".to_string()), pos });
         full_args.extend_from_slice(args);
         self.call(&full, &full_args, pos, in_expr)
     }
@@ -253,8 +297,7 @@ impl<'p> Checker<'p> {
             }
             return unknown(pos);
         };
-        let ctor_full = format!("{}{}new", class, crate::classes::SEP);
-        let Some(&s) = self.sub_by_name.get(&ctor_full) else {
+        let Some(s) = class_method(cid, "new") else {
             if !args.is_empty() {
                 self.report_structural(
                     Error::new(pos, format!("class \"{}\" has no constructor, so new {}() takes no values", class, class))

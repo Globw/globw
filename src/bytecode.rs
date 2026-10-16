@@ -109,6 +109,11 @@ pub enum Op {
     Call { func: u32, first: Reg, argc: u16, dst: Reg },
     Ret(Reg),
     Read(Reg, BaseType),
+    /// virtual method call: self is the register `first`; its runtime class
+    /// and the dispatch `slot` pick the function via the module's vtable
+    CallMethod { slot: u32, first: Reg, argc: u16, dst: Reg },
+    /// dst = (object at `obj` is of class `class` or a subclass)
+    IsClass(Reg, Reg, u32),
     /// calls built-in `id` (see `builtins::Builtin::from_id`) with `argc`
     /// registers from `first`; a function's result goes to `dst`
     Builtin { id: u16, first: Reg, argc: u16, dst: Reg },
@@ -181,6 +186,8 @@ impl Op {
             Op::Append(..) => "Append",
             Op::Remove(..) => "Remove",
             Op::Call { .. } => "Call",
+            Op::CallMethod { .. } => "CallMethod",
+            Op::IsClass(..) => "IsClass",
             Op::Ret(..) => "Ret",
             Op::Read(..) => "Read",
             Op::Builtin { .. } => "Builtin",
@@ -210,4 +217,8 @@ pub struct Module {
     /// per class, how each field of a fresh object is initialized (see
     /// `tir::class_field_kinds`); precomputed so `new` allocates no extra memory
     pub class_fields: Vec<Vec<u8>>,
+    /// per class, the dispatch row: method slot -> function index, or -1
+    pub vtable: Vec<Vec<i32>>,
+    /// per class, the parent class id, or -1
+    pub class_parents: Vec<i32>,
 }
