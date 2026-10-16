@@ -19,7 +19,13 @@ pub fn compile(p: &TProgram) -> Module {
             FnCompiler::new(f, globals, &mut strings).finish()
         })
         .collect();
-    Module { functions, strings: strings.list, globals: p.globals.iter().map(|s| s.name.clone()).collect() }
+    let class_fields = (0..crate::tir::class_count() as u16).map(crate::tir::class_field_kinds).collect();
+    Module {
+        functions,
+        strings: strings.list,
+        globals: p.globals.iter().map(|s| s.name.clone()).collect(),
+        class_fields,
+    }
 }
 
 #[derive(Default)]
@@ -47,6 +53,18 @@ fn alloc(shape: &Shape, dst: Reg) -> Option<Op> {
         Shape::List => Some(Op::NewList(dst)),
         Shape::Dict => Some(Op::NewDict(dst)),
         Shape::Scalar => None,
+    }
+}
+
+/// The comparison to use when the two operands are swapped (`a < b` becomes `b > a`).
+fn swap_cmp(c: Cmp) -> Cmp {
+    match c {
+        Cmp::Lt => Cmp::Gt,
+        Cmp::Gt => Cmp::Lt,
+        Cmp::LtEq => Cmp::GtEq,
+        Cmp::GtEq => Cmp::LtEq,
+        Cmp::Eq => Cmp::Eq,
+        Cmp::NotEq => Cmp::NotEq,
     }
 }
 
@@ -176,7 +194,11 @@ impl<'a> FnCompiler<'a> {
 
     fn patch(&mut self, at: usize, target: u32) {
         match &mut self.code[at] {
-            Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) => *t = target,
+            Op::Jump(t)
+            | Op::JumpIfFalse(_, t)
+            | Op::JumpIfTrue(_, t)
+            | Op::JumpUnlessI(_, _, _, t)
+            | Op::JumpUnlessIImm(_, _, _, t) => *t = target,
             Op::ForInit { exit, .. } => *exit = target,
             other => panic!("internal error: cannot patch {:?}", other),
         }
@@ -197,6 +219,14 @@ impl<'a> FnCompiler<'a> {
     fn jump_unless(&mut self, c: &TExpr) -> usize {
         if let TExprKind::Binary(op, BaseType::Int, a, b) = &c.kind {
             if let Some(cmp) = cmp_of(*op) {
+                if let TExprKind::Int(n) = b.kind {
+                    let x = self.operand(a);
+                    return self.emit(Op::JumpUnlessIImm(cmp, x, n, 0), c.pos);
+                }
+                if let TExprKind::Int(n) = a.kind {
+                    let y = self.operand(b);
+                    return self.emit(Op::JumpUnlessIImm(swap_cmp(cmp), y, n, 0), c.pos);
+                }
                 let x = self.operand(a);
                 let y = self.operand(b);
                 return self.emit(Op::JumpUnlessI(cmp, x, y, 0), c.pos);
@@ -204,6 +234,41 @@ impl<'a> FnCompiler<'a> {
         }
         let r = self.operand(c);
         self.emit(Op::JumpIfFalse(r, 0), c.pos)
+    }
+
+    /// Emits `d = a <op> b` with a constant operand folded into the
+    /// instruction, avoiding a separate load. Returns false if no immediate
+    /// form applies (then the caller emits the register form).
+    fn try_int_imm(&mut self, op: BinOp, a: &TExpr, b: &TExpr, d: Reg, pos: Pos) -> bool {
+        let lit = |e: &TExpr| if let TExprKind::Int(n) = e.kind { Some(n) } else { None };
+        // the immediate must be the right operand; Add and Mul can swap, a
+        // comparison swaps its direction, everything else needs b constant
+        let (reg_expr, n, cmp) = if let Some(n) = lit(b) {
+            (a, n, cmp_of(op))
+        } else if let Some(n) = lit(a) {
+            match cmp_of(op) {
+                Some(c) => (b, n, Some(swap_cmp(c))),
+                None if matches!(op, BinOp::Add | BinOp::Mul) => (b, n, None),
+                None => return false,
+            }
+        } else {
+            return false;
+        };
+        if matches!(op, BinOp::IntDiv | BinOp::Mod) && n == 0 {
+            return false; // let the register form report division by zero
+        }
+        let r = self.operand(reg_expr);
+        let instr = match (op, cmp) {
+            (_, Some(c)) => Op::CmpIImm(c, d, r, n),
+            (BinOp::Add, _) => Op::AddIImm(d, r, n),
+            (BinOp::Sub, _) => Op::SubIImm(d, r, n),
+            (BinOp::Mul, _) => Op::MulIImm(d, r, n),
+            (BinOp::IntDiv, _) => Op::DivIImm(d, r, n),
+            (BinOp::Mod, _) => Op::ModIImm(d, r, n),
+            _ => return false,
+        };
+        self.emit(instr, pos);
+        true
     }
 
     fn collection(&mut self, p: Place, pos: Pos) -> Reg {
@@ -276,6 +341,7 @@ impl<'a> FnCompiler<'a> {
                 self.emit(Op::ToStr(d, r), pos);
             }
             TExprKind::Binary(op @ (BinOp::And | BinOp::Or), _, a, b) => self.logic(*op, a, b, d, pos),
+            TExprKind::Binary(op, BaseType::Int, a, b) if self.try_int_imm(*op, a, b, d, pos) => {}
             TExprKind::Binary(op, t, a, b) => {
                 let x = self.operand(a);
                 let y = self.operand(b);
@@ -641,8 +707,9 @@ mod tests {
     fn integer_conditions_use_fused_compare_and_jump() {
         let module = crate::compile("variables:\n    i as int\ni = 0\nwhile(i < 3)\n    i = i + 1\nend loop\n").unwrap();
         let code = &module.functions[0].code;
-        assert!(code.iter().any(|op| matches!(op, crate::bytecode::Op::JumpUnlessI(..))), "{:?}", code);
-        assert!(!code.iter().any(|op| matches!(op, crate::bytecode::Op::CmpI(..))), "{:?}", code);
+        use crate::bytecode::Op;
+        assert!(code.iter().any(|op| matches!(op, Op::JumpUnlessI(..) | Op::JumpUnlessIImm(..))), "{:?}", code);
+        assert!(!code.iter().any(|op| matches!(op, Op::CmpI(..) | Op::CmpIImm(..))), "{:?}", code);
     }
 
     #[test]
@@ -755,6 +822,24 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn immediate_integer_operands() {
+        // a constant operand is folded into the instruction, with no LoadInt
+        let module = crate::compile("variables:
+    n as int
+n = 7
+output(n - 2, \" \", n mod 3, \" \", 3 * n)
+").unwrap();
+        use crate::bytecode::Op;
+        let code = &module.functions[0].code;
+        assert!(code.iter().any(|op| matches!(op, Op::SubIImm(..))), "{:?}", code);
+        assert!(code.iter().any(|op| matches!(op, Op::ModIImm(..))), "{:?}", code);
+        assert!(code.iter().any(|op| matches!(op, Op::MulIImm(..))), "{:?}", code);
+        assert_eq!(run_src("output(7 - 2, \" \", (-7) div 2, \" \", (-7) mod 3, \" \", 2 - 7)
+", ""), "5 -3 -1 -5
+");
     }
 
     #[test]

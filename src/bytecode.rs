@@ -54,6 +54,16 @@ pub enum Op {
     JumpIfTrue(Reg, u32),
     /// jumps to the target when the integer comparison a <cmp> b is false
     JumpUnlessI(Cmp, Reg, Reg, u32),
+    /// jumps to the target when `a <cmp> imm` is false
+    JumpUnlessIImm(Cmp, Reg, i64, u32),
+    /// dst = a <op> imm, for integer arithmetic with a constant operand
+    AddIImm(Reg, Reg, i64),
+    SubIImm(Reg, Reg, i64),
+    MulIImm(Reg, Reg, i64),
+    DivIImm(Reg, Reg, i64),
+    ModIImm(Reg, Reg, i64),
+    /// dst = (a <cmp> imm)
+    CmpIImm(Cmp, Reg, Reg, i64),
     /// fails if step is 0; jumps to `exit` if the loop must not run at all
     ForInit { var: Reg, end: Reg, step: Reg, exit: u32 },
     /// var += step; jumps back to `body` while the loop continues
@@ -104,6 +114,76 @@ pub enum Op {
     Ensure { flag: u16, func: u32 },
 }
 
+impl Op {
+    /// The variant name, for the opcode profiler.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Op::LoadInt(..) => "LoadInt",
+            Op::LoadReal(..) => "LoadReal",
+            Op::LoadBool(..) => "LoadBool",
+            Op::LoadStr(..) => "LoadStr",
+            Op::Move(..) => "Move",
+            Op::AddI(..) => "AddI",
+            Op::SubI(..) => "SubI",
+            Op::MulI(..) => "MulI",
+            Op::DivI(..) => "DivI",
+            Op::ModI(..) => "ModI",
+            Op::AddR(..) => "AddR",
+            Op::SubR(..) => "SubR",
+            Op::MulR(..) => "MulR",
+            Op::DivR(..) => "DivR",
+            Op::Concat(..) => "Concat",
+            Op::NegI(..) => "NegI",
+            Op::NegR(..) => "NegR",
+            Op::Not(..) => "Not",
+            Op::ToReal(..) => "ToReal",
+            Op::ToStr(..) => "ToStr",
+            Op::CmpI(..) => "CmpI",
+            Op::CmpR(..) => "CmpR",
+            Op::CmpS(..) => "CmpS",
+            Op::CmpB(..) => "CmpB",
+            Op::Jump(..) => "Jump",
+            Op::JumpIfFalse(..) => "JumpIfFalse",
+            Op::JumpIfTrue(..) => "JumpIfTrue",
+            Op::JumpUnlessI(..) => "JumpUnlessI",
+            Op::JumpUnlessIImm(..) => "JumpUnlessIImm",
+            Op::AddIImm(..) => "AddIImm",
+            Op::SubIImm(..) => "SubIImm",
+            Op::MulIImm(..) => "MulIImm",
+            Op::DivIImm(..) => "DivIImm",
+            Op::ModIImm(..) => "ModIImm",
+            Op::CmpIImm(..) => "CmpIImm",
+            Op::ForInit { .. } => "ForInit",
+            Op::ForStep { .. } => "ForStep",
+            Op::Print(..) => "Print",
+            Op::PrintLn => "PrintLn",
+            Op::GetGlobal(..) => "GetGlobal",
+            Op::SetGlobal(..) => "SetGlobal",
+            Op::NewArray(..) => "NewArray",
+            Op::NewMatrix(..) => "NewMatrix",
+            Op::NewList(..) => "NewList",
+            Op::NewDict(..) => "NewDict",
+            Op::NewObject(..) => "NewObject",
+            Op::GetField(..) => "GetField",
+            Op::SetField(..) => "SetField",
+            Op::GetElem(..) => "GetElem",
+            Op::SetElem(..) => "SetElem",
+            Op::GetElem2(..) => "GetElem2",
+            Op::SetElem2(..) => "SetElem2",
+            Op::CharAt(..) => "CharAt",
+            Op::Length(..) => "Length",
+            Op::Append(..) => "Append",
+            Op::Remove(..) => "Remove",
+            Op::Call { .. } => "Call",
+            Op::Ret(..) => "Ret",
+            Op::Read(..) => "Read",
+            Op::Builtin { .. } => "Builtin",
+            Op::RetNone => "RetNone",
+            Op::Ensure { .. } => "Ensure",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
@@ -121,4 +201,7 @@ pub struct Module {
     pub strings: Vec<Rc<str>>,
     /// global variable names, for run-time error messages
     pub globals: Vec<String>,
+    /// per class, how each field of a fresh object is initialized (see
+    /// `tir::class_field_kinds`); precomputed so `new` allocates no extra memory
+    pub class_fields: Vec<Vec<u8>>,
 }

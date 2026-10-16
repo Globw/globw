@@ -599,7 +599,8 @@ The project is a Cargo project at the repository root, with one module per phase
 **Command line**
 ```
 globw program.gw           run
-globw --check program.gw   only check for errors, do not run
+globw --check program.gw
+       globw --profile program.gw  (counts how often each opcode runs)   only check for errors, do not run
 ```
 
 ## 9. Tests

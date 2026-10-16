@@ -3,11 +3,12 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (check_only, file) = match args.as_slice() {
-        [f] if f != "--check" => (false, f),
-        [flag, f] if flag == "--check" => (true, f),
+    let (check_only, profile, file) = match args.as_slice() {
+        [f] if !f.starts_with("--") => (false, false, f),
+        [flag, f] if flag == "--check" => (true, false, f),
+        [flag, f] if flag == "--profile" => (false, true, f),
         _ => {
-            eprintln!("Usage: globw program.gw\n       globw --check program.gw");
+            eprintln!("Usage: globw program.gw\n       globw --check program.gw\n       globw --profile program.gw");
             return ExitCode::from(3);
         }
     };
@@ -48,6 +49,24 @@ fn main() -> ExitCode {
     let mut input = stdin.lock();
     let stdout = io::stdout();
     let mut output = BufWriter::new(stdout.lock());
+    if profile {
+        let result = globw::run_profiled(&module, &mut input, &mut output);
+        let _ = output.flush();
+        return match result {
+            Ok(counts) => {
+                let total: u64 = counts.iter().map(|(_, n)| n).sum();
+                eprintln!("\n--- opcode profile: {} instructions ---", total);
+                for (name, n) in counts.iter().take(20) {
+                    eprintln!("{:>12}  {:>5.1}%  {}", n, 100.0 * *n as f64 / total.max(1) as f64, name);
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprint!("{}", e.render_in(&files));
+                ExitCode::from(2)
+            }
+        };
+    }
     let result = globw::run(&module, &mut input, &mut output);
     let _ = output.flush();
     match result {

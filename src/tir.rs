@@ -116,6 +116,10 @@ pub fn set_classes(list: Vec<ClassInfo>) {
     CLASSES.with(|t| *t.borrow_mut() = list);
 }
 
+pub fn class_count() -> usize {
+    CLASSES.with(|t| t.borrow().len())
+}
+
 pub fn class_name(id: u16) -> String {
     CLASSES.with(|t| t.borrow()[id as usize].name.clone())
 }

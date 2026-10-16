@@ -1,6 +1,7 @@
 //! The virtual machine: executes the register bytecode produced by the compiler.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::rc::Rc;
 
@@ -304,6 +305,7 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
         env: Env::default(),
+        prof: None,
     };
     let result = vm.execute(input, output);
     let _ = output.flush();
@@ -313,12 +315,40 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
     result
 }
 
+/// Runs the program counting how often each opcode executes, for the
+/// `--profile` flag. Returns the counts, most frequent first.
+pub fn run_profiled(
+    module: &Module,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+) -> Result<Vec<(&'static str, u64)>, Error> {
+    let mut vm = Vm {
+        module,
+        regs: Vec::with_capacity(1 << 12),
+        globals: vec![Value::Null; module.globals.len()],
+        frames: Vec::new(),
+        env: Env::default(),
+        prof: Some(HashMap::new()),
+    };
+    let result = vm.execute(input, output);
+    let _ = output.flush();
+    if result.is_ok() {
+        vm.env.finish();
+    }
+    result?;
+    let mut counts: Vec<(&'static str, u64)> = vm.prof.unwrap().into_iter().collect();
+    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    Ok(counts)
+}
+
 struct Vm<'m> {
     module: &'m Module,
     regs: Vec<Value>,
     globals: Vec<Value>,
     frames: Vec<Frame>,
     env: Env,
+    /// when profiling: how many times each opcode ran
+    prof: Option<HashMap<&'static str, u64>>,
 }
 
 impl<'m> Vm<'m> {
@@ -348,6 +378,9 @@ impl<'m> Vm<'m> {
         loop {
             let op = code[ip];
             ip += 1;
+            if let Some(p) = self.prof.as_mut() {
+                *p.entry(op.name()).or_insert(0) += 1;
+            }
             match op {
                 Op::LoadInt(d, n) => reg!(d) = Value::Int(n),
                 Op::LoadReal(d, r) => reg!(d) = Value::Real(r),
@@ -448,6 +481,32 @@ impl<'m> Vm<'m> {
                         ip = t as usize;
                     }
                 }
+                Op::JumpUnlessIImm(c, a, n, t) => {
+                    if !compare(c, &int(&reg!(a)), &n) {
+                        ip = t as usize;
+                    }
+                }
+                Op::CmpIImm(c, d, a, n) => reg!(d) = Value::Bool(compare(c, &int(&reg!(a)), &n)),
+                Op::AddIImm(d, a, n) => match int(&reg!(a)).checked_add(n) {
+                    Some(v) => reg!(d) = Value::Int(v),
+                    None => fail!(OVERFLOW),
+                },
+                Op::SubIImm(d, a, n) => match int(&reg!(a)).checked_sub(n) {
+                    Some(v) => reg!(d) = Value::Int(v),
+                    None => fail!(OVERFLOW),
+                },
+                Op::MulIImm(d, a, n) => match int(&reg!(a)).checked_mul(n) {
+                    Some(v) => reg!(d) = Value::Int(v),
+                    None => fail!(OVERFLOW),
+                },
+                Op::DivIImm(d, a, n) => match int(&reg!(a)).checked_div(n) {
+                    Some(v) => reg!(d) = Value::Int(v),
+                    None => fail!(OVERFLOW),
+                },
+                Op::ModIImm(d, a, n) => match int(&reg!(a)).checked_rem(n) {
+                    Some(v) => reg!(d) = Value::Int(v),
+                    None => fail!(OVERFLOW),
+                },
                 Op::ForInit { var, end, step, exit } => {
                     let s = int(&reg!(step));
                     if s == 0 {
@@ -496,9 +555,9 @@ impl<'m> Vm<'m> {
                 Op::NewList(d) => reg!(d) = Value::Seq(Rc::new(RefCell::new(Vec::new()))),
                 Op::NewDict(d) => reg!(d) = Value::Dict(Rc::new(RefCell::new(Dict::default()))),
                 Op::NewObject(d, class, _n) => {
-                    let fields = crate::tir::class_field_kinds(class as u16)
-                        .into_iter()
-                        .map(|kind| match kind {
+                    let fields = m.class_fields[class as usize]
+                        .iter()
+                        .map(|&kind| match kind {
                             1 => Value::Seq(Rc::new(RefCell::new(Vec::new()))),
                             2 => Value::Dict(Rc::new(RefCell::new(Dict::default()))),
                             3 => Value::Int(0),
@@ -717,6 +776,7 @@ mod tests {
             functions: vec![Function { name: "main".into(), n_params: 0, n_regs, code, positions }],
             strings: strings.iter().map(|s| Rc::from(*s)).collect(),
             globals: vec![],
+            class_fields: vec![],
         };
         let mut out = Vec::new();
         run(&module, &mut input.as_bytes(), &mut out)?;
@@ -899,6 +959,7 @@ mod tests {
             ],
             strings: vec![],
             globals: vec!["g".into()],
+            class_fields: vec![],
         }
     }
 

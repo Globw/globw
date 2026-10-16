@@ -44,6 +44,15 @@ pub fn compile_program(
     (files, result)
 }
 
+/// Runs a compiled program with opcode profiling; returns the counts.
+pub fn run_profiled(
+    module: &bytecode::Module,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+) -> Result<Vec<(&'static str, u64)>, Error> {
+    vm::run_profiled(module, input, output)
+}
+
 /// Runs a compiled program, reading `input()` lines from `input`.
 pub fn run(module: &bytecode::Module, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {
     vm::run(module, input, output)
