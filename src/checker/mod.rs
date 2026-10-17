@@ -16,7 +16,7 @@ use crate::tir::*;
 
 pub(crate) const FLOAT_TO_INT_HINT: &str = "use round(x) to turn a float into an int, or div to divide integers";
 
-pub const BUILTINS: [&str; 5] = ["input", "output", "length", "append", "remove"];
+pub const BUILTINS: [&str; 8] = ["input", "output", "length", "append", "remove", "transform", "keep", "reduce"];
 
 /// Names of all built-ins, which cannot be used for variables or functions.
 pub fn is_builtin_name(name: &str) -> bool {
@@ -53,7 +53,7 @@ impl Var {
 
     pub(crate) fn full_type(&self) -> Type {
         match self.shape {
-            Shape::Scalar if matches!(self.full, Type::Object(_)) => self.full,
+            Shape::Scalar if matches!(self.full, Type::Object(_) | Type::Func(_)) => self.full,
             Shape::Scalar => self.ty.map_or(Type::Unknown, Type::Base),
             Shape::Array(_) => Type::Array(self.ty),
             Shape::Matrix(..) => Type::Matrix(self.ty),

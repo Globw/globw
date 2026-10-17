@@ -114,6 +114,10 @@ pub enum Op {
     CallMethod { slot: u32, first: Reg, argc: u16, dst: Reg },
     /// dst = (object at `obj` is of class `class` or a subclass)
     IsClass(Reg, Reg, u32),
+    /// load a function value (its compiled function index) into a register
+    LoadFunc(Reg, u32),
+    /// call the function whose index is the value in register `func`
+    CallValue { func: Reg, first: Reg, argc: u16, dst: Reg },
     /// calls built-in `id` (see `builtins::Builtin::from_id`) with `argc`
     /// registers from `first`; a function's result goes to `dst`
     Builtin { id: u16, first: Reg, argc: u16, dst: Reg },
@@ -195,6 +199,8 @@ impl Op {
             Op::Call { .. } => "Call",
             Op::CallMethod { .. } => "CallMethod",
             Op::IsClass(..) => "IsClass",
+            Op::LoadFunc(..) => "LoadFunc",
+            Op::CallValue { .. } => "CallValue",
             Op::Ret(..) => "Ret",
             Op::Read(..) => "Read",
             Op::Builtin { .. } => "Builtin",

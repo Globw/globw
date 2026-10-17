@@ -444,6 +444,7 @@ impl Scope<'_> {
                 args.iter_mut().for_each(|e| self.expr(e));
             }
             ExprKind::IsType(b, _) => self.expr(b),
+            ExprKind::FuncRef(n) => *n = self.resolve(n, crate::errors::Pos::default(), true),
             ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_) => {}
         }
     }

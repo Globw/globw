@@ -12,6 +12,8 @@ pub(crate) struct Parser {
     pub(crate) depth: u32,
     /// operators in the current statement's expressions
     pub(crate) ops: u32,
+    /// anonymous functions (lambdas) lifted to top-level subprograms
+    pub(crate) lambdas: Vec<Subprogram>,
 }
 
 /// Deeper nesting would overflow the stack of the later phases.
@@ -110,7 +112,7 @@ fn is_constant(e: &Expr) -> bool {
 }
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
-    Parser { t: tokens, i: 0, depth: 0, ops: 0 }.program()
+    Parser { t: tokens, i: 0, depth: 0, ops: 0, lambdas: Vec::new() }.program()
 }
 
 impl Parser {
@@ -202,6 +204,7 @@ impl Parser {
             }
             self.skip_newlines();
         }
+        p.subprograms.append(&mut self.lambdas);
         Ok(p)
     }
 
@@ -366,6 +369,9 @@ impl Parser {
     /// type. Parameters write arrays as `int[]` and matrices as `int[,]`.
     fn type_spec(&mut self, param: bool) -> Result<(Shape, crate::tir::BaseType, Type), Error> {
         use crate::tir::BaseType;
+        if self.is(&Tok::Function) {
+            return Ok((Shape::Scalar, BaseType::Int, self.func_type_spec()?));
+        }
         if self.is_name("list") || self.is_name("dict") {
             let full = self.collection_type()?;
             let shape = if matches!(full, Type::Dict(..)) { Shape::Dict } else { Shape::List };
@@ -441,7 +447,9 @@ impl Parser {
 
     /// The type of the elements of a list or the values of a dictionary.
     fn element_type(&mut self) -> Result<Type, Error> {
-        if self.is_name("list") || self.is_name("dict") {
+        if self.is(&Tok::Function) {
+            self.func_type_spec()
+        } else if self.is_name("list") || self.is_name("dict") {
             self.collection_type()
         } else if let Tok::Name(n) = self.tok() {
             if is_base_type_word(n) {
@@ -505,6 +513,103 @@ impl Parser {
         Ok(Class { name, parent, fields, methods, pos })
     }
 
+    fn param_list(&mut self) -> Result<Vec<Decl>, Error> {
+        self.expect(&Tok::LParen, "\"(\"")?;
+        let mut params = Vec::new();
+        if self.accept(&Tok::RParen) {
+            return Ok(params);
+        }
+        loop {
+            let p = self.pos();
+            let name = match self.tok().clone() {
+                Tok::Name(n) => {
+                    self.advance();
+                    n
+                }
+                other => return self.fail(format!("expected a parameter name, found {}", describe(&other))),
+            };
+            if !self.is_name("as") {
+                return Err(Error::new(p, format!("parameter \"{}\" needs a type, like {} as int", name, name)));
+            }
+            self.advance();
+            let (shape, ty, full) = self.type_spec(true)?;
+            let default = if self.accept(&Tok::Assign) {
+                let e = self.expr()?;
+                if !is_constant(&e) {
+                    return Err(Error::new(e.pos, "a default value must be written directly, like 0, \"text\" or []"));
+                }
+                Some(e)
+            } else {
+                if params.iter().any(|d: &Decl| d.default.is_some()) {
+                    return Err(Error::new(p, format!("\"{}\" needs a default value: it comes after parameters that have one", name))
+                        .with_hint(format!("write {} as ... = value, or move it before them", name)));
+                }
+                None
+            };
+            params.push(Decl { name, shape, ty, full, default, pos: p });
+            if self.accept(&Tok::RParen) {
+                return Ok(params);
+            }
+            self.expect(&Tok::Comma, "\",\" or \")\"")?;
+        }
+    }
+
+    /// A function used as a value: `function(x as int) as int gives x * x`, or a
+    /// block form closed by `end function` / `end procedure`. It is lifted to a
+    /// top-level subprogram and the expression becomes a reference to it.
+    fn lambda(&mut self, pos: Pos) -> Result<Expr, Error> {
+        // the `function` token was already consumed by atom()
+        let params = self.param_list()?;
+        let ret = if self.is_name("as") {
+            self.advance();
+            Some(self.element_type()?)
+        } else {
+            None
+        };
+        let (locals, body) = if self.is_name("gives") {
+            self.advance();
+            let e = self.expr()?;
+            (Vec::new(), vec![Stmt { kind: StmtKind::Return(Some(e)), pos }])
+        } else {
+            self.end_stmt()?;
+            self.skip_newlines();
+            let locals = self.local_decls()?;
+            let end = if ret.is_some() { Tok::EndFunction } else { Tok::EndProcedure };
+            let (what, closer) =
+                if ret.is_some() { ("function", "end function") } else { ("procedure", "end procedure") };
+            let body = self.block(&[end], pos, what, closer, None)?;
+            self.advance();
+            (locals, body)
+        };
+        let name = format!("lambda{}{}", crate::classes::SEP, self.lambdas.len());
+        self.lambdas.push(Subprogram { name: name.clone(), is_function: ret.is_some(), params, ret, locals, body, pos });
+        Ok(Expr { kind: ExprKind::FuncRef(name), pos })
+    }
+
+    /// A function type: `function(int, string) as float`, or without `as` for
+    /// a procedure value.
+    fn func_type_spec(&mut self) -> Result<Type, Error> {
+        self.advance(); // function
+        self.expect(&Tok::LParen, "\"(\"")?;
+        let mut params = Vec::new();
+        if !self.accept(&Tok::RParen) {
+            loop {
+                params.push(self.element_type()?);
+                if self.accept(&Tok::RParen) {
+                    break;
+                }
+                self.expect(&Tok::Comma, "\",\" or \")\"")?;
+            }
+        }
+        let ret = if self.is_name("as") {
+            self.advance();
+            Some(self.element_type()?)
+        } else {
+            None
+        };
+        Ok(crate::tir::func_type(params, ret))
+    }
+
     fn subprogram(&mut self) -> Result<Subprogram, Error> {
         let is_function = self.advance().tok == Tok::Function;
         let pos = self.pos();
@@ -519,43 +624,7 @@ impl Parser {
             }
             other => return self.fail(format!("expected the function name, found {}", describe(&other))),
         };
-        self.expect(&Tok::LParen, "\"(\"")?;
-        let mut params = Vec::new();
-        if !self.accept(&Tok::RParen) {
-            loop {
-                let p = self.pos();
-                let name = match self.tok().clone() {
-                    Tok::Name(n) => {
-                        self.advance();
-                        n
-                    }
-                    other => return self.fail(format!("expected a parameter name, found {}", describe(&other))),
-                };
-                if !self.is_name("as") {
-                    return Err(Error::new(p, format!("parameter \"{}\" needs a type, like {} as int", name, name)));
-                }
-                self.advance();
-                let (shape, ty, full) = self.type_spec(true)?;
-                let default = if self.accept(&Tok::Assign) {
-                    let e = self.expr()?;
-                    if !is_constant(&e) {
-                        return Err(Error::new(e.pos, "a default value must be written directly, like 0, \"text\" or []"));
-                    }
-                    Some(e)
-                } else {
-                    if params.iter().any(|d: &Decl| d.default.is_some()) {
-                        return Err(Error::new(p, format!("\"{}\" needs a default value: it comes after parameters that have one", name))
-                            .with_hint(format!("write {} as ... = value, or move it before them", name)));
-                    }
-                    None
-                };
-                params.push(Decl { name, shape, ty, full, default, pos: p });
-                if self.accept(&Tok::RParen) {
-                    break;
-                }
-                self.expect(&Tok::Comma, "\",\" or \")\"")?;
-            }
-        }
+        let params = self.param_list()?;
         let ret = if is_function {
             if !self.is_name("as") {
                 return self.fail("a function must declare its return type, like ) as int");
@@ -1068,6 +1137,7 @@ impl Parser {
                 }
                 ExprKind::ListLit(items)
             }
+            Tok::Function => return self.lambda(t.pos),
             Tok::New => {
                 let class = match self.tok().clone() {
                     Tok::Name(n) => {
@@ -1161,11 +1231,12 @@ mod tests {
             ExprKind::Field(b, f) => format!("{}.{}", sx(b), f),
             ExprKind::MethodCall(b, m, a) => format!("{}.{}({})", sx(b), m, list(a)),
             ExprKind::IsType(b, c) => format!("({} is {})", sx(b), c),
+            ExprKind::FuncRef(n) => format!("@{}", n),
         }
     }
 
     fn expr_of(src: &str) -> Result<String, Error> {
-        let mut p = Parser { t: tokenize(src).unwrap(), i: 0, depth: 0, ops: 0 };
+        let mut p = Parser { t: tokenize(src).unwrap(), i: 0, depth: 0, ops: 0, lambdas: Vec::new() };
         p.expr().map(|e| sx(&e))
     }
 

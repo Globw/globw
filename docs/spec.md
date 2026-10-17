@@ -41,7 +41,7 @@ output(double(n))
 
 ## 3. Lexical rules
 
-- **Keywords are lowercase only**: `if`, `else`, `end if`, `while`, `for`, `from`, `to`, `step`, `repeat`, `end loop`, `function`, `end function`, `procedure`, `end procedure`, `return`, `global`, `break`, `continue`, `try`, `catch`, `always`, `fail`, `and`, `or`, `not`, `div`, `mod`, `true`, `false`. `import`, `lazy` (at the start of a line) and `in` (in `for`) are keywords only where they are used that way.
+- **Keywords are lowercase only**: `if`, `else`, `end if`, `while`, `for`, `from`, `to`, `step`, `repeat`, `end loop`, `function`, `end function`, `procedure`, `end procedure`, `return`, `global`, `break`, `continue`, `try`, `catch`, `always`, `fail`, `gives`, `and`, `or`, `not`, `div`, `mod`, `true`, `false`. `import`, `lazy` (at the start of a line) and `in` (in `for`) are keywords only where they are used that way.
   The same word in another case (`IF`, `If`) is not a keyword. It is treated as a name, and the resulting error suggests the lowercase form.
 - **Declarations**: `variables:`, `as`, `of` and the type names `int`, `float`, `string`, `bool` are written in lowercase, exactly like that.
 - **Built-in procedures and functions** are lowercase too (`input`, `output`, `length`, `window`, `rect`…). All keywords and built-in names are reserved: they cannot name variables or functions.
@@ -574,6 +574,54 @@ fail "the balance cannot be negative"   ' raise your own error
 - If no `try` catches it, the program stops with the error, as before.
 - Leaving a `try` with `return`, `break` or `continue` removes its handler correctly.
 - Note: if the `catch` block itself raises an error, the `always` block is skipped and the error propagates outward.
+
+### 6.15 Functions as values
+
+A function can be stored in a variable, passed to another function, and called
+through the variable. There are also short anonymous functions (lambdas).
+
+```
+variables:
+    op as function(int, int) as int     ' a function type
+
+function add(a as int, b as int) as int
+    return a + b
+end function
+
+op = add                                ' a named function used as a value
+output(op(3, 4))                         ' called through the variable
+
+' a lambda: one line with "gives", or a block closed by end function
+double = function(x as int) as int gives x * 2
+noisy = function(x as int) as int
+    output("seen ", x)
+    return x
+end function
+```
+
+- **Function type:** `function(T1, T2) as R` (or `function(T1, T2)` for a value
+  that returns nothing). It can be the type of a variable, parameter, field,
+  list element or dictionary value.
+- A **named function** used where a value is expected becomes a function value.
+  Calling it through a variable passes all its parameters (no defaults or names).
+- A **lambda** is `function(params) as R gives expression` (one line) or the
+  block form `function(params) as R ... end function`. A lambda is a value.
+- **Limit (for now):** a lambda does not capture the variables around it — it
+  uses only its own parameters, globals and other functions. (Planned next.)
+
+**List operations** that take a function:
+
+| Command | Result | Effect |
+|---|---|---|
+| `transform(list, f)` | `list of R` | a new list with `f` applied to each element (map) |
+| `keep(list, f)` | same list type | a new list with the elements where `f` is true (filter) |
+| `reduce(list, f, start)` | the accumulator type | folds the list to one value: `f(acc, element)` |
+
+```
+squares = transform(nums, function(x as int) as int gives x * x)
+odds    = keep(nums, function(x as int) as bool gives x mod 2 == 1)
+total   = reduce(nums, function(acc as int, x as int) as int gives acc + x, 0)
+```
 
 ## 7. Errors
 

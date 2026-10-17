@@ -23,6 +23,8 @@ pub enum Value {
     Matrix(Rc<RefCell<Matrix>>),
     Dict(Rc<RefCell<Dict>>),
     Object(Rc<RefCell<Obj>>),
+    /// a function value: the index of a compiled function
+    Func(u32),
 }
 
 /// An object: its class id and the values of its fields, in slot order.
@@ -245,6 +247,7 @@ fn repr_at(v: &Value, depth: usize) -> String {
                 .collect();
             format!("{{{}}}", pairs.join(", "))
         }
+        Value::Func(_) => "<function>".to_string(),
         Value::Object(o) => {
             let o = o.borrow();
             let names = crate::tir::class_field_names(o.class);
@@ -750,6 +753,33 @@ impl<'m> Vm<'m> {
                         c = m.class_parents[c as usize];
                     }
                     reg!(d) = Value::Bool(found);
+                }
+                Op::LoadFunc(d, index) => reg!(d) = Value::Func(index),
+                Op::CallValue { func: fr, first, argc, dst } => {
+                    if self.frames.len() >= MAX_CALL_DEPTH {
+                        fail!("too many nested calls (maybe a recursion that never ends)");
+                    }
+                    let f = match reg!(fr) {
+                        Value::Func(i) => i as usize,
+                        ref other => panic!("internal error: called a non-function {:?}", other),
+                    };
+                    let callee = &m.functions[f];
+                    let new_base = self.regs.len();
+                    let n_regs = callee.n_regs as usize;
+                    let start = base + first as usize;
+                    self.regs.reserve(n_regs);
+                    for k in 0..argc as usize {
+                        let v = self.regs[start + k].clone();
+                        self.regs.push(v);
+                    }
+                    for _ in argc as usize..n_regs {
+                        self.regs.push(Value::Null);
+                    }
+                    self.frames.push(Frame { func, ip, base, dst });
+                    func = f;
+                    code = &callee.code;
+                    ip = 0;
+                    base = new_base;
                 }
                 Op::Call { func: f, first, argc, dst } => {
                     if self.frames.len() >= MAX_CALL_DEPTH {

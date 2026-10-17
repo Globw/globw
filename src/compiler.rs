@@ -378,6 +378,15 @@ impl<'a> FnCompiler<'a> {
                 let r = self.operand(obj);
                 self.emit(Op::IsClass(d, r, *cid as u32), pos);
             }
+            TExprKind::FuncVal(index) => {
+                self.emit(Op::LoadFunc(d, *index as u32), pos);
+            }
+            TExprKind::CallVal { func, args } => {
+                let f = self.operand(func);
+                let first = self.args(args);
+                self.emit(Op::CallValue { func: f, first, argc: args.len() as u16, dst: d }, pos);
+            }
+            TExprKind::Hof { op, list, func, init } => self.hof(*op, list, func, init.as_deref(), d, pos),
             TExprKind::Length(x) => {
                 let r = self.operand(x);
                 self.emit(Op::Length(d, r), pos);
@@ -561,6 +570,12 @@ impl<'a> FnCompiler<'a> {
                 let dst = self.temp();
                 self.emit(Op::CallMethod { slot: *slot as u32, first, argc: args.len() as u16, dst }, *pos);
             }
+            TStmt::CallVal(func, args, pos) => {
+                let f = self.operand(func);
+                let first = self.args(args);
+                let dst = self.temp();
+                self.emit(Op::CallValue { func: f, first, argc: args.len() as u16, dst }, *pos);
+            }
             TStmt::Output(args) => {
                 for a in args {
                     let r = self.operand(a);
@@ -709,6 +724,68 @@ impl<'a> FnCompiler<'a> {
         for j in jumps.breaks {
             self.patch(j, end);
         }
+    }
+
+    /// Compiles a higher-order list operation into an inline loop that calls
+    /// the function value for each element.
+    fn hof(&mut self, op: crate::tir::HofOp, list: &TExpr, func: &TExpr, init: Option<&TExpr>, d: Reg, pos: Pos) {
+        use crate::tir::HofOp;
+        let result = self.temp();
+        match op {
+            HofOp::Reduce => self.expr_into(init.expect("reduce has an initial value"), result),
+            _ => {
+                self.emit(Op::NewList(result), pos);
+            }
+        }
+        let c = self.operand(list);
+        let f = self.operand(func);
+        let i = self.temp();
+        self.emit(Op::LoadInt(i, 1), pos);
+        let one = self.temp();
+        self.emit(Op::LoadInt(one, 1), pos);
+        let n = self.temp();
+        let top = self.here();
+        self.emit(Op::Length(n, c), pos);
+        let exit = self.emit(Op::JumpUnlessI(Cmp::LtEq, i, n, 0), pos);
+        // the call's arguments must sit in a contiguous block starting at `first`
+        let first = self.next;
+        let r = match op {
+            HofOp::Reduce => {
+                let a0 = self.temp();
+                self.emit(Op::Move(a0, result), pos);
+                let a1 = self.temp();
+                self.emit(Op::GetElem(a1, c, i), pos);
+                let r = self.temp();
+                self.emit(Op::CallValue { func: f, first, argc: 2, dst: r }, pos);
+                self.emit(Op::Move(result, r), pos);
+                r
+            }
+            _ => {
+                let x = self.temp();
+                self.emit(Op::GetElem(x, c, i), pos);
+                let r = self.temp();
+                self.emit(Op::CallValue { func: f, first, argc: 1, dst: r }, pos);
+                match op {
+                    HofOp::Transform => {
+                        self.emit(Op::Append(result, r), pos);
+                    }
+                    _ => {
+                        // keep: append the element only when the function says true
+                        let skip = self.emit(Op::JumpIfFalse(r, 0), pos);
+                        self.emit(Op::Append(result, x), pos);
+                        let after = self.here();
+                        self.patch(skip, after);
+                    }
+                }
+                r
+            }
+        };
+        let _ = r;
+        self.emit(Op::AddI(i, i, one), pos);
+        self.emit(Op::Jump(top), pos);
+        let end = self.here();
+        self.patch(exit, end);
+        self.emit(Op::Move(d, result), pos);
     }
 
     /// `for(x in c)`: goes by position while the position is within the
@@ -889,6 +966,31 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn first_class_functions_and_hofs() {
+        let src = r#"variables:
+    nums as list of int
+    op as function(int, int) as int
+    i as int
+function plus(a as int, b as int) as int
+    return a + b
+end function
+op = plus
+for(i from 1 to 5)
+    append(nums, i)
+end loop
+output(op(3, 4))
+output(transform(nums, function(x as int) as int gives x * x))
+output(keep(nums, function(x as int) as bool gives x mod 2 == 1))
+output(reduce(nums, plus, 0))
+"#;
+        assert_eq!(run_src(src, ""), "7
+[1, 4, 9, 16, 25]
+[1, 3, 5]
+15
+");
     }
 
     #[test]

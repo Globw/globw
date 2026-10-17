@@ -77,6 +77,7 @@ impl<'p> Checker<'p> {
                     self.check_assigned(p, name, pos);
                     TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos }
                 }
+                None if self.sub_by_name.contains_key(name) => self.func_value(name, pos),
                 None if name.contains('.') => self.field_chain(name, pos),
                 None => {
                     let err = self.undeclared(name, pos);
@@ -106,6 +107,7 @@ impl<'p> Checker<'p> {
                 self.get_field(object, field, pos)
             }
             ExprKind::MethodCall(obj, method, args) => self.method_on(obj, method, args, pos, true),
+            ExprKind::FuncRef(name) => self.func_value(name, pos),
             ExprKind::IsType(obj, class) => {
                 let object = self.expr(obj);
                 if !matches!(object.ty, Type::Object(_) | Type::Unknown) {
@@ -497,6 +499,7 @@ impl<'p> Checker<'p> {
                 ));
                 unknown(pos)
             }
+            "transform" | "keep" | "reduce" => self.hof(name, args, pos),
             _ => match crate::builtins::lookup(name) {
                 Some(b) => self.builtin_call(b, args, pos, true),
                 None => self.call(name, args, pos, true),

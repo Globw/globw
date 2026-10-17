@@ -35,6 +35,11 @@ pub(crate) fn declared_type(d: &Decl) -> Type {
 
 impl<'p> Checker<'p> {
     pub(crate) fn call(&mut self, name: &str, args: &[Expr], pos: Pos, in_expr: bool) -> TExpr {
+        if let Some(p) = self.lookup(name) {
+            if matches!(self.var(p).full_type(), Type::Func(_)) {
+                return self.call_value(p, name, args, pos, in_expr);
+            }
+        }
         let prog = self.prog;
         let Some(&s) = self.sub_by_name.get(name) else {
             if name.contains('.') {
@@ -326,6 +331,115 @@ impl<'p> Checker<'p> {
             out.push(if d.shape == Shape::Scalar { convert(t, Some(d.ty)) } else { t });
         }
         TExpr { kind: TExprKind::New { class: cid, ctor: Some(index), args: out }, ty: Type::Object(cid), pos }
+    }
+
+    /// A named function (or lambda) used as a value.
+    pub(crate) fn func_value(&mut self, name: &str, pos: Pos) -> TExpr {
+        let Some(&s) = self.sub_by_name.get(name) else {
+            let err = self.unknown_function(name, pos);
+            self.report_structural(err);
+            return unknown(pos);
+        };
+        let sub = &self.prog.subprograms[s];
+        let params: Vec<Type> = sub.params.iter().map(declared_type).collect();
+        let ret = sub.ret;
+        let ty = func_type(params, ret);
+        let inst = self.instance(s);
+        let index = self.reach(inst);
+        TExpr { kind: TExprKind::FuncVal(index), ty, pos }
+    }
+
+    /// A call `f(args)` where `f` is a variable holding a function value.
+    fn call_value(&mut self, p: Place, name: &str, args: &[Expr], pos: Pos, in_expr: bool) -> TExpr {
+        let fty = self.var(p).full_type();
+        let func = TExpr { kind: TExprKind::Load(p), ty: fty, pos };
+        let (params, ret) = func_parts(fty).expect("a function type");
+        if in_expr && ret.is_none() {
+            self.report_structural(Error::new(pos, format!("\"{}\" is a procedure value and returns nothing", name)));
+            return unknown(pos);
+        }
+        if args.len() != params.len() {
+            self.report_structural(Error::new(
+                pos,
+                format!("\"{}\" takes {} value{}, here it gets {}", name, params.len(), if params.len() == 1 { "" } else { "s" }, args.len()),
+            ));
+            return unknown(pos);
+        }
+        let targs: Vec<TExpr> = args.iter().map(|a| self.expr(a)).collect();
+        let mut out = Vec::with_capacity(targs.len());
+        for (k, (t, expected)) in targs.into_iter().zip(&params).enumerate() {
+            if !fits(*expected, t.ty) {
+                let e = Error::new(
+                    t.pos,
+                    format!("value {} passed to \"{}\" must be {}, here it is {}", k + 1, name, expected.full_name(), t.ty.full_name()),
+                );
+                self.report(float_hint(e, *expected, t.ty));
+            }
+            out.push(convert(t, expected.base()));
+        }
+        let ty = if in_expr { ret.unwrap_or(Type::Unknown) } else { Type::Unknown };
+        TExpr { kind: TExprKind::CallVal { func: Box::new(func), args: out }, ty, pos }
+    }
+
+    /// `transform` / `keep` / `reduce`: a list operation driven by a function.
+    pub(crate) fn hof(&mut self, name: &str, args: &[Expr], pos: Pos) -> TExpr {
+        use crate::tir::HofOp;
+        let op = match name {
+            "transform" => HofOp::Transform,
+            "keep" => HofOp::Keep,
+            _ => HofOp::Reduce,
+        };
+        let want = if op == HofOp::Reduce { 3 } else { 2 };
+        if args.len() != want {
+            self.report_structural(Error::new(pos, format!("{} takes {} values, here it gets {}", name, want, args.len())));
+            return unknown(pos);
+        }
+        let list = self.expr(&args[0]);
+        let func = self.expr(&args[1]);
+        let elem = match list.ty {
+            Type::Array(Some(b)) => Some(Type::Base(b)),
+            other => list_elem(other),
+        };
+        let (Some(elem), Some((fparams, fret))) = (elem, func_parts(func.ty)) else {
+            if list.ty != Type::Unknown && func.ty != Type::Unknown {
+                self.report(Error::new(
+                    pos,
+                    format!("{} works on a list with a function, here it gets {} and {}", name, list.ty.full_name(), func.ty.full_name()),
+                ));
+            }
+            return unknown(pos);
+        };
+        let matches_one = |params: &[Type], a: Type| params.len() == 1 && fits(params[0], a);
+        let (init, result) = match op {
+            HofOp::Transform => {
+                if !matches_one(&fparams, elem) || fret.is_none() {
+                    self.report(Error::new(pos, format!("transform needs a function({}) that returns a value", elem.full_name())));
+                    return unknown(pos);
+                }
+                (None, list_of(fret.expect("checked")))
+            }
+            HofOp::Keep => {
+                if !matches_one(&fparams, elem) || fret != Some(Type::Base(BaseType::Bool)) {
+                    self.report(Error::new(pos, format!("keep needs a function({}) as bool", elem.full_name())));
+                    return unknown(pos);
+                }
+                (None, list.ty)
+            }
+            HofOp::Reduce => {
+                let start = self.expr(&args[2]);
+                let acc = start.ty;
+                let ok = fparams.len() == 2 && fits(fparams[0], acc) && fits(fparams[1], elem) && fret == Some(acc);
+                if !ok {
+                    self.report(Error::new(
+                        pos,
+                        format!("reduce needs a function({}, {}) as {}", acc.full_name(), elem.full_name(), acc.full_name()),
+                    ));
+                    return unknown(pos);
+                }
+                (Some(Box::new(start)), acc)
+            }
+        };
+        TExpr { kind: TExprKind::Hof { op, list: Box::new(list), func: Box::new(func), init }, ty: result, pos }
     }
 
     pub(crate) fn unknown_function(&self, name: &str, pos: Pos) -> Error {

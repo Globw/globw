@@ -70,7 +70,7 @@
         },
         {
           "name": "keyword.control.globw",
-          "match": "\\b(lazy|import|break|continue|in|if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure|end\\s+class|end\\s+try|class|new|is|try|catch|always|fail)\\b"
+          "match": "\\b(lazy|import|break|continue|in|if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure|end\\s+class|end\\s+try|class|new|is|try|catch|always|fail|gives)\\b"
         },
         {
           "name": "storage.type.function.globw",
@@ -94,7 +94,7 @@
         },
         {
           "name": "support.function.builtin.globw",
-          "match": "\\b(remove_key|has_key|values|keys|get|random_float|exponential|append_file|file_exists|starts_with|clear_list|triangle3d|read_lines|text_width|write_file|lowercase|uppercase|read_file|ends_with|take_last|substring|logarithm|to_binary|absolute|to_float|index_of|round_to|contains|truncate|to_text|arctan2|mouse_y|ceiling|replace|confirm|maximum|minimum|mouse_x|reverse|message|sphere|rotate|to_int|camera|append|arccos|remove|random|arctan|to_hex|circle|arcsin|insert|window|output|length|floor|count|round|split|input|power|click|clear|today|sqrt|rect|line|wait|stop|join|sort|show|trim|font|cube|time|open|text|char|find|code|cos|now|box|sin|sum|rgb|key|ask|tan|pi)(?=\\s*\\()"
+          "match": "\\b(transform|keep|reduce|remove_key|has_key|values|keys|get|random_float|exponential|append_file|file_exists|starts_with|clear_list|triangle3d|read_lines|text_width|write_file|lowercase|uppercase|read_file|ends_with|take_last|substring|logarithm|to_binary|absolute|to_float|index_of|round_to|contains|truncate|to_text|arctan2|mouse_y|ceiling|replace|confirm|maximum|minimum|mouse_x|reverse|message|sphere|rotate|to_int|camera|append|arccos|remove|random|arctan|to_hex|circle|arcsin|insert|window|output|length|floor|count|round|split|input|power|click|clear|today|sqrt|rect|line|wait|stop|join|sort|show|trim|font|cube|time|open|text|char|find|code|cos|now|box|sin|sum|rgb|key|ask|tan|pi)(?=\\s*\\()"
         }
       ]
     },

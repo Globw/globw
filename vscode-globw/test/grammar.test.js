@@ -98,6 +98,8 @@ test('functions: definition, parameters, calls', () => {
     assert.strictEqual(scope('    always', 'always'), 'keyword.control.globw');
     assert.strictEqual(scope('        fail "x"', 'fail'), 'keyword.control.globw');
     assert.strictEqual(scope('    end try', 'end try'), 'keyword.control.globw');
+    assert.strictEqual(scope('f = function(x as int) as int gives x', 'gives'), 'keyword.control.globw');
+    assert.strictEqual(scope('l = transform(x, f)', 'transform'), 'support.function.builtin.globw');
     assert.strictEqual(scope('x = s.area(1, 2)', 'area'), 'entity.name.function.globw');
 });
 

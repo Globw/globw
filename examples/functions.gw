@@ -1,0 +1,41 @@
+' Functions as values: pass them around, store them, and use
+' transform / keep / reduce.  Lambdas use "gives" for one-liners.
+
+variables:
+    nums as list of int
+    squares, odds as list of int
+    total as int
+    apply as function(int, int) as int
+    i as int
+
+function add(a as int, b as int) as int
+    return a + b
+end function
+
+' a named function stored in a variable, then called through it
+apply = add
+output("apply(3, 4) = ", apply(3, 4))
+
+for(i from 1 to 6)
+    append(nums, i)
+end loop
+
+' transform = map, keep = filter, reduce folds to one value
+squares = transform(nums, function(x as int) as int gives x * x)
+odds = keep(nums, function(x as int) as bool gives x mod 2 == 1)
+total = reduce(nums, add, 0)
+
+output("numbers: ", nums)
+output("squares: ", squares)
+output("odds:    ", odds)
+output("sum:     ", total)
+
+' a block lambda, and passing a named function by name
+output("product: ", reduce(nums, function(acc as int, x as int) as int
+    return acc * x
+end function, 1))
+output("doubled: ", transform(nums, double))
+
+function double(x as int) as int
+    return x * 2
+end function

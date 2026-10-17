@@ -53,6 +53,8 @@ pub enum Type {
     Named(u32),
     /// an object of the class with this id
     Object(u16),
+    /// a function value with the given signature (made with `func_type`)
+    Func(u32),
 }
 
 /// A type stored in the type table, so that `Type` stays small and `Copy`
@@ -85,6 +87,27 @@ thread_local! {
     static CLASSES: std::cell::RefCell<Vec<ClassInfo>> = const { std::cell::RefCell::new(Vec::new()) };
     static METHOD_SLOTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
     static METHOD_TARGETS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) };
+    static FUNCS: std::cell::RefCell<Vec<(Vec<Type>, Option<Type>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The type of a function value with the given parameter types and return
+/// type (`None` for a procedure); equal signatures get the same id.
+pub fn func_type(params: Vec<Type>, ret: Option<Type>) -> Type {
+    FUNCS.with(|t| {
+        let mut t = t.borrow_mut();
+        let i = t.iter().position(|(p, r)| *p == params && *r == ret).unwrap_or_else(|| {
+            t.push((params, ret));
+            t.len() - 1
+        });
+        Type::Func(i as u32)
+    })
+}
+
+pub fn func_parts(t: Type) -> Option<(Vec<Type>, Option<Type>)> {
+    match t {
+        Type::Func(id) => Some(FUNCS.with(|t| t.borrow()[id as usize].clone())),
+        _ => None,
+    }
 }
 
 /// Records, for each subprogram index, the index of its compiled function
@@ -276,6 +299,7 @@ impl Type {
             Type::List(_) | Type::ListOf(_) => "a list",
             Type::Dict(..) => "a dictionary",
             Type::Named(_) | Type::Object(_) => "an object",
+            Type::Func(_) => "a function",
         }
     }
 
@@ -288,6 +312,14 @@ impl Type {
             Type::Dict(k, v) => format!("a dictionary from {} to {}", k.plural(), resolve(v).plural()),
             Type::Object(id) => format!("a {}", class_name(id)),
             Type::Named(id) => format!("a {}", named_name(id)),
+            Type::Func(_) => {
+                let (params, ret) = func_parts(self).expect("a function type");
+                let ps = params.iter().map(|p| p.full_name()).collect::<Vec<_>>().join(", ");
+                match ret {
+                    Some(r) => format!("a function({}) as {}", ps, r.full_name()),
+                    None => format!("a function({})", ps),
+                }
+            }
             other => other.name().to_string(),
         }
     }
@@ -315,6 +347,7 @@ pub fn fits(expected: Type, actual: Type) -> bool {
         (Type::Base(e), Type::Base(a)) => join(e, a) == Some(e),
         (e, a) if list_elem(e).is_some() && list_elem(a) == Some(Type::Unknown) => true,
         (Type::Object(e), Type::Object(a)) => is_subclass(a, e),
+        (Type::Func(_), Type::Func(_)) => expected == actual,
         (e, a) => e == a,
     }
 }
@@ -378,6 +411,20 @@ pub enum TExprKind {
     VCall { slot: usize, args: Vec<TExpr> },
     /// `object is Class`: true when the object's class is that class or a subclass
     IsType(Box<TExpr>, u16),
+    /// a function value: the compiled function index
+    FuncVal(usize),
+    /// a call through a function value
+    CallVal { func: Box<TExpr>, args: Vec<TExpr> },
+    /// a higher-order list operation (map/filter/reduce) with a function value
+    Hof { op: HofOp, list: Box<TExpr>, func: Box<TExpr>, init: Option<Box<TExpr>> },
+}
+
+/// The higher-order list operations expanded inline by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HofOp {
+    Transform,
+    Keep,
+    Reduce,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -397,6 +444,8 @@ pub enum TStmt {
     Call(usize, Vec<TExpr>, Pos),
     /// a virtual method call used as a statement (procedure method)
     VCall(usize, Vec<TExpr>, Pos),
+    /// a call through a function value, used as a statement (procedure value)
+    CallVal(TExpr, Vec<TExpr>, Pos),
     Output(Vec<TExpr>),
     Input(Vec<(TTarget, BaseType)>),
     Append(TExpr, TExpr),
