@@ -59,6 +59,8 @@ pub enum Type {
     None,
     /// a set of simple values (int or string)
     Set(BaseType),
+    /// a tuple (a fixed group of possibly different types), made with `tuple_type`
+    Tuple(u32),
 }
 
 /// A type stored in the type table, so that `Type` stays small and `Copy`
@@ -92,6 +94,26 @@ thread_local! {
     static METHOD_SLOTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
     static METHOD_TARGETS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) };
     static FUNCS: std::cell::RefCell<Vec<(Vec<Type>, Option<Type>)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static TUPLES: std::cell::RefCell<Vec<Vec<Type>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The tuple type with the given element types; equal tuples get the same id.
+pub fn tuple_type(elems: Vec<Type>) -> Type {
+    TUPLES.with(|t| {
+        let mut t = t.borrow_mut();
+        let i = t.iter().position(|e| *e == elems).unwrap_or_else(|| {
+            t.push(elems);
+            t.len() - 1
+        });
+        Type::Tuple(i as u32)
+    })
+}
+
+pub fn tuple_parts(t: Type) -> Option<Vec<Type>> {
+    match t {
+        Type::Tuple(id) => Some(TUPLES.with(|t| t.borrow()[id as usize].clone())),
+        _ => None,
+    }
 }
 
 /// The type of a function value with the given parameter types and return
@@ -306,6 +328,7 @@ impl Type {
             Type::Func(_) => "a function",
             Type::None => "none",
             Type::Set(_) => "a set",
+            Type::Tuple(_) => "a tuple",
         }
     }
 
@@ -317,6 +340,10 @@ impl Type {
             Type::List(Some(_)) | Type::ListOf(_) => format!("a list of {}", list_elem(self).map_or("values".into(), Type::plural)),
             Type::Dict(k, v) => format!("a dictionary from {} to {}", k.plural(), resolve(v).plural()),
             Type::Set(e) => format!("a set of {}", e.plural()),
+            Type::Tuple(_) => {
+                let parts = tuple_parts(self).expect("a tuple");
+                format!("a tuple of ({})", parts.iter().map(|p| p.full_name()).collect::<Vec<_>>().join(", "))
+            }
             Type::Object(id) => format!("a {}", class_name(id)),
             Type::Named(id) => format!("a {}", named_name(id)),
             Type::Func(_) => {
@@ -356,6 +383,10 @@ pub fn fits(expected: Type, actual: Type) -> bool {
         (Type::Object(e), Type::Object(a)) => is_subclass(a, e),
         (Type::Func(_), Type::Func(_)) => expected == actual,
         (Type::Object(_) | Type::Func(_), Type::None) => true,
+        (Type::Tuple(_), Type::Tuple(_)) => match (tuple_parts(expected), tuple_parts(actual)) {
+            (Some(e), Some(a)) => e.len() == a.len() && e.iter().zip(&a).all(|(x, y)| fits(*x, *y)),
+            _ => false,
+        },
         (e, a) => e == a,
     }
 }
@@ -423,6 +454,10 @@ pub enum TExprKind {
     NoneVal,
     /// true when the expression is `none`
     IsNone(Box<TExpr>),
+    /// a tuple built from its elements
+    TupleLit(Vec<TExpr>),
+    /// one element of a tuple (0-based slot), fixed at compile time
+    TupleGet(Box<TExpr>, usize),
     /// a function value: the compiled function index
     FuncVal(usize),
     /// a call through a function value
@@ -474,6 +509,8 @@ pub enum TStmt {
     Try { body: Vec<TStmt>, err: Place, catch: Vec<TStmt>, always: Vec<TStmt>, pos: Pos },
     /// `fail message`: raises a run-time error
     Fail(TExpr, Pos),
+    /// `a, b = tuple`: evaluate the tuple once, store each element in a place
+    Unpack(Vec<Place>, TExpr, Pos),
     /// runs function `func` (a module's start-up code) unless global `flag` is true
     LoadModule { flag: u16, func: usize, pos: Pos },
     /// `for(x in c)`; `to_real` converts int elements for a float variable

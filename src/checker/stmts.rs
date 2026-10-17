@@ -101,6 +101,7 @@ impl<'p> Checker<'p> {
             StmtKind::Try { body, catch_name, catch_pos, catch, always } => {
                 self.try_stmt(body, catch_name, *catch_pos, catch, always, pos)
             }
+            StmtKind::Unpack(names, e) => self.unpack(names, e, pos),
             StmtKind::Fail(e) => {
                 let v = self.expr(e);
                 if !matches!(v.ty, Type::Base(BaseType::Str) | Type::Unknown) {
@@ -342,8 +343,8 @@ impl<'p> Checker<'p> {
 
     fn assign(&mut self, t: TTarget, v: TExpr) -> TStmt {
         let var = self.var(t.place);
-        let whole = var.shape != Shape::Scalar || matches!(var.full_type(), Type::Object(_) | Type::Func(_));
-        let _ = Shape::Set;
+        let whole = var.shape != Shape::Scalar
+            || matches!(var.full_type(), Type::Object(_) | Type::Func(_) | Type::Tuple(_));
         if whole && t.indices.is_empty() {
             // a whole list, dictionary or object, like `words = split(s, " ")` or `p = new Point(1, 2)`
             let (expected, name) = (var.full_type(), var.name.clone());
@@ -420,6 +421,46 @@ impl<'p> Checker<'p> {
         let body = self.block(body);
         self.assigned = before;
         Some(TStmt::ForEach { var: p, iter: it, kind, to_real, body, pos })
+    }
+
+    fn unpack(&mut self, names: &[(String, Pos)], value: &crate::ast::Expr, pos: Pos) -> Option<TStmt> {
+        let v = self.expr(value);
+        let parts = match crate::tir::tuple_parts(v.ty) {
+            Some(p) => p,
+            None => {
+                if v.ty != Type::Unknown {
+                    self.report(Error::new(pos, format!("to unpack with commas the right side must be a tuple, here it is {}", v.ty.full_name())));
+                }
+                return None;
+            }
+        };
+        if parts.len() != names.len() {
+            self.report(Error::new(
+                pos,
+                format!("the tuple has {} parts but there are {} variables", parts.len(), names.len()),
+            ));
+            return None;
+        }
+        let mut places = Vec::with_capacity(names.len());
+        for ((name, npos), ety) in names.iter().zip(&parts) {
+            let Some(p) = self.lookup(name) else {
+                let err = self.undeclared(name, *npos);
+                self.report_structural(err);
+                return None;
+            };
+            match (self.var(p).full_type(), ety.base()) {
+                (dest, _) if dest != Type::Unknown && !fits(dest, *ety) => {
+                    self.report(Error::new(*npos, format!("\"{}\" is {}, but here it gets {}", name, dest.full_name(), ety.full_name())));
+                }
+                (Type::Unknown, Some(b)) => self.widen(p, b, *npos),
+                _ => {}
+            }
+            if let Place::Local(i) = p {
+                self.assigned[i as usize] = true;
+            }
+            places.push(p);
+        }
+        Some(TStmt::Unpack(places, v, pos))
     }
 
     fn try_stmt(

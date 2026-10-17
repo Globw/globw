@@ -373,6 +373,9 @@ impl Parser {
         if self.is(&Tok::Function) {
             return Ok((Shape::Scalar, BaseType::Int, self.func_type_spec()?));
         }
+        if self.is_name("tuple") {
+            return Ok((Shape::Scalar, BaseType::Int, self.tuple_type_spec()?));
+        }
         if self.is_name("list") || self.is_name("dict") || self.is_name("set") {
             let full = self.collection_type()?;
             let shape = match full {
@@ -465,6 +468,8 @@ impl Parser {
     fn element_type(&mut self) -> Result<Type, Error> {
         if self.is(&Tok::Function) {
             self.func_type_spec()
+        } else if self.is_name("tuple") {
+            self.tuple_type_spec()
         } else if self.is_name("list") || self.is_name("dict") || self.is_name("set") {
             self.collection_type()
         } else if let Tok::Name(n) = self.tok() {
@@ -600,6 +605,28 @@ impl Parser {
         let name = format!("lambda{}{}", crate::classes::SEP, self.lambdas.len());
         self.lambdas.push(Subprogram { name: name.clone(), is_function: ret.is_some(), params, ret, locals, body, pos });
         Ok(Expr { kind: ExprKind::FuncRef(name), pos })
+    }
+
+    /// A tuple type: `tuple of (int, string)`.
+    fn tuple_type_spec(&mut self) -> Result<Type, Error> {
+        self.advance(); // tuple
+        if !self.is_name("of") {
+            return self.fail("expected \"of\", like tuple of (int, string)");
+        }
+        self.advance();
+        self.expect(&Tok::LParen, "\"(\"")?;
+        let mut types = Vec::new();
+        loop {
+            types.push(self.element_type()?);
+            if self.accept(&Tok::RParen) {
+                break;
+            }
+            self.expect(&Tok::Comma, "\",\" or \")\"")?;
+        }
+        if types.len() < 2 {
+            return self.fail("a tuple needs at least two types, like tuple of (int, string)");
+        }
+        Ok(crate::tir::tuple_type(types))
     }
 
     /// A function type: `function(int, string) as float`, or without `as` for
@@ -903,8 +930,33 @@ impl Parser {
         Ok(StmtKind::For { var, var_pos, from, to, step, body })
     }
 
+    /// `a, b = tuple`: unpacks a tuple into several variables.
+    fn unpack_stmt(&mut self, first: String, pos: Pos) -> Result<StmtKind, Error> {
+        self.advance(); // first name
+        let mut names = vec![(first, pos)];
+        while self.accept(&Tok::Comma) {
+            let p = self.pos();
+            match self.tok().clone() {
+                Tok::Name(n) if !n.contains('.') => {
+                    self.advance();
+                    names.push((n, p));
+                }
+                other => return self.fail(format!("expected a variable name, found {}", describe(&other))),
+            }
+        }
+        if !self.accept(&Tok::Assign) {
+            return self.fail("expected = to unpack a tuple, like a, b = point");
+        }
+        let value = self.expr()?;
+        self.end_stmt()?;
+        Ok(StmtKind::Unpack(names, value))
+    }
+
     /// A statement starting with a name: an assignment or a call.
     fn name_stmt(&mut self, name: String, pos: Pos) -> Result<StmtKind, Error> {
+        if matches!(self.peek_tok(1), Tok::Comma) {
+            return self.unpack_stmt(name, pos);
+        }
         let is_assignment = matches!(self.peek_tok(1), Tok::Assign | Tok::LBracket);
         if !is_assignment {
             if let Some(kw) = miscased_statement_keyword(&name) {
@@ -1102,6 +1154,12 @@ impl Parser {
                 e = Expr { kind: ExprKind::Subscript(Box::new(e), idx), pos };
             } else if self.is(&Tok::Dot) {
                 let pos = self.advance().pos;
+                if let Tok::Int(n) = self.tok().clone() {
+                    // tuple element by 1-based position: t.1
+                    self.advance();
+                    e = Expr { kind: ExprKind::TupleGet(Box::new(e), n as usize), pos };
+                    continue;
+                }
                 // the lexer merges `a.b.c` into one name, so one dot token may
                 // carry a whole chain of fields ending in a field or a method
                 let name = match self.tok().clone() {
@@ -1137,9 +1195,21 @@ impl Parser {
             Tok::False => ExprKind::Bool(false),
             Tok::None => ExprKind::NoneLit,
             Tok::LParen => {
-                let e = self.expr()?;
+                let first = self.expr()?;
+                if self.accept(&Tok::Comma) {
+                    // a tuple literal: (a, b, ...)
+                    let mut items = vec![first];
+                    loop {
+                        items.push(self.expr()?);
+                        if self.accept(&Tok::RParen) {
+                            break;
+                        }
+                        self.expect(&Tok::Comma, "\",\" or \")\"")?;
+                    }
+                    return Ok(Expr { kind: ExprKind::TupleLit(items), pos: t.pos });
+                }
                 self.expect(&Tok::RParen, "\")\"")?;
-                return Ok(e);
+                return Ok(first);
             }
             Tok::LBracket => {
                 let mut items = Vec::new();
@@ -1250,6 +1320,8 @@ mod tests {
             ExprKind::IsType(b, c) => format!("({} is {})", sx(b), c),
             ExprKind::FuncRef(n) => format!("@{}", n),
             ExprKind::NoneLit => "none".to_string(),
+            ExprKind::TupleLit(items) => format!("({})", list(items)),
+            ExprKind::TupleGet(b, n) => format!("{}.{}", sx(b), n),
         }
     }
 

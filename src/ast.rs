@@ -64,6 +64,10 @@ pub enum ExprKind {
     FuncRef(String),
     /// the `none` literal: an absent object or function value
     NoneLit,
+    /// a tuple written in parentheses: `(a, b)`
+    TupleLit(Vec<Expr>),
+    /// one element of a tuple, by 1-based position: `t.1`
+    TupleGet(Box<Expr>, usize),
 }
 
 /// The left side of an assignment: `x`, `v[i]` or `m[i, j]`.
@@ -104,6 +108,8 @@ pub enum StmtKind {
     Try { body: Vec<Stmt>, catch_name: String, catch_pos: Pos, catch: Vec<Stmt>, always: Vec<Stmt> },
     /// `fail "message"`: raises a run-time error on purpose
     Fail(Expr),
+    /// multiple assignment that unpacks a tuple: `a, b = point`
+    Unpack(Vec<(String, Pos)>, Expr),
     Return(Option<Expr>),
     /// runs the start-up code of a module (procedure `init`) unless the
     /// global flag `flag` says it already ran; added by the module loader

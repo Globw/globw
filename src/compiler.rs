@@ -382,6 +382,25 @@ impl<'a> FnCompiler<'a> {
             TExprKind::NoneVal => {
                 self.emit(Op::LoadNull(d), pos);
             }
+            TExprKind::TupleLit(items) => {
+                let list = if d < self.n_locals { self.temp() } else { d };
+                self.emit(Op::NewList(list), pos);
+                for item in items {
+                    let inner = self.next;
+                    let v = self.operand(item);
+                    self.emit(Op::Append(list, v), item.pos);
+                    self.next = inner;
+                }
+                if list != d {
+                    self.emit(Op::Move(d, list), pos);
+                }
+            }
+            TExprKind::TupleGet(e, n) => {
+                let c = self.operand(e);
+                let idx = self.temp();
+                self.emit(Op::LoadInt(idx, *n as i64), pos);
+                self.emit(Op::GetElem(d, c, idx), pos);
+            }
             TExprKind::IsNone(x) => {
                 let r = self.operand(x);
                 self.emit(Op::IsNull(d, r), pos);
@@ -577,6 +596,21 @@ impl<'a> FnCompiler<'a> {
                 let first = self.args(args);
                 let dst = self.temp();
                 self.emit(Op::CallMethod { slot: *slot as u32, first, argc: args.len() as u16, dst }, *pos);
+            }
+            TStmt::Unpack(places, tuple, pos) => {
+                let c = self.operand(tuple);
+                for (i, place) in places.iter().enumerate() {
+                    let idx = self.temp();
+                    self.emit(Op::LoadInt(idx, i as i64 + 1), *pos);
+                    let dst = match place {
+                        Place::Local(r) => *r,
+                        Place::Global(_) => self.temp(),
+                    };
+                    self.emit(Op::GetElem(dst, c, idx), *pos);
+                    if let Place::Global(g) = place {
+                        self.emit(Op::SetGlobal(*g, dst), *pos);
+                    }
+                }
             }
             TStmt::CallVal(func, args, pos) => {
                 let f = self.operand(func);
@@ -976,6 +1010,28 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn tuples_literal_access_and_unpack() {
+        let src = r#"variables:
+    point as tuple of (int, string)
+    a as int
+    b as string
+function pair() as tuple of (int, string)
+    return (7, "hi")
+end function
+point = (3, "x")
+output(point.1, " ", point.2)
+a, b = pair()
+output(a, " ", b)
+a, b = (a + 1, b)
+output(a, " ", b)
+"#;
+        assert_eq!(run_src(src, ""), "3 x
+7 hi
+8 hi
+");
     }
 
     #[test]

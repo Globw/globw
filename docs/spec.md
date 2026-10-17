@@ -87,7 +87,7 @@ variables:
 | `string` | text |
 | `bool` | `true` / `false` |
 
-Collections: `T[N]` (array), `T[N, M]` (matrix), `list of T` (list), `set of T` (set) and `dict of K to V` (dictionary).
+Collections: `T[N]` (array), `T[N, M]` (matrix), `list of T` (list), `set of T` (set), `dict of K to V` (dictionary) and `tuple of (T1, T2, ...)` (tuple).
 
 - Arrays and matrices contain simple values (one of the four types above).
 - The elements of a list and the values of a dictionary can be of any type, collections included: `list of list of int`, `dict of string to list of string`, `dict of int to dict of string to float`… Collections can nest to any depth.
@@ -652,6 +652,34 @@ squares = transform(nums, function(x as int) as int gives x * x)
 odds    = keep(nums, function(x as int) as bool gives x mod 2 == 1)
 total   = reduce(nums, function(acc as int, x as int) as int gives acc + x, 0)
 ```
+
+### 6.16 Tuples
+
+A tuple groups a fixed number of values that may have different types, without
+defining a class. Its main use is returning several values at once.
+
+```
+variables:
+    point as tuple of (int, int)
+    lo, hi as int
+
+point = (3, 7)                 ' a tuple literal (two or more values)
+output(point.1, " ", point.2)  ' elements by 1-based position
+
+function range(l as list of int) as tuple of (int, int)
+    return (minimum(l), maximum(l))
+end function
+
+lo, hi = range([5, 2, 9])      ' unpacking: several variables from one tuple
+lo, hi = (hi, lo)              ' the right side is evaluated first, so this swaps
+```
+
+- **Type:** `tuple of (T1, T2, ...)`, two or more element types (any type).
+- **Literal:** `(a, b, ...)` with at least one comma. `(x)` alone is just grouping.
+- **Access:** `t.1`, `t.2`, ... by 1-based position (checked at compile time).
+- **Unpacking:** `a, b = t` assigns the elements to the variables, which must be
+  declared and match the element types; the counts must be equal.
+- A tuple is printed like a list (`[3, 7]`).
 
 ## 7. Errors
 

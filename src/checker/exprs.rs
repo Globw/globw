@@ -109,6 +109,31 @@ impl<'p> Checker<'p> {
             ExprKind::MethodCall(obj, method, args) => self.method_on(obj, method, args, pos, true),
             ExprKind::FuncRef(name) => self.func_value(name, pos),
             ExprKind::NoneLit => TExpr { kind: TExprKind::NoneVal, ty: Type::None, pos },
+            ExprKind::TupleLit(items) => {
+                let ts: Vec<TExpr> = items.iter().map(|e| self.expr(e)).collect();
+                if ts.iter().any(|t| t.ty == Type::Unknown) {
+                    return unknown(pos);
+                }
+                let ty = crate::tir::tuple_type(ts.iter().map(|t| t.ty).collect());
+                TExpr { kind: TExprKind::TupleLit(ts), ty, pos }
+            }
+            ExprKind::TupleGet(e, n) => {
+                let t = self.expr(e);
+                match crate::tir::tuple_parts(t.ty) {
+                    Some(parts) if *n >= 1 && *n <= parts.len() => {
+                        TExpr { kind: TExprKind::TupleGet(Box::new(t), *n), ty: parts[*n - 1], pos }
+                    }
+                    Some(parts) => {
+                        self.report(Error::new(pos, format!("this tuple has {} parts, there is no .{}", parts.len(), n)));
+                        unknown(pos)
+                    }
+                    None if t.ty == Type::Unknown => unknown(pos),
+                    None => {
+                        self.report(Error::new(pos, format!(".{} works only on a tuple, here it is {}", n, t.ty.full_name())));
+                        unknown(pos)
+                    }
+                }
+            }
             ExprKind::IsType(obj, class) => {
                 let object = self.expr(obj);
                 if !matches!(object.ty, Type::Object(_) | Type::Unknown) {

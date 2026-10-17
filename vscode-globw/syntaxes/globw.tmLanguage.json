@@ -106,7 +106,7 @@
         },
         {
           "name": "storage.type.globw",
-          "match": "\\b(list|dict|set)\\s+of\\b"
+          "match": "\\b(list|dict|set|tuple)\\s+of\\b"
         },
         {
           "name": "storage.type.primitive.globw",
