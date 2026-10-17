@@ -41,7 +41,7 @@ output(double(n))
 
 ## 3. Lexical rules
 
-- **Keywords are lowercase only**: `if`, `else`, `end if`, `while`, `for`, `from`, `to`, `step`, `repeat`, `end loop`, `function`, `end function`, `procedure`, `end procedure`, `return`, `global`, `break`, `continue`, `and`, `or`, `not`, `div`, `mod`, `true`, `false`. `import`, `lazy` (at the start of a line) and `in` (in `for`) are keywords only where they are used that way.
+- **Keywords are lowercase only**: `if`, `else`, `end if`, `while`, `for`, `from`, `to`, `step`, `repeat`, `end loop`, `function`, `end function`, `procedure`, `end procedure`, `return`, `global`, `break`, `continue`, `try`, `catch`, `always`, `fail`, `and`, `or`, `not`, `div`, `mod`, `true`, `false`. `import`, `lazy` (at the start of a line) and `in` (in `for`) are keywords only where they are used that way.
   The same word in another case (`IF`, `If`) is not a keyword. It is treated as a name, and the resulting error suggests the lowercase form.
 - **Declarations**: `variables:`, `as`, `of` and the type names `int`, `float`, `string`, `bool` are written in lowercase, exactly like that.
 - **Built-in procedures and functions** are lowercase too (`input`, `output`, `length`, `window`, `rect`…). All keywords and built-in names are reserved: they cannot name variables or functions.
@@ -547,6 +547,33 @@ output(line[1].x)
 - **`parent`** inside a method calls the parent class's version: `parent.new(...)` in a constructor, `parent.area()` in an overridden method. The constructor `new` may take different parameters from the parent's.
 - **`object is Class`** is `true` when the object's class is `Class` or a subclass of it.
 - **Errors:** an unknown class, a field or method a class does not have, the wrong number of constructor or method values, assigning the wrong type to a field, a field or variable named `self`, a duplicate class, field or method, or a constructor written as a function, an unknown parent, an inheritance cycle, or an override whose parameters or return type differ.
+
+### 6.14 Error handling
+
+A run-time error normally stops the program. A `try` block catches it instead.
+
+```
+variables:
+    problem as string
+
+try
+    output(100 div n)
+catch problem                ' "problem" receives the error message
+    output("Something went wrong: ", problem)
+always                       ' optional: runs on every path
+    output("Done.")
+end try
+
+fail "the balance cannot be negative"   ' raise your own error
+```
+
+- **`try ... catch name ... [always ...] end try`**: the `try` body runs; on a run-time error control jumps to the **`catch`** block, with the message stored in `name` (a declared `string` variable). The **`always`** block, if present, runs afterwards on both paths (no error and caught error).
+- Caught errors include every run-time error: division by zero, a value that cannot be read by `input`, a missing file, an index or key out of range, and `fail`.
+- **`fail message`** raises a run-time error on purpose, with a text message.
+- An error raised inside a called function, and not caught there, unwinds to the nearest `try` in the caller.
+- If no `try` catches it, the program stops with the error, as before.
+- Leaving a `try` with `return`, `break` or `continue` removes its handler correctly.
+- Note: if the `catch` block itself raises an error, the `always` block is skipped and the error propagates outward.
 
 ## 7. Errors
 

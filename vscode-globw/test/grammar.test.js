@@ -93,6 +93,11 @@ test('functions: definition, parameters, calls', () => {
     assert.strictEqual(scope('self.x = 1', 'self'), 'variable.language.self.globw');
     assert.strictEqual(scope('class Dog is Animal', 'is'), 'keyword.control.globw');
     assert.strictEqual(scope('parent.new(x)', 'parent'), 'variable.language.self.globw');
+    assert.strictEqual(scope('try', 'try'), 'keyword.control.globw');
+    assert.strictEqual(scope('    catch problem', 'catch'), 'keyword.control.globw');
+    assert.strictEqual(scope('    always', 'always'), 'keyword.control.globw');
+    assert.strictEqual(scope('        fail "x"', 'fail'), 'keyword.control.globw');
+    assert.strictEqual(scope('    end try', 'end try'), 'keyword.control.globw');
     assert.strictEqual(scope('x = s.area(1, 2)', 'area'), 'entity.name.function.globw');
 });
 

@@ -408,6 +408,11 @@ pub enum TStmt {
     SetIndex(TExpr, TExpr, TExpr, Pos),
     /// `object.field = value`
     SetField(TExpr, usize, TExpr, Pos),
+    /// `try` body, catch block (with the error message stored in `err`), and
+    /// an optional `always` block
+    Try { body: Vec<TStmt>, err: Place, catch: Vec<TStmt>, always: Vec<TStmt>, pos: Pos },
+    /// `fail message`: raises a run-time error
+    Fail(TExpr, Pos),
     /// runs function `func` (a module's start-up code) unless global `flag` is true
     LoadModule { flag: u16, func: usize, pos: Pos },
     /// `for(x in c)`; `to_real` converts int elements for a float variable

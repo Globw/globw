@@ -125,12 +125,16 @@ struct FnCompiler<'a> {
     max: Reg,
     /// jumps of `break` and `continue` to patch, one entry per enclosing loop
     loops: Vec<LoopJumps>,
+    /// how many error handlers (try blocks) are currently installed
+    open_handlers: usize,
 }
 
 #[derive(Default)]
 struct LoopJumps {
     breaks: Vec<usize>,
     continues: Vec<usize>,
+    /// installed handlers when the loop started (break/continue must pop the rest)
+    handlers: usize,
 }
 
 impl<'a> FnCompiler<'a> {
@@ -146,6 +150,7 @@ impl<'a> FnCompiler<'a> {
             next: n,
             max: n,
             loops: Vec::new(),
+            open_handlers: 0,
         }
     }
 
@@ -203,7 +208,8 @@ impl<'a> FnCompiler<'a> {
             | Op::JumpIfFalse(_, t)
             | Op::JumpIfTrue(_, t)
             | Op::JumpUnlessI(_, _, _, t)
-            | Op::JumpUnlessIImm(_, _, _, t) => *t = target,
+            | Op::JumpUnlessIImm(_, _, _, t)
+            | Op::PushHandler(t, _) => *t = target,
             Op::ForInit { exit, .. } => *exit = target,
             other => panic!("internal error: cannot patch {:?}", other),
         }
@@ -463,6 +469,37 @@ impl<'a> FnCompiler<'a> {
                 let v = self.operand(v);
                 self.emit(Op::SetField(o, *slot as u16, v), *pos);
             }
+            TStmt::Fail(msg, pos) => {
+                let r = self.operand(msg);
+                self.emit(Op::Fail(r), *pos);
+            }
+            TStmt::Try { body, err, catch, always, pos } => {
+                let err_reg = self.temp();
+                let push = self.emit(Op::PushHandler(0, err_reg), *pos);
+                self.open_handlers += 1;
+                self.block(body);
+                self.open_handlers -= 1;
+                self.emit(Op::PopHandler, *pos);
+                let to_always_ok = self.emit(Op::Jump(0), *pos);
+                let catch_ip = self.here();
+                self.patch(push, catch_ip);
+                // the handler fired: move the message into the catch variable
+                match err {
+                    Place::Local(r) if *r != err_reg => {
+                        self.emit(Op::Move(*r, err_reg), *pos);
+                    }
+                    Place::Local(_) => {}
+                    Place::Global(g) => {
+                        self.emit(Op::SetGlobal(*g, err_reg), *pos);
+                    }
+                }
+                self.block(catch);
+                let to_always_err = self.emit(Op::Jump(0), *pos);
+                let always_ip = self.here();
+                self.patch(to_always_ok, always_ip);
+                self.patch(to_always_err, always_ip);
+                self.block(always);
+            }
             TStmt::If(branches, other) => {
                 let mut exits = Vec::new();
                 for (c, body) in branches {
@@ -505,10 +542,12 @@ impl<'a> FnCompiler<'a> {
                 self.for_each(*var, iter, *kind, *to_real, body, *pos)
             }
             TStmt::Break(pos) => {
+                self.pop_handlers(self.open_handlers - self.loops.last().expect("a loop").handlers, *pos);
                 let j = self.emit(Op::Jump(0), *pos);
                 self.loops.last_mut().expect("break outside a loop").breaks.push(j);
             }
             TStmt::Continue(pos) => {
+                self.pop_handlers(self.open_handlers - self.loops.last().expect("a loop").handlers, *pos);
                 let j = self.emit(Op::Jump(0), *pos);
                 self.loops.last_mut().expect("continue outside a loop").continues.push(j);
             }
@@ -557,9 +596,11 @@ impl<'a> FnCompiler<'a> {
             }
             TStmt::Return(Some(v), pos) => {
                 let r = self.operand(v);
+                self.pop_handlers(self.open_handlers, *pos);
                 self.emit(Op::Ret(r), *pos);
             }
             TStmt::Return(None, pos) => {
+                self.pop_handlers(self.open_handlers, *pos);
                 self.emit(Op::RetNone, *pos);
             }
             TStmt::Builtin(b, args, pos) => {
@@ -648,8 +689,14 @@ impl<'a> FnCompiler<'a> {
 
     /// Compiles a loop body, collecting its `break` and `continue` jumps.
     fn loop_body(&mut self, body: &[TStmt]) {
-        self.loops.push(LoopJumps::default());
+        self.loops.push(LoopJumps { handlers: self.open_handlers, ..LoopJumps::default() });
         self.block(body);
+    }
+
+    fn pop_handlers(&mut self, count: usize, pos: Pos) {
+        for _ in 0..count {
+            self.emit(Op::PopHandler, pos);
+        }
     }
 
     /// Points the `continue` jumps of the innermost loop at `next` and its
@@ -842,6 +889,45 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn error_handling_try_catch_fail() {
+        let src = r#"variables:
+    e as string
+    x, i as int
+function half(n as int) as int
+    if(n == 0)
+        fail "no zero"
+    end if
+    return 100 div n
+end function
+try
+    x = half(0)
+catch e
+    output("caught: ", e)
+end try
+for(i from 1 to 3)
+    try
+        output(10 div (2 - i))
+    catch e
+        output("oops ", i)
+    always
+        output("done ", i)
+    end try
+end loop
+"#;
+        assert_eq!(
+            run_src(src, ""),
+            "caught: no zero
+10
+done 1
+oops 2
+done 2
+-10
+done 3
+"
+        );
     }
 
     #[test]

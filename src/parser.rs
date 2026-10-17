@@ -50,6 +50,11 @@ fn text(t: &Tok) -> &'static str {
         Tok::EndClass => "end class",
         Tok::New => "new",
         Tok::Is => "is",
+        Tok::Try => "try",
+        Tok::Catch => "catch",
+        Tok::Always => "always",
+        Tok::EndTry => "end try",
+        Tok::Fail => "fail",
         Tok::Dot => "\".\"",
         Tok::EndLoop => "end loop",
         Tok::Function => "function",
@@ -683,6 +688,13 @@ impl Parser {
                 self.end_stmt()?;
                 StmtKind::Return(value)
             }
+            Tok::Try => self.try_stmt(pos)?,
+            Tok::Fail => {
+                self.advance();
+                let message = self.expr()?;
+                self.end_stmt()?;
+                StmtKind::Fail(message)
+            }
             Tok::Name(name) => self.name_stmt(name, pos)?,
             Tok::Variables | Tok::Global => {
                 return self.fail("variable declarations must come at the start of the program or function")
@@ -737,6 +749,36 @@ impl Parser {
         self.expect(&Tok::EndIf, "end if")?;
         self.end_stmt()?;
         Ok(StmtKind::If { branches, else_body })
+    }
+
+    fn try_stmt(&mut self, opened: Pos) -> Result<StmtKind, Error> {
+        self.advance(); // try
+        self.end_stmt()?;
+        let body = self.block(&[Tok::Catch], opened, "try", "catch", None)?;
+        if !self.is(&Tok::Catch) {
+            return self.fail("a try needs a catch: try ... catch name ... end try");
+        }
+        self.advance(); // catch
+        let catch_pos = self.pos();
+        let catch_name = match self.tok().clone() {
+            Tok::Name(n) if !n.contains('.') => {
+                self.advance();
+                n
+            }
+            other => return self.fail(format!("expected a variable name after \"catch\", found {}", describe(&other))),
+        };
+        self.end_stmt()?;
+        let catch = self.block(&[Tok::Always, Tok::EndTry], opened, "try", "end try", None)?;
+        let always = if self.is(&Tok::Always) {
+            self.advance();
+            self.end_stmt()?;
+            self.block(&[Tok::EndTry], opened, "try", "end try", None)?
+        } else {
+            Vec::new()
+        };
+        self.advance(); // end try
+        self.end_stmt()?;
+        Ok(StmtKind::Try { body, catch_name, catch_pos, catch, always })
     }
 
     fn for_stmt(&mut self, opened: Pos) -> Result<StmtKind, Error> {

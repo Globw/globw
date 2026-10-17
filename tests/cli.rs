@@ -109,3 +109,14 @@ fn classes_run_end_to_end() {
     let (code, stdout, stderr) = globw(&[dir.join("c.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "15 Box(n=15)\n"), "{}", stderr);
 }
+
+#[test]
+fn uncaught_error_still_stops_the_program() {
+    let dir = std::env::temp_dir().join("globw_uncaught_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("p.gw"), "variables:\n    e as string\ntry\n    output(1 div 0)\ncatch e\n    output(\"caught\")\nend try\noutput(10 div 0)\n").unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(code, 2);
+    assert_eq!(stdout, "caught\n");
+    assert!(stderr.contains("division by zero"), "{}", stderr);
+}

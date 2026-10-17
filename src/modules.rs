@@ -403,6 +403,13 @@ impl Scope<'_> {
                 self.expr(l);
                 self.expr(v);
             }
+            StmtKind::Try { body, catch_name, catch_pos, catch, always } => {
+                *body = self.block(std::mem::take(body));
+                *catch_name = self.resolve(catch_name, *catch_pos, false);
+                *catch = self.block(std::mem::take(catch));
+                *always = self.block(std::mem::take(always));
+            }
+            StmtKind::Fail(e) => self.expr(e),
             StmtKind::LoadModule { .. } => {}
         }
     }

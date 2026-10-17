@@ -118,6 +118,13 @@ pub enum Op {
     /// registers from `first`; a function's result goes to `dst`
     Builtin { id: u16, first: Reg, argc: u16, dst: Reg },
     RetNone,
+    /// install an error handler: on a run-time error jump to `catch_ip` with
+    /// the message stored in register `err`
+    PushHandler(u32, Reg),
+    /// remove the most recent error handler
+    PopHandler,
+    /// raise a run-time error with the message in the register
+    Fail(Reg),
     /// if global `flag` is not true: sets it and calls function `func` with no
     /// arguments (a module's start-up code, run at most once)
     Ensure { flag: u16, func: u32 },
@@ -192,6 +199,9 @@ impl Op {
             Op::Read(..) => "Read",
             Op::Builtin { .. } => "Builtin",
             Op::RetNone => "RetNone",
+            Op::PushHandler(..) => "PushHandler",
+            Op::PopHandler => "PopHandler",
+            Op::Fail(..) => "Fail",
             Op::Ensure { .. } => "Ensure",
         }
     }

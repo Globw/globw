@@ -98,6 +98,18 @@ impl<'p> Checker<'p> {
             }
             StmtKind::Call(name, args) => self.call_stmt(name, args, pos),
             StmtKind::Return(value) => self.return_stmt(value.as_ref(), pos),
+            StmtKind::Try { body, catch_name, catch_pos, catch, always } => {
+                self.try_stmt(body, catch_name, *catch_pos, catch, always, pos)
+            }
+            StmtKind::Fail(e) => {
+                let v = self.expr(e);
+                if !matches!(v.ty, Type::Base(BaseType::Str) | Type::Unknown) {
+                    self.report(Error::new(v.pos, format!("fail needs a text message, here it gets {}", v.ty.full_name())));
+                }
+                // nothing after fail runs
+                self.assigned.iter_mut().for_each(|a| *a = true);
+                Some(TStmt::Fail(convert(v, Some(BaseType::Str)), pos))
+            }
             StmtKind::SetMember(lvalue, value) => {
                 let v = self.expr(value);
                 self.assign_lvalue(lvalue, v, pos)
@@ -406,6 +418,49 @@ impl<'p> Checker<'p> {
         let body = self.block(body);
         self.assigned = before;
         Some(TStmt::ForEach { var: p, iter: it, kind, to_real, body, pos })
+    }
+
+    fn try_stmt(
+        &mut self,
+        body: &[Stmt],
+        catch_name: &str,
+        catch_pos: Pos,
+        catch: &[Stmt],
+        always: &[Stmt],
+        pos: Pos,
+    ) -> Option<TStmt> {
+        let Some(err) = self.lookup(catch_name) else {
+            let e = self.undeclared(catch_name, catch_pos);
+            self.report_structural(e);
+            return None;
+        };
+        let (shape, ty) = {
+            let var = self.var(err);
+            (var.shape.clone(), var.ty)
+        };
+        if shape != Shape::Scalar || !matches!(ty, Some(BaseType::Str) | None) {
+            self.report(Error::new(
+                catch_pos,
+                format!("\"{}\" must be a string: catch stores the error message in it", catch_name),
+            ));
+        }
+        if ty.is_none() {
+            self.widen(err, BaseType::Str, catch_pos);
+        }
+        // like if/else for definite assignment: the body may stop early, so a
+        // variable is assigned afterwards only if assigned on both paths
+        let before = self.assigned.clone();
+        let tbody = self.block(body);
+        let after_try = self.assigned.clone();
+        self.assigned = before;
+        if let Place::Local(i) = err {
+            self.assigned[i as usize] = true;
+        }
+        let tcatch = self.block(catch);
+        let after_catch = std::mem::take(&mut self.assigned);
+        self.assigned = after_try.iter().zip(&after_catch).map(|(a, b)| *a && *b).collect();
+        let talways = self.block(always);
+        Some(TStmt::Try { body: tbody, err, catch: tcatch, always: talways, pos })
     }
 
     fn for_stmt(

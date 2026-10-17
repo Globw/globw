@@ -39,6 +39,11 @@ pub enum Tok {
     EndClass,
     New,
     Is,
+    Try,
+    Catch,
+    Always,
+    EndTry,
+    Fail,
     // symbols
     Assign,
     Eq,
@@ -96,6 +101,10 @@ pub fn keyword(word: &str) -> Option<Tok> {
         "class" => Tok::Class,
         "new" => Tok::New,
         "is" => Tok::Is,
+        "try" => Tok::Try,
+        "catch" => Tok::Catch,
+        "always" => Tok::Always,
+        "fail" => Tok::Fail,
         _ => return None,
     })
 }
@@ -115,7 +124,7 @@ pub fn miscased_statement_keyword(name: &str) -> Option<String> {
         name,
         &[
             "if", "else", "while", "for", "repeat", "end", "function", "procedure", "return", "global", "break",
-            "continue", "class",
+            "continue", "class", "try", "catch", "always", "fail",
         ],
     )
 }
@@ -302,10 +311,11 @@ impl Scanner {
                 "function" => Tok::EndFunction,
                 "procedure" => Tok::EndProcedure,
                 "class" => Tok::EndClass,
+                "try" => Tok::EndTry,
                 _ => {
                     return Err(Error::new(
                         Pos::new(line, col, 3),
-                        "end must be followed by if, loop, function, procedure or class",
+                        "end must be followed by if, loop, function, procedure, class or try",
                     )
                     .with_hint("for example: end if or end loop"))
                 }
@@ -473,7 +483,7 @@ mod tests {
     fn errors() {
         let msg = |s: &str| tokenize(s).unwrap_err().message;
         assert_eq!(msg("\"abc"), "unterminated string");
-        assert_eq!(msg("end x"), "end must be followed by if, loop, function, procedure or class");
+        assert_eq!(msg("end x"), "end must be followed by if, loop, function, procedure, class or try");
         assert_eq!(msg("a # b"), "invalid character '#'");
         assert_eq!(msg("a <> b"), "invalid operator <>");
         assert_eq!(msg("99999999999999999999"), "integer too large");

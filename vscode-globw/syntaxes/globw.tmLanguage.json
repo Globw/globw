@@ -70,7 +70,7 @@
         },
         {
           "name": "keyword.control.globw",
-          "match": "\\b(lazy|import|break|continue|in|if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure|end\\s+class|class|new|is)\\b"
+          "match": "\\b(lazy|import|break|continue|in|if|else|end\\s+if|while|end\\s+loop|for|from|to|step|repeat|return|end\\s+function|end\\s+procedure|end\\s+class|end\\s+try|class|new|is|try|catch|always|fail)\\b"
         },
         {
           "name": "storage.type.function.globw",

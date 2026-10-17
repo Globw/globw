@@ -312,6 +312,7 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
         env: Env::default(),
+        handlers: Vec::new(),
         prof: None,
     };
     let result = vm.execute(input, output);
@@ -335,6 +336,7 @@ pub fn run_profiled(
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
         env: Env::default(),
+        handlers: Vec::new(),
         prof: Some(HashMap::new()),
     };
     let result = vm.execute(input, output);
@@ -354,13 +356,32 @@ struct Vm<'m> {
     globals: Vec<Value>,
     frames: Vec<Frame>,
     env: Env,
+    /// active error handlers (try blocks), innermost last
+    handlers: Vec<Handler>,
     /// when profiling: how many times each opcode ran
     prof: Option<HashMap<&'static str, u64>>,
+}
+
+/// An installed `try` handler: where to resume and the VM depth to restore.
+struct Handler {
+    catch_ip: usize,
+    err: u16,
+    frames: usize,
+    regs: usize,
+    func: usize,
+    base: usize,
 }
 
 impl<'m> Vm<'m> {
     fn error_at(&self, func: usize, ip: usize, message: impl Into<String>) -> Error {
         Error::new(self.module.functions[func].positions[ip - 1], message)
+    }
+
+    /// Removes handlers left by a function that has just returned.
+    fn drop_handlers_above(&mut self) {
+        while self.handlers.last().is_some_and(|h| h.frames > self.frames.len()) {
+            self.handlers.pop();
+        }
     }
 
     fn execute(&mut self, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {
@@ -378,7 +399,7 @@ impl<'m> Vm<'m> {
         }
         macro_rules! fail {
             ($msg:expr) => {
-                return Err(self.error_at(func, ip, $msg))
+                break Some(($msg).to_string())
             };
         }
 
@@ -388,7 +409,20 @@ impl<'m> Vm<'m> {
             if let Some(p) = self.prof.as_mut() {
                 *p.entry(op.name()).or_insert(0) += 1;
             }
-            match op {
+            let raised: Option<String> = loop {
+                match op {
+                Op::PushHandler(catch_ip, err) => self.handlers.push(Handler {
+                    catch_ip: catch_ip as usize,
+                    err,
+                    frames: self.frames.len(),
+                    regs: self.regs.len(),
+                    func,
+                    base,
+                }),
+                Op::PopHandler => {
+                    self.handlers.pop();
+                }
+                Op::Fail(r) => fail!(string(&reg!(r))),
                 Op::LoadInt(d, n) => reg!(d) = Value::Int(n),
                 Op::LoadReal(d, r) => reg!(d) = Value::Real(r),
                 Op::LoadBool(d, b) => reg!(d) = Value::Bool(b),
@@ -766,6 +800,7 @@ impl<'m> Vm<'m> {
                     ip = fr.ip;
                     base = fr.base;
                     reg!(fr.dst) = v;
+                    self.drop_handlers_above();
                 }
                 Op::RetNone => {
                     let Some(fr) = self.frames.pop() else { return Ok(()) };
@@ -774,6 +809,7 @@ impl<'m> Vm<'m> {
                     code = &m.functions[func].code;
                     ip = fr.ip;
                     base = fr.base;
+                    self.drop_handlers_above();
                 }
                 Op::Builtin { id, first, argc, dst } => {
                     let b = Builtin::from_id(id);
@@ -806,6 +842,23 @@ impl<'m> Vm<'m> {
                         Ok(v) => reg!(d) = v,
                         Err(msg) => fail!(msg),
                     }
+                }
+                }
+                break None;
+            };
+            if let Some(msg) = raised {
+                // a run-time error: jump to the nearest try's catch, or stop
+                match self.handlers.pop() {
+                    Some(h) => {
+                        self.frames.truncate(h.frames);
+                        self.regs.truncate(h.regs);
+                        func = h.func;
+                        code = &m.functions[func].code;
+                        base = h.base;
+                        ip = h.catch_ip;
+                        self.regs[base + h.err as usize] = Value::Str(msg.as_str().into());
+                    }
+                    None => return Err(self.error_at(func, ip, msg)),
                 }
             }
         }

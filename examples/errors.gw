@@ -1,0 +1,49 @@
+' Error handling: try / catch / always / fail.
+
+variables:
+    problem as string
+    balance as float
+    v as list of int
+
+' a caught run-time error (division by zero)
+try
+    output(10 div 0)
+catch problem
+    output("caught: ", problem)
+end try
+
+' fail raises your own error; always runs on every path
+balance = 50
+try
+    if(balance < 100)
+        fail "not enough money"
+    end if
+    output("paid")
+catch problem
+    output("refused: ", problem)
+always
+    output("transaction closed")
+end try
+
+' errors inside a called function unwind to the caller's try
+try
+    output(withdraw(20, 100))
+catch problem
+    output("error: ", problem)
+end try
+
+function withdraw(amount as float, have as float) as float
+    if(amount > have)
+        fail "amount too high"
+    end if
+    return have - amount
+end function
+
+' a missing element is catchable too
+try
+    output(v[3])
+catch problem
+    output("list: ", problem)
+end try
+
+output("program finished")

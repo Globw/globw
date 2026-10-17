@@ -95,6 +95,11 @@ pub enum StmtKind {
     /// assignment to a field or element reached through an expression:
     /// `people[i].name = "x"`, `grid[i].cells[j] = 0`
     SetMember(Expr, Expr),
+    /// `try ... catch name ... always ... end try`: runs the body, and on a
+    /// run-time error jumps to the catch block with the message in `name`.
+    Try { body: Vec<Stmt>, catch_name: String, catch_pos: Pos, catch: Vec<Stmt>, always: Vec<Stmt> },
+    /// `fail "message"`: raises a run-time error on purpose
+    Fail(Expr),
     Return(Option<Expr>),
     /// runs the start-up code of a module (procedure `init`) unless the
     /// global flag `flag` says it already ran; added by the module loader
