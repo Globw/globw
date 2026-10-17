@@ -87,7 +87,7 @@ variables:
 | `string` | text |
 | `bool` | `true` / `false` |
 
-Collections: `T[N]` (array), `T[N, M]` (matrix), `list of T` (list) and `dict of K to V` (dictionary).
+Collections: `T[N]` (array), `T[N, M]` (matrix), `list of T` (list), `set of T` (set) and `dict of K to V` (dictionary).
 
 - Arrays and matrices contain simple values (one of the four types above).
 - The elements of a list and the values of a dictionary can be of any type, collections included: `list of list of int`, `dict of string to list of string`, `dict of int to dict of string to float`… Collections can nest to any depth.
@@ -456,6 +456,18 @@ Python-like functions, named in plain English in Globw's style. "Number" means `
 | `clear_list(list)` | procedure | removes every element |
 
 `sum`, `contains`, `index_of`, `sort`, `join`, `minimum` and `maximum` work on collections of simple values; `length`, `append`, `remove`, `reverse`, `insert`, `take_last` and `clear_list` work on any list, nested ones included.
+
+**Sets** (a `set of int` or `set of string`: unique values, no order kept for lookup but iterated in insertion order)
+
+| Command | Result | Effect |
+|---|---|---|
+| `add(s, value)` | procedure | adds the value (nothing happens if already there) |
+| `discard(s, value)` | procedure | removes the value (nothing happens if absent) |
+| `contains(s, value)` | `bool` | the value is in the set |
+| `length(s)` | `int` | how many values |
+| `to_list(s)` | `list of T` | the values as a list, in insertion order |
+
+`for(x in s)` goes through the values. A set is printed as `{1, 2, 3}`.
 
 **Dictionaries**
 

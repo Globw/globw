@@ -79,6 +79,7 @@ pub enum Op {
     NewMatrix(Reg, u32, u32),
     NewList(Reg),
     NewDict(Reg),
+    NewSet(Reg),
     /// dst, class id, number of fields
     NewObject(Reg, u32, u32),
     /// dst, object, field slot
@@ -187,6 +188,7 @@ impl Op {
             Op::NewMatrix(..) => "NewMatrix",
             Op::NewList(..) => "NewList",
             Op::NewDict(..) => "NewDict",
+            Op::NewSet(..) => "NewSet",
             Op::NewObject(..) => "NewObject",
             Op::GetField(..) => "GetField",
             Op::SetField(..) => "SetField",

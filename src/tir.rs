@@ -57,6 +57,8 @@ pub enum Type {
     Func(u32),
     /// the type of the `none` literal (fits any object or function type)
     None,
+    /// a set of simple values (int or string)
+    Set(BaseType),
 }
 
 /// A type stored in the type table, so that `Type` stays small and `Copy`
@@ -303,6 +305,7 @@ impl Type {
             Type::Named(_) | Type::Object(_) => "an object",
             Type::Func(_) => "a function",
             Type::None => "none",
+            Type::Set(_) => "a set",
         }
     }
 
@@ -313,6 +316,7 @@ impl Type {
             Type::Matrix(Some(b)) => format!("a matrix of {}", b.plural()),
             Type::List(Some(_)) | Type::ListOf(_) => format!("a list of {}", list_elem(self).map_or("values".into(), Type::plural)),
             Type::Dict(k, v) => format!("a dictionary from {} to {}", k.plural(), resolve(v).plural()),
+            Type::Set(e) => format!("a set of {}", e.plural()),
             Type::Object(id) => format!("a {}", class_name(id)),
             Type::Named(id) => format!("a {}", named_name(id)),
             Type::Func(_) => {
@@ -485,6 +489,8 @@ pub enum IterKind {
     Items,
     /// the keys of a dictionary
     Keys,
+    /// the elements of a set
+    Set,
     /// the characters of a string
     Chars,
 }

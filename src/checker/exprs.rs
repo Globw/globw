@@ -315,6 +315,10 @@ impl<'p> Checker<'p> {
                 self.report(Error::new(pos, format!("\"{}\" needs exactly 1 index, like {}[i]", name, name)));
                 unknown(pos)
             }
+            Shape::Set => {
+                self.report(Error::new(pos, format!("a set is not indexed; use contains({}, x) or for(x in {})", name, name)));
+                unknown(pos)
+            }
             Shape::Scalar => {
                 if elem.is_none() {
                     // only strings can be indexed, so an unknown variable must be one
@@ -484,7 +488,7 @@ impl<'p> Checker<'p> {
                         self.hint(&x, BaseType::Str);
                         unknown(pos)
                     }
-                    Type::Array(_) | Type::List(_) | Type::ListOf(_) | Type::Dict(..) | Type::Base(BaseType::Str) => {
+                    Type::Array(_) | Type::List(_) | Type::ListOf(_) | Type::Dict(..) | Type::Set(_) | Type::Base(BaseType::Str) => {
                         base(TExprKind::Length(Box::new(x)), BaseType::Int, pos)
                     }
                     Type::Matrix(_) => {

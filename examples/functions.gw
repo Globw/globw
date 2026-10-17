@@ -8,12 +8,12 @@ variables:
     apply as function(int, int) as int
     i as int
 
-function add(a as int, b as int) as int
+function plus(a as int, b as int) as int
     return a + b
 end function
 
 ' a named function stored in a variable, then called through it
-apply = add
+apply = plus
 output("apply(3, 4) = ", apply(3, 4))
 
 for(i from 1 to 6)
@@ -23,7 +23,7 @@ end loop
 ' transform = map, keep = filter, reduce folds to one value
 squares = transform(nums, function(x as int) as int gives x * x)
 odds = keep(nums, function(x as int) as bool gives x mod 2 == 1)
-total = reduce(nums, add, 0)
+total = reduce(nums, plus, 0)
 
 output("numbers: ", nums)
 output("squares: ", squares)

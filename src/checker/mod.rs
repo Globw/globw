@@ -57,7 +57,7 @@ impl Var {
             Shape::Scalar => self.ty.map_or(Type::Unknown, Type::Base),
             Shape::Array(_) => Type::Array(self.ty),
             Shape::Matrix(..) => Type::Matrix(self.ty),
-            Shape::List | Shape::Dict => self.full,
+            Shape::List | Shape::Dict | Shape::Set => self.full,
         }
     }
 }

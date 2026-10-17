@@ -373,9 +373,13 @@ impl Parser {
         if self.is(&Tok::Function) {
             return Ok((Shape::Scalar, BaseType::Int, self.func_type_spec()?));
         }
-        if self.is_name("list") || self.is_name("dict") {
+        if self.is_name("list") || self.is_name("dict") || self.is_name("set") {
             let full = self.collection_type()?;
-            let shape = if matches!(full, Type::Dict(..)) { Shape::Dict } else { Shape::List };
+            let shape = match full {
+                Type::Dict(..) => Shape::Dict,
+                Type::Set(_) => Shape::Set,
+                _ => Shape::List,
+            };
             let base = full.base().or(match full {
                 Type::List(Some(b)) => Some(b),
                 _ => None,
@@ -421,19 +425,30 @@ impl Parser {
 
     /// `list of T` or `dict of K to V`, where T and V may be collections too.
     fn collection_type(&mut self) -> Result<Type, Error> {
-        use crate::tir::{dict_of, list_of, BaseType};
-        let is_list = self.is_name("list");
+        use crate::tir::{dict_of, list_of, BaseType, Type};
+        let kind = if self.is_name("list") {
+            0
+        } else if self.is_name("set") {
+            1
+        } else {
+            2
+        };
         self.advance();
         if !self.is_name("of") {
-            return self.fail(if is_list {
-                "expected \"of\" after \"list\", like list of int"
-            } else {
-                "expected \"of\" after \"dict\", like dict of string to int"
-            });
+            let hint = ["list of int", "set of string", "dict of string to int"][kind];
+            return self.fail(format!("expected \"of\", like {}", hint));
         }
         self.advance();
-        if is_list {
+        if kind == 0 {
             return Ok(list_of(self.element_type()?));
+        }
+        if kind == 1 {
+            let p = self.pos();
+            let e = self.base_type()?;
+            if e != BaseType::Int && e != BaseType::Str {
+                return Err(Error::new(p, "a set holds int or string values"));
+            }
+            return Ok(Type::Set(e));
         }
         let key_pos = self.pos();
         let key = self.base_type()?;
@@ -450,7 +465,7 @@ impl Parser {
     fn element_type(&mut self) -> Result<Type, Error> {
         if self.is(&Tok::Function) {
             self.func_type_spec()
-        } else if self.is_name("list") || self.is_name("dict") {
+        } else if self.is_name("list") || self.is_name("dict") || self.is_name("set") {
             self.collection_type()
         } else if let Tok::Name(n) = self.tok() {
             if is_base_type_word(n) {

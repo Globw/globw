@@ -95,6 +95,10 @@ pub enum Builtin {
     Insert,
     TakeLast,
     ClearList,
+    // sets
+    Add,
+    Discard,
+    ToList,
     // dictionaries
     HasKey,
     Get,
@@ -202,6 +206,9 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (Insert, "insert", Sig::Flexible { function: false }),
     (TakeLast, "take_last", Sig::Flexible { function: true }),
     (ClearList, "clear_list", Sig::Flexible { function: false }),
+    (Add, "add", Sig::Flexible { function: false }),
+    (Discard, "discard", Sig::Flexible { function: false }),
+    (ToList, "to_list", Sig::Flexible { function: true }),
     (HasKey, "has_key", Sig::Flexible { function: true }),
     (Get, "get", Sig::Flexible { function: true }),
     (RemoveKey, "remove_key", Sig::Flexible { function: false }),

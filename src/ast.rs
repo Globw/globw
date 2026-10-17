@@ -136,6 +136,7 @@ pub enum Shape {
     Matrix(usize, usize),
     List,
     Dict,
+    Set,
 }
 
 #[derive(Debug, Clone, PartialEq)]

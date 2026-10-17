@@ -110,10 +110,26 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(2), Type::Base(Str))
         }
+        Add | Discard => {
+            arity(2)?;
+            let Type::Set(e) = a[0] else { return other(format!("{} works with a set", b.name())) };
+            if !fits(Type::Base(e), a[1]) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(e) });
+            }
+            ok(vec![None, Some(e)], Type::Unknown)
+        }
+        ToList => {
+            arity(1)?;
+            match a[0] {
+                Type::Set(e) => ok(none(1), Type::List(Some(e))),
+                _ => other("to_list works with a set"),
+            }
+        }
         Contains | IndexOf => {
             arity(2)?;
             let ret = Type::Base(if b == Contains { Bool } else { Int });
             match (a[0], a[1]) {
+                (Type::Set(e), Type::Base(v)) if b == Contains && join(e, v) == Some(e) => ok(vec![None, Some(e)], ret),
                 (Type::Base(Str), Type::Base(Str)) if b == Contains => ok(none(2), ret),
                 (c, Type::Base(v)) if collection(c).is_some() => {
                     let e = collection(c).unwrap();
@@ -208,6 +224,13 @@ fn text(v: &Value) -> &str {
     match v {
         Value::Str(s) => s,
         other => panic!("internal error: expected a string, found {:?}", other),
+    }
+}
+
+fn set_data(v: &Value) -> &Rc<RefCell<Dict>> {
+    match v {
+        Value::Set(d) => d,
+        other => panic!("internal error: expected a set, found {:?}", other),
     }
 }
 
@@ -421,7 +444,17 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 string(chars[from as usize - 1..to as usize].iter().collect::<String>())
             }
         }
+        Add => {
+            set_data(&args[0]).borrow_mut().set(DictKey::of(&args[1]), Value::Bool(true));
+            Value::Null
+        }
+        Discard => {
+            set_data(&args[0]).borrow_mut().remove(&DictKey::of(&args[1]));
+            Value::Null
+        }
+        ToList => new_list(set_data(&args[0]).borrow().keys().map(DictKey::value).collect()),
         Contains | IndexOf => match &args[0] {
+            Value::Set(d) => Value::Bool(d.borrow().get(&DictKey::of(&args[1])).is_some()),
             Value::Str(s) => Value::Bool(s.contains(text(&args[1]))),
             c => {
                 let items = seq(c).borrow();

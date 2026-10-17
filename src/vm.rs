@@ -25,6 +25,8 @@ pub enum Value {
     Object(Rc<RefCell<Obj>>),
     /// a function value: the index of a compiled function
     Func(u32),
+    /// a set of simple values, kept as the keys of a dictionary
+    Set(Rc<RefCell<Dict>>),
 }
 
 /// An object: its class id and the values of its fields, in slot order.
@@ -248,6 +250,10 @@ fn repr_at(v: &Value, depth: usize) -> String {
             format!("{{{}}}", pairs.join(", "))
         }
         Value::Func(_) => "<function>".to_string(),
+        Value::Set(t) => {
+            let t = t.borrow();
+            format!("{{{}}}", t.keys().map(|k| repr_at(&k.value(), depth + 1)).collect::<Vec<_>>().join(", "))
+        }
         Value::Object(o) => {
             let o = o.borrow();
             let names = crate::tir::class_field_names(o.class);
@@ -598,6 +604,7 @@ impl<'m> Vm<'m> {
                 }
                 Op::NewList(d) => reg!(d) = Value::Seq(Rc::new(RefCell::new(Vec::new()))),
                 Op::NewDict(d) => reg!(d) = Value::Dict(Rc::new(RefCell::new(Dict::default()))),
+                Op::NewSet(d) => reg!(d) = Value::Set(Rc::new(RefCell::new(Dict::default()))),
                 Op::NewObject(d, class, _n) => {
                     let fields = m.class_fields[class as usize]
                         .iter()
@@ -702,6 +709,7 @@ impl<'m> Vm<'m> {
                     let n = match &reg!(s) {
                         Value::Seq(q) => q.borrow().len(),
                         Value::Dict(t) => t.borrow().len(),
+                        Value::Set(t) => t.borrow().len(),
                         Value::Str(t) => t.chars().count(),
                         other => panic!("internal error: length of {:?}", other),
                     };

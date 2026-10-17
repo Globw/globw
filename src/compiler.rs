@@ -57,6 +57,7 @@ fn alloc(shape: &Shape, dst: Reg) -> Option<Op> {
         Shape::Matrix(r, c) => Some(Op::NewMatrix(dst, r as u32, c as u32)),
         Shape::List => Some(Op::NewList(dst)),
         Shape::Dict => Some(Op::NewDict(dst)),
+        Shape::Set => Some(Op::NewSet(dst)),
         Shape::Scalar => None,
     }
 }
@@ -803,6 +804,8 @@ impl<'a> FnCompiler<'a> {
         self.expr_into(iter, c);
         if kind == IterKind::Keys {
             self.emit(Op::Builtin { id: crate::builtins::Builtin::Keys.id(), first: c, argc: 1, dst: c }, pos);
+        } else if kind == IterKind::Set {
+            self.emit(Op::Builtin { id: crate::builtins::Builtin::ToList.id(), first: c, argc: 1, dst: c }, pos);
         }
         let i = self.temp();
         self.emit(Op::LoadInt(i, 1), pos);
@@ -973,6 +976,30 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn sets_add_contains_iterate() {
+        let src = r#"variables:
+    seen as set of string
+    words as list of string
+    w as string
+    dups as int
+words = split("a b a c b a", " ")
+dups = 0
+for(w in words)
+    if(contains(seen, w))
+        dups = dups + 1
+    end if
+    add(seen, w)
+end loop
+output(length(seen), " ", dups, " ", contains(seen, "a"), " ", contains(seen, "z"))
+discard(seen, "a")
+output(length(seen))
+"#;
+        assert_eq!(run_src(src, ""), "3 3 true false
+2
+");
     }
 
     #[test]

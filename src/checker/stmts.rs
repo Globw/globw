@@ -317,11 +317,11 @@ impl<'p> Checker<'p> {
         let v = self.var(p);
         let (shape, ty) = (v.shape.clone(), v.ty);
         let needed = match shape {
-            Shape::Scalar => 0,
+            Shape::Scalar | Shape::Set => 0,
             Shape::Array(_) | Shape::List | Shape::Dict => 1,
             Shape::Matrix(..) => 2,
         };
-        if indices.len() == needed || (matches!(shape, Shape::List | Shape::Dict) && indices.is_empty()) {
+        if indices.len() == needed || (matches!(shape, Shape::List | Shape::Dict | Shape::Set) && indices.is_empty()) {
             return Some(TTarget { place: p, indices, pos: t.pos });
         }
         let err = match (&shape, indices.len()) {
@@ -343,6 +343,7 @@ impl<'p> Checker<'p> {
     fn assign(&mut self, t: TTarget, v: TExpr) -> TStmt {
         let var = self.var(t.place);
         let whole = var.shape != Shape::Scalar || matches!(var.full_type(), Type::Object(_) | Type::Func(_));
+        let _ = Shape::Set;
         if whole && t.indices.is_empty() {
             // a whole list, dictionary or object, like `words = split(s, " ")` or `p = new Point(1, 2)`
             let (expected, name) = (var.full_type(), var.name.clone());
@@ -385,6 +386,7 @@ impl<'p> Checker<'p> {
             Type::Base(BaseType::Str) => (Type::Base(BaseType::Str), IterKind::Chars),
             Type::Array(Some(b)) => (Type::Base(b), IterKind::Items),
             Type::Dict(k, _) => (Type::Base(k), IterKind::Keys),
+            Type::Set(e) => (Type::Base(e), IterKind::Set),
             t => match list_elem(t) {
                 Some(e) => (e, IterKind::Items),
                 None => {
