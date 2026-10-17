@@ -770,6 +770,17 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         ClockStamp => Value::Int(chrono::Utc::now().timestamp()),
         ClockFormat => string(clock_format(int(&args[0]), text(&args[1]))?),
         ClockParse => Value::Int(clock_parse(text(&args[0]), text(&args[1]))?),
+        EncodeBase64 => {
+            use base64::{engine::general_purpose::STANDARD, Engine};
+            string(STANDARD.encode(text(&args[0]).as_bytes()))
+        }
+        EncodeFromBase64 => {
+            use base64::{engine::general_purpose::STANDARD, Engine};
+            let bytes = STANDARD
+                .decode(text(&args[0]))
+                .map_err(|e| format!("encode.from_base64: not valid base64 ({})", e))?;
+            string(String::from_utf8(bytes).map_err(|_| "encode.from_base64: the decoded data is not text".to_string())?)
+        }
         other => panic!("internal error: {:?} is not a library function", other),
     })
 }

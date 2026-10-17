@@ -161,3 +161,13 @@ fn builtin_module_clock_roundtrip() {
     let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "2021-06-15 12:30:00\n"), "{}", stderr);
 }
+
+#[test]
+fn builtin_module_encode_base64() {
+    let dir = std::env::temp_dir().join("globw_encode_module_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import encode\noutput(encode.base64(\"hi\"), \" \", encode.from_base64(encode.base64(\"round\")))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "aGk= round\n"), "{}", stderr);
+}

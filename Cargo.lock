@@ -383,6 +383,7 @@ dependencies = [
 name = "globw"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "font8x8",
  "fontdue",

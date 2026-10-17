@@ -138,6 +138,9 @@ pub enum Builtin {
     ClockStamp,
     ClockFormat,
     ClockParse,
+    // module "encode" (base64)
+    EncodeBase64,
+    EncodeFromBase64,
 }
 
 use Builtin::*;
@@ -262,10 +265,12 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (ClockStamp, "clock.stamp", Sig::Fixed(&[], Some(Int))),
     (ClockFormat, "clock.format", Sig::Fixed(&[I, S], Some(Str))),
     (ClockParse, "clock.parse", Sig::Fixed(&[S, S], Some(Int))),
+    (EncodeBase64, "encode.base64", Sig::Fixed(&[S], Some(Str))),
+    (EncodeFromBase64, "encode.from_base64", Sig::Fixed(&[S], Some(Str))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
-pub const BUILTIN_MODULES: [&str; 5] = ["text", "hash", "web", "data", "clock"];
+pub const BUILTIN_MODULES: [&str; 6] = ["text", "hash", "web", "data", "clock", "encode"];
 
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)

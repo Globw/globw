@@ -10,6 +10,7 @@ codegen-units = 1
 panic = "abort"
 
 [dependencies]
+base64 = "0.22.1"
 chrono = "0.4.42"
 font8x8 = "0.3"
 fontdue = "0.9.4"

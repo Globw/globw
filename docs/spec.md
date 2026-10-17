@@ -541,11 +541,12 @@ import hash          ' digests
 import web           ' web requests
 import data          ' JSON
 import clock         ' dates and times
+import encode        ' base64
 ```
 
 - A built-in module is imported **plainly**: `import text` only, not `import text as t` nor `from text import ...`.
 - Its functions are used with the module prefix, like any module: `text.matches(s, pattern)`.
-- The built-in module names (`text`, `hash`, `web`, `data`, `clock`) are not reserved: a file that does not import them can still use those words as its own names.
+- The built-in module names (`text`, `hash`, `web`, `data`, `clock`, `encode`) are not reserved: a file that does not import them can still use those words as its own names.
 
 | Module | Function | Result | What it does |
 |---|---|---|---|
@@ -566,6 +567,8 @@ import clock         ' dates and times
 | `clock` | `clock.stamp()` | `int` | the current time as a Unix timestamp (seconds since 1970-01-01 UTC) |
 | `clock` | `clock.format(stamp, pattern)` | `string` | a Unix timestamp written as **local** time with a date pattern |
 | `clock` | `clock.parse(text, pattern)` | `int` | reads a local date-and-time written like `pattern` and returns its Unix timestamp |
+| `encode` | `encode.base64(s)` | `string` | the Base64 of the text's bytes |
+| `encode` | `encode.from_base64(s)` | `string` | the text decoded from Base64 (error if it is not valid Base64 or not text) |
 
 - A bad regular expression, an unreachable address, a server error or a timeout (30 s for `web.get`) becomes an ordinary run-time error, so it can be handled with `try`/`catch`.
 - In a `data` **path**, object members are written `name` or `.name` and array positions `[n]`, **1-based**: `"users[1].name"`. An empty path `""` is the whole document. Asking for the wrong kind of value (e.g. `data.number` on text), a missing path or invalid JSON is a catchable run-time error. `data.to_json` fails on values that have no JSON form (functions, objects, matrices). (For now each `data.*` call parses the JSON again; a pre-parsed handle is planned.)

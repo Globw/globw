@@ -5,6 +5,7 @@ import text
 import hash
 import data
 import clock
+import encode
 variables:
     entry as string
 entry = "order 2026-10-17 ref=AB12"
@@ -17,3 +18,4 @@ output(data.text("{\"city\":\"Roma\",\"days\":[1,2,3]}", "city"))
 output(data.size("{\"city\":\"Roma\",\"days\":[1,2,3]}", "days"))
 output(data.to_json([10, 20, 30]))
 output(clock.format(clock.parse("2026-10-17 09:00:00", "%Y-%m-%d %H:%M:%S"), "%d/%m/%Y"))
+output(encode.base64("Globw"), " ", encode.from_base64("R2xvYnc="))
