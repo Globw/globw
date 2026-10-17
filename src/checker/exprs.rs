@@ -108,6 +108,7 @@ impl<'p> Checker<'p> {
             }
             ExprKind::MethodCall(obj, method, args) => self.method_on(obj, method, args, pos, true),
             ExprKind::FuncRef(name) => self.func_value(name, pos),
+            ExprKind::NoneLit => TExpr { kind: TExprKind::NoneVal, ty: Type::None, pos },
             ExprKind::IsType(obj, class) => {
                 let object = self.expr(obj);
                 if !matches!(object.ty, Type::Object(_) | Type::Unknown) {
@@ -337,6 +338,16 @@ impl<'p> Checker<'p> {
     fn binary(&mut self, op: BinOp, a: TExpr, b: TExpr, pos: Pos) -> TExpr {
         use BaseType::*;
         use BinOp::*;
+        // comparing an object or function value to `none`
+        if matches!(op, Eq | NotEq) && (a.ty == Type::None || b.ty == Type::None) {
+            let other = if a.ty == Type::None { b } else { a };
+            if !matches!(other.ty, Type::Object(_) | Type::Func(_) | Type::None | Type::Unknown) {
+                self.report(Error::new(pos, format!("{} cannot be none", other.ty.full_name())));
+                return unknown(pos);
+            }
+            let check = base(TExprKind::IsNone(Box::new(other)), Bool, pos);
+            return if op == NotEq { base(TExprKind::Not(Box::new(check)), Bool, pos) } else { check };
+        }
         match op {
             And | Or => {
                 self.hint(&a, Bool);

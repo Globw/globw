@@ -90,7 +90,7 @@
         },
         {
           "name": "constant.language.boolean.globw",
-          "match": "\\b(true|false)\\b"
+          "match": "\\b(true|false|none)\\b"
         },
         {
           "name": "support.function.builtin.globw",

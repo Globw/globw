@@ -55,6 +55,8 @@ pub enum Type {
     Object(u16),
     /// a function value with the given signature (made with `func_type`)
     Func(u32),
+    /// the type of the `none` literal (fits any object or function type)
+    None,
 }
 
 /// A type stored in the type table, so that `Type` stays small and `Copy`
@@ -300,6 +302,7 @@ impl Type {
             Type::Dict(..) => "a dictionary",
             Type::Named(_) | Type::Object(_) => "an object",
             Type::Func(_) => "a function",
+            Type::None => "none",
         }
     }
 
@@ -348,6 +351,7 @@ pub fn fits(expected: Type, actual: Type) -> bool {
         (e, a) if list_elem(e).is_some() && list_elem(a) == Some(Type::Unknown) => true,
         (Type::Object(e), Type::Object(a)) => is_subclass(a, e),
         (Type::Func(_), Type::Func(_)) => expected == actual,
+        (Type::Object(_) | Type::Func(_), Type::None) => true,
         (e, a) => e == a,
     }
 }
@@ -411,6 +415,10 @@ pub enum TExprKind {
     VCall { slot: usize, args: Vec<TExpr> },
     /// `object is Class`: true when the object's class is that class or a subclass
     IsType(Box<TExpr>, u16),
+    /// the `none` value (an absent reference)
+    NoneVal,
+    /// true when the expression is `none`
+    IsNone(Box<TExpr>),
     /// a function value: the compiled function index
     FuncVal(usize),
     /// a call through a function value

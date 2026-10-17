@@ -445,7 +445,7 @@ impl Scope<'_> {
             }
             ExprKind::IsType(b, _) => self.expr(b),
             ExprKind::FuncRef(n) => *n = self.resolve(n, crate::errors::Pos::default(), true),
-            ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_) => {}
+            ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_) | ExprKind::NoneLit => {}
         }
     }
 }

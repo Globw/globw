@@ -224,7 +224,7 @@ fn repr_at(v: &Value, depth: usize) -> String {
     let items =
         |values: &mut dyn Iterator<Item = &Value>| values.map(|x| repr_at(x, depth + 1)).collect::<Vec<_>>().join(", ");
     match v {
-        Value::Null => "?".to_string(),
+        Value::Null => "none".to_string(),
         Value::Int(n) => n.to_string(),
         Value::Real(r) => format_real(*r),
         Value::Bool(true) => "true".to_string(),
@@ -614,13 +614,17 @@ impl<'m> Vm<'m> {
                     reg!(d) = Value::Object(Rc::new(RefCell::new(Obj { class: class as u16, fields })));
                 }
                 Op::GetField(d, o, slot) => {
-                    let v = object(&reg!(o)).borrow().fields[slot as usize].clone();
-                    if let Value::Null = v {
-                        fail!("this field has no value yet");
+                    if matches!(reg!(o), Value::Null) {
+                        fail!("this object has no value (it is none)");
                     }
+                    // an unset object or function field reads as `none`
+                    let v = object(&reg!(o)).borrow().fields[slot as usize].clone();
                     reg!(d) = v;
                 }
                 Op::SetField(o, slot, s) => {
+                    if matches!(reg!(o), Value::Null) {
+                        fail!("this object has no value (it is none)");
+                    }
                     let v = reg!(s).clone();
                     object(&reg!(o)).borrow_mut().fields[slot as usize] = v;
                 }
@@ -721,6 +725,9 @@ impl<'m> Vm<'m> {
                     if self.frames.len() >= MAX_CALL_DEPTH {
                         fail!("too many nested calls (maybe a recursion that never ends)");
                     }
+                    if matches!(self.regs[base + first as usize], Value::Null) {
+                        fail!("this object has no value (it is none)");
+                    }
                     let class = object(&self.regs[base + first as usize]).borrow().class as usize;
                     let f = m.vtable[class][slot as usize] as usize;
                     let callee = &m.functions[f];
@@ -754,6 +761,8 @@ impl<'m> Vm<'m> {
                     }
                     reg!(d) = Value::Bool(found);
                 }
+                Op::LoadNull(d) => reg!(d) = Value::Null,
+                Op::IsNull(d, r) => reg!(d) = Value::Bool(matches!(reg!(r), Value::Null)),
                 Op::LoadFunc(d, index) => reg!(d) = Value::Func(index),
                 Op::CallValue { func: fr, first, argc, dst } => {
                     if self.frames.len() >= MAX_CALL_DEPTH {

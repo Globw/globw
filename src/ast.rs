@@ -62,6 +62,8 @@ pub enum ExprKind {
     IsType(Box<Expr>, String),
     /// a reference to a named function or a lambda, used as a value
     FuncRef(String),
+    /// the `none` literal: an absent object or function value
+    NoneLit,
 }
 
 /// The left side of an assignment: `x`, `v[i]` or `m[i, j]`.

@@ -99,7 +99,25 @@ Collections: `T[N]` (array), `T[N, M]` (matrix), `list of T` (list) and `dict of
 - In particular a `float` cannot go into an `int` (the hint suggests `div` for integer division).
 - `input` converts the line it reads to the declared type of the variable.
 
-### 4.3 Values before use
+### 4.3 Nothing: `none`
+
+An object or function variable can hold `none`, meaning "no value / absent".
+
+```
+variables:
+    friend as Person
+friend = none
+if(friend == none)
+    output("no friend")
+end if
+```
+
+- `none` is written where an object or function value is expected; test it with `== none` and `!= none`.
+- An object field of object type starts as `none` until it is set, so a chain of objects (a linked list, a tree) ends at `none`.
+- Using `none` as if it were an object (a field or method) is a run-time error: `this object has no value (it is none)`. A `try` can catch it.
+- Numbers, booleans, strings, lists and dictionaries are never `none`: they always have a value (lists and dictionaries start empty).
+
+### 4.4 Values before use
 
 - Reading a simple variable that, on some path through the program, might not have a value yet is an **error before the program runs**. This is a definite-assignment analysis, like Java or C#.
 - `global` variables can get a value inside any procedure, so for them the check happens **at run time**: reading one that has no value yet stops the program with an error.

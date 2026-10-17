@@ -378,6 +378,13 @@ impl<'a> FnCompiler<'a> {
                 let r = self.operand(obj);
                 self.emit(Op::IsClass(d, r, *cid as u32), pos);
             }
+            TExprKind::NoneVal => {
+                self.emit(Op::LoadNull(d), pos);
+            }
+            TExprKind::IsNone(x) => {
+                let r = self.operand(x);
+                self.emit(Op::IsNull(d, r), pos);
+            }
             TExprKind::FuncVal(index) => {
                 self.emit(Op::LoadFunc(d, *index as u32), pos);
             }
@@ -966,6 +973,34 @@ output("after")
         assert!(run_src("variables:\n    l as list of int\n    n as int\nn = minimum(l)\n", "").contains("minimum: the list is empty"));
         assert!(run_src("variables:\n    s as string\ns = read_file(\"target/nope.txt\")\n", "").contains("cannot read the file \"target/nope.txt\""));
         assert!(run_src("variables:\n    l as list of int\ninsert(l, 3, 1)\n", "").contains("insert: the position must be from 1 to 1, here it is 3"));
+    }
+
+    #[test]
+    fn none_for_absent_objects() {
+        let src = r#"variables:
+    head as Node
+    cur as Node
+    total as int
+class Node
+    variables:
+        value as int
+        next as Node
+    procedure new(value as int)
+        self.value = value
+    end procedure
+end class
+head = new Node(1)
+head.next = new Node(2)
+total = 0
+cur = head
+while(cur != none)
+    total = total + cur.value
+    cur = cur.next
+end loop
+output(total, " ", head.next.next == none)
+"#;
+        assert_eq!(run_src(src, ""), "3 true
+");
     }
 
     #[test]

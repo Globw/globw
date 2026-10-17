@@ -114,6 +114,10 @@ pub enum Op {
     CallMethod { slot: u32, first: Reg, argc: u16, dst: Reg },
     /// dst = (object at `obj` is of class `class` or a subclass)
     IsClass(Reg, Reg, u32),
+    /// load `none` (an absent reference) into a register
+    LoadNull(Reg),
+    /// dst = (the register holds `none`)
+    IsNull(Reg, Reg),
     /// load a function value (its compiled function index) into a register
     LoadFunc(Reg, u32),
     /// call the function whose index is the value in register `func`
@@ -199,6 +203,8 @@ impl Op {
             Op::Call { .. } => "Call",
             Op::CallMethod { .. } => "CallMethod",
             Op::IsClass(..) => "IsClass",
+            Op::LoadNull(..) => "LoadNull",
+            Op::IsNull(..) => "IsNull",
             Op::LoadFunc(..) => "LoadFunc",
             Op::CallValue { .. } => "CallValue",
             Op::Ret(..) => "Ret",

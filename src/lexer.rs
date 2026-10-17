@@ -33,6 +33,7 @@ pub enum Tok {
     Mod,
     True,
     False,
+    None,
     Break,
     Continue,
     Class,
@@ -96,6 +97,7 @@ pub fn keyword(word: &str) -> Option<Tok> {
         "mod" => Tok::Mod,
         "true" => Tok::True,
         "false" => Tok::False,
+        "none" => Tok::None,
         "break" => Tok::Break,
         "continue" => Tok::Continue,
         "class" => Tok::Class,
@@ -494,9 +496,9 @@ mod tests {
     fn miscased_keywords() {
         assert_eq!(miscased_statement_keyword("IF"), Some("if".to_string()));
         assert_eq!(miscased_statement_keyword("End"), Some("end".to_string()));
-        assert_eq!(miscased_statement_keyword("if"), None);
-        assert_eq!(miscased_statement_keyword("x"), None);
+        assert_eq!(miscased_statement_keyword("if"), Option::None);
+        assert_eq!(miscased_statement_keyword("x"), Option::None);
         assert_eq!(miscased_value_keyword("TRUE"), Some("true".to_string()));
-        assert_eq!(miscased_value_keyword("a"), None);
+        assert_eq!(miscased_value_keyword("a"), Option::None);
     }
 }

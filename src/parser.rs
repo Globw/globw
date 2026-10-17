@@ -52,6 +52,7 @@ fn text(t: &Tok) -> &'static str {
         Tok::EndClass => "end class",
         Tok::New => "new",
         Tok::Is => "is",
+        Tok::None => "none",
         Tok::Try => "try",
         Tok::Catch => "catch",
         Tok::Always => "always",
@@ -1119,6 +1120,7 @@ impl Parser {
             Tok::Str(s) => ExprKind::Str(s),
             Tok::True => ExprKind::Bool(true),
             Tok::False => ExprKind::Bool(false),
+            Tok::None => ExprKind::NoneLit,
             Tok::LParen => {
                 let e = self.expr()?;
                 self.expect(&Tok::RParen, "\")\"")?;
@@ -1232,6 +1234,7 @@ mod tests {
             ExprKind::MethodCall(b, m, a) => format!("{}.{}({})", sx(b), m, list(a)),
             ExprKind::IsType(b, c) => format!("({} is {})", sx(b), c),
             ExprKind::FuncRef(n) => format!("@{}", n),
+            ExprKind::NoneLit => "none".to_string(),
         }
     }
 
