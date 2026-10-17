@@ -1058,6 +1058,735 @@ fn numbers(v: &Value) -> Result<Vec<f64>, String> {
     Ok(items.iter().map(real).collect())
 }
 
+fn permutations(n: i64, k: i64) -> Result<i64, String> {
+    if n < 0 || k < 0 {
+        return Err("choose: the values cannot be negative".to_string());
+    }
+    if k > n {
+        return Ok(0);
+    }
+    let mut acc: i64 = 1;
+    for i in 0..k {
+        acc = acc.checked_mul(n - i).ok_or(OVERFLOW)?;
+    }
+    Ok(acc)
+}
+
+fn combinations(n: i64, k: i64) -> Result<i64, String> {
+    if n < 0 || k < 0 {
+        return Err("choose: the values cannot be negative".to_string());
+    }
+    if k > n {
+        return Ok(0);
+    }
+    let k = k.min(n - k);
+    let mut acc: i64 = 1;
+    for i in 0..k {
+        acc = acc.checked_mul(n - i).ok_or(OVERFLOW)? / (i + 1);
+    }
+    Ok(acc)
+}
+
+fn catalan(n: i64) -> Result<i64, String> {
+    if n < 0 {
+        return Err("seq.catalan: the position cannot be negative".to_string());
+    }
+    Ok(combinations(2 * n, n)? / (n + 1))
+}
+
+fn mod_pow(base: i64, exp: i64, m: i64) -> Result<i64, String> {
+    if m <= 0 {
+        return Err("modular.pow: the modulus must be positive".to_string());
+    }
+    if exp < 0 {
+        return Err("modular.pow: the exponent cannot be negative".to_string());
+    }
+    let m = m as i128;
+    let mut result: i128 = 1 % m;
+    let mut b = (base as i128).rem_euclid(m);
+    let mut e = exp as u64;
+    while e > 0 {
+        if e & 1 == 1 {
+            result = result * b % m;
+        }
+        b = b * b % m;
+        e >>= 1;
+    }
+    Ok(result as i64)
+}
+
+fn collatz(n: i64) -> Result<i64, String> {
+    if n < 1 {
+        return Err("collatz.steps: the number must be positive".to_string());
+    }
+    let mut n = n as i128;
+    let mut steps = 0;
+    while n != 1 {
+        n = if n % 2 == 0 { n / 2 } else { 3 * n + 1 };
+        steps += 1;
+        if steps > 10_000_000 {
+            return Err("collatz.steps: too many steps".to_string());
+        }
+    }
+    Ok(steps)
+}
+
+fn is_perfect(n: i64) -> bool {
+    if n < 2 {
+        return false;
+    }
+    let mut sum = 1i64;
+    let mut d = 2;
+    while d * d <= n {
+        if n % d == 0 {
+            sum += d;
+            if d != n / d {
+                sum += n / d;
+            }
+        }
+        d += 1;
+    }
+    sum == n
+}
+
+fn is_armstrong(n: i64) -> bool {
+    if n < 0 {
+        return false;
+    }
+    let s = n.to_string();
+    let power = s.len() as u32;
+    let sum: u128 = s.bytes().map(|b| ((b - b'0') as u128).pow(power)).sum();
+    sum == n as u128
+}
+
+fn mask_middle(s: &str, keep: i64) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let k = keep.max(0) as usize;
+    if chars.len() <= 2 * k {
+        return "*".repeat(chars.len());
+    }
+    chars
+        .iter()
+        .enumerate()
+        .map(|(i, c)| if i < k || i >= chars.len() - k { *c } else { '*' })
+        .collect()
+}
+
+fn pig_latin(s: &str) -> String {
+    s.split_whitespace()
+        .map(|w| {
+            let lower = w.to_lowercase();
+            let chars: Vec<char> = lower.chars().collect();
+            if chars.is_empty() {
+                return String::new();
+            }
+            if "aeiou".contains(chars[0]) {
+                format!("{}way", lower)
+            } else {
+                let idx = chars.iter().position(|c| "aeiou".contains(*c)).unwrap_or(chars.len());
+                let head: String = chars[..idx].iter().collect();
+                let tail: String = chars[idx..].iter().collect();
+                format!("{}{}ay", tail, head)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn caesar_char(c: char, shift: i64) -> char {
+    let sh = shift.rem_euclid(26) as u8;
+    if c.is_ascii_uppercase() {
+        (b'A' + (c as u8 - b'A' + sh) % 26) as char
+    } else if c.is_ascii_lowercase() {
+        (b'a' + (c as u8 - b'a' + sh) % 26) as char
+    } else {
+        c
+    }
+}
+
+fn atbash(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() {
+                (b'z' - (c as u8 - b'a')) as char
+            } else if c.is_ascii_uppercase() {
+                (b'Z' - (c as u8 - b'A')) as char
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+fn vigenere(s: &str, key: &str, encode: bool) -> Result<String, String> {
+    let k: Vec<i64> = key.chars().filter(|c| c.is_ascii_alphabetic()).map(|c| (c.to_ascii_lowercase() as u8 - b'a') as i64).collect();
+    if k.is_empty() {
+        return Err("vigenere: the key must contain letters".to_string());
+    }
+    let mut ki = 0;
+    let mut out = String::new();
+    for c in s.chars() {
+        if c.is_ascii_alphabetic() {
+            let shift = if encode { k[ki % k.len()] } else { -k[ki % k.len()] };
+            out.push(caesar_char(c, shift));
+            ki += 1;
+        } else {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+fn rot47(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let b = c as u32;
+            if (33..=126).contains(&b) {
+                char::from_u32(33 + (b - 33 + 47) % 94).unwrap()
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+fn bin_decode(s: &str) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    for group in s.split_whitespace() {
+        bytes.push(u8::from_str_radix(group, 2).map_err(|_| format!("bin.decode: \"{}\" is not 8 bits", group))?);
+    }
+    String::from_utf8(bytes).map_err(|_| "bin.decode: the data is not text".to_string())
+}
+
+const B32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+fn base32_encode(data: &[u8]) -> String {
+    let mut out = String::new();
+    for chunk in data.chunks(5) {
+        let mut buf = [0u8; 5];
+        buf[..chunk.len()].copy_from_slice(chunk);
+        let n = (u64::from(buf[0]) << 32)
+            | (u64::from(buf[1]) << 24)
+            | (u64::from(buf[2]) << 16)
+            | (u64::from(buf[3]) << 8)
+            | u64::from(buf[4]);
+        let keep = match chunk.len() {
+            1 => 2,
+            2 => 4,
+            3 => 5,
+            4 => 7,
+            _ => 8,
+        };
+        for i in 0..8 {
+            if i < keep {
+                out.push(B32[((n >> (35 - i * 5)) & 31) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn base32_decode(s: &str) -> Result<String, String> {
+    let mut bits = 0u64;
+    let mut nbits = 0u32;
+    let mut out = Vec::new();
+    for ch in s.bytes().filter(|b| !b.is_ascii_whitespace() && *b != b'=') {
+        let up = ch.to_ascii_uppercase();
+        let val = B32.iter().position(|&x| x == up).ok_or_else(|| format!("base32.decode: '{}' is not a base32 character", ch as char))? as u64;
+        bits = (bits << 5) | val;
+        nbits += 5;
+        if nbits >= 8 {
+            nbits -= 8;
+            out.push((bits >> nbits) as u8);
+        }
+    }
+    String::from_utf8(out).map_err(|_| "base32.decode: the data is not text".to_string())
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
+}
+
+fn html_unescape(s: &str) -> String {
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
+}
+
+fn anagram(a: &str, b: &str) -> bool {
+    let norm = |s: &str| {
+        let mut v: Vec<char> = s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
+        v.sort_unstable();
+        v
+    };
+    !a.is_empty() && norm(a) == norm(b)
+}
+
+fn rle_encode(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        let mut count = 1;
+        while chars.peek() == Some(&c) {
+            chars.next();
+            count += 1;
+        }
+        out.push(c);
+        out.push_str(&count.to_string());
+    }
+    out
+}
+
+fn rle_decode(s: &str) -> Result<String, String> {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        let mut num = String::new();
+        while let Some(d) = chars.peek() {
+            if d.is_ascii_digit() {
+                num.push(*d);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if num.is_empty() {
+            return Err("rle.decode: a character is not followed by a count".to_string());
+        }
+        let count: usize = num.parse().map_err(|_| "rle.decode: the count is too large".to_string())?;
+        if count > 10_000_000 {
+            return Err("rle.decode: the count is too large".to_string());
+        }
+        for _ in 0..count {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+fn wrap_at(s: &str, width: i64) -> String {
+    let w = width.max(1) as usize;
+    let mut lines = Vec::new();
+    for para in s.lines() {
+        let mut line = String::new();
+        for word in para.split_whitespace() {
+            if line.is_empty() {
+                line = word.to_string();
+            } else if line.chars().count() + 1 + word.chars().count() <= w {
+                line.push(' ');
+                line.push_str(word);
+            } else {
+                lines.push(std::mem::take(&mut line));
+                line = word.to_string();
+            }
+        }
+        lines.push(line);
+    }
+    lines.join("\n")
+}
+
+fn spongebob(s: &str) -> String {
+    let mut upper = false;
+    s.chars()
+        .map(|c| {
+            if c.is_alphabetic() {
+                upper = !upper;
+                if upper {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+fn boolv(v: &Value) -> bool {
+    match v {
+        Value::Bool(b) => *b,
+        other => panic!("internal error: expected a bool, found {:?}", other),
+    }
+}
+
+fn bmi_category(b: f64) -> String {
+    (if b < 18.5 {
+        "underweight"
+    } else if b < 25.0 {
+        "normal"
+    } else if b < 30.0 {
+        "overweight"
+    } else {
+        "obese"
+    })
+    .to_string()
+}
+
+fn planet_gravity(name: &str) -> Result<f64, String> {
+    Ok(match name.to_lowercase().as_str() {
+        "mercury" => 3.7,
+        "venus" => 8.87,
+        "earth" => 9.81,
+        "moon" => 1.62,
+        "mars" => 3.71,
+        "jupiter" => 24.79,
+        "saturn" => 10.44,
+        "uranus" => 8.69,
+        "neptune" => 11.15,
+        "pluto" => 0.62,
+        "sun" => 274.0,
+        _ => return Err(format!("gravity.on: unknown place \"{}\"", name)),
+    })
+}
+
+fn loan_payment(principal: f64, annual_rate: f64, months: i64) -> Result<f64, String> {
+    if months <= 0 {
+        return Err("loan.payment: the number of months must be positive".to_string());
+    }
+    let r = annual_rate / 100.0 / 12.0;
+    let n = months as f64;
+    if r == 0.0 {
+        return Ok(principal / n);
+    }
+    Ok(principal * r * (1.0 + r).powf(n) / ((1.0 + r).powf(n) - 1.0))
+}
+
+fn money_format(amount: f64) -> String {
+    let neg = amount < 0.0;
+    let s = format!("{:.2}", amount.abs());
+    let (int_part, dec) = s.split_once('.').unwrap_or((s.as_str(), "00"));
+    let bytes = int_part.as_bytes();
+    let mut grouped = String::new();
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(*b as char);
+    }
+    format!("{}{}.{}", if neg { "-" } else { "" }, grouped, dec)
+}
+
+fn bearing(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let (p1, p2) = (lat1.to_radians(), lat2.to_radians());
+    let dl = (lon2 - lon1).to_radians();
+    let y = dl.sin() * p2.cos();
+    let x = p1.cos() * p2.sin() - p1.sin() * p2.cos() * dl.cos();
+    (y.atan2(x).to_degrees() + 360.0) % 360.0
+}
+
+fn heron(a: f64, b: f64, c: f64) -> Result<f64, String> {
+    if a <= 0.0 || b <= 0.0 || c <= 0.0 || a + b <= c || a + c <= b || b + c <= a {
+        return Err("triangle.heron: these sides do not form a triangle".to_string());
+    }
+    let s = (a + b + c) / 2.0;
+    Ok((s * (s - a) * (s - b) * (s - c)).sqrt())
+}
+
+fn weekday_of(stamp: i64) -> Result<String, String> {
+    use chrono::Datelike;
+    let dt = chrono::DateTime::from_timestamp(stamp, 0).ok_or("weekday.of: the timestamp is out of range")?;
+    const NAMES: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    Ok(NAMES[dt.weekday().num_days_from_monday() as usize].to_string())
+}
+
+fn month_name(n: i64) -> Result<String, String> {
+    const M: [&str; 12] = [
+        "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
+        "December",
+    ];
+    if !(1..=12).contains(&n) {
+        return Err(format!("month.name: {} is not a month (1-12)", n));
+    }
+    Ok(M[(n - 1) as usize].to_string())
+}
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+fn days_in_month(y: i64, m: i64) -> Result<i64, String> {
+    Ok(match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap(y) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return Err(format!("month.days: {} is not a month (1-12)", m)),
+    })
+}
+
+fn age_years(birth: i64, now: i64) -> i64 {
+    use chrono::Datelike;
+    match (chrono::DateTime::from_timestamp(birth, 0), chrono::DateTime::from_timestamp(now, 0)) {
+        (Some(b), Some(n)) => {
+            let mut years = n.year() - b.year();
+            if (n.month(), n.day()) < (b.month(), b.day()) {
+                years -= 1;
+            }
+            years as i64
+        }
+        _ => 0,
+    }
+}
+
+fn zodiac_sign(month: i64, day: i64) -> Result<String, String> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return Err("zodiac.sign: that is not a valid date".to_string());
+    }
+    let sign = match month {
+        1 => if day < 20 { "Capricorn" } else { "Aquarius" },
+        2 => if day < 19 { "Aquarius" } else { "Pisces" },
+        3 => if day < 21 { "Pisces" } else { "Aries" },
+        4 => if day < 20 { "Aries" } else { "Taurus" },
+        5 => if day < 21 { "Taurus" } else { "Gemini" },
+        6 => if day < 21 { "Gemini" } else { "Cancer" },
+        7 => if day < 23 { "Cancer" } else { "Leo" },
+        8 => if day < 23 { "Leo" } else { "Virgo" },
+        9 => if day < 23 { "Virgo" } else { "Libra" },
+        10 => if day < 23 { "Libra" } else { "Scorpio" },
+        11 => if day < 22 { "Scorpio" } else { "Sagittarius" },
+        _ => if day < 22 { "Sagittarius" } else { "Capricorn" },
+    };
+    Ok(sign.to_string())
+}
+
+fn season_of(m: i64) -> Result<String, String> {
+    Ok(match m {
+        12 | 1 | 2 => "winter",
+        3 | 4 | 5 => "spring",
+        6 | 7 | 8 => "summer",
+        9 | 10 | 11 => "autumn",
+        _ => return Err(format!("season.of: {} is not a month", m)),
+    }
+    .to_string())
+}
+
+fn grade_letter(score: f64) -> String {
+    (if score >= 90.0 {
+        "A"
+    } else if score >= 80.0 {
+        "B"
+    } else if score >= 70.0 {
+        "C"
+    } else if score >= 60.0 {
+        "D"
+    } else {
+        "F"
+    })
+    .to_string()
+}
+
+fn fraction_simplify(n: i64, d: i64) -> Result<String, String> {
+    if d == 0 {
+        return Err("fraction.simplify: the denominator is zero".to_string());
+    }
+    let g = gcd(n, d).max(1);
+    let (mut nn, mut dd) = (n / g, d / g);
+    if dd < 0 {
+        nn = -nn;
+        dd = -dd;
+    }
+    Ok(format!("{}/{}", nn, dd))
+}
+
+fn fnv1a(s: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h as i64
+}
+
+fn djb2(s: &str) -> i64 {
+    let mut h: u64 = 5381;
+    for b in s.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u64);
+    }
+    h as i64
+}
+
+fn sdbm(s: &str) -> i64 {
+    let mut h: u64 = 0;
+    for b in s.bytes() {
+        h = (b as u64).wrapping_add(h.wrapping_shl(6)).wrapping_add(h.wrapping_shl(16)).wrapping_sub(h);
+    }
+    h as i64
+}
+
+fn adler32(s: &str) -> i64 {
+    let (mut a, mut b): (u32, u32) = (1, 0);
+    for byte in s.bytes() {
+        a = (a + byte as u32) % 65521;
+        b = (b + a) % 65521;
+    }
+    (((b << 16) | a) as u64) as i64
+}
+
+fn ipv4_valid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    parts.len() == 4
+        && parts.iter().all(|p| {
+            !p.is_empty() && p.len() <= 3 && p.chars().all(|c| c.is_ascii_digit()) && p.parse::<u32>().map(|n| n <= 255).unwrap_or(false)
+        })
+}
+
+thread_local! {
+    static RNG: std::cell::Cell<u64> = std::cell::Cell::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64)
+            | 1,
+    );
+}
+
+fn rng_u64() -> u64 {
+    RNG.with(|c| {
+        let mut x = c.get();
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        c.set(x);
+        x
+    })
+}
+
+fn rng_range(lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return lo;
+    }
+    let span = (hi as i128 - lo as i128 + 1) as u128;
+    (lo as i128 + (rng_u64() as u128 % span) as i128) as i64
+}
+
+fn rng_hex(len: i64) -> Result<String, String> {
+    if len < 0 {
+        return Err("token.hex: the length cannot be negative".to_string());
+    }
+    if len > 100_000 {
+        return Err("token.hex: the length is too large".to_string());
+    }
+    let digits = b"0123456789abcdef";
+    Ok((0..len).map(|_| digits[(rng_u64() % 16) as usize] as char).collect())
+}
+
+fn rng_password(len: i64) -> Result<String, String> {
+    if len < 0 {
+        return Err("password.make: the length cannot be negative".to_string());
+    }
+    if len > 100_000 {
+        return Err("password.make: the length is too large".to_string());
+    }
+    let set = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*?";
+    Ok((0..len).map(|_| set[(rng_u64() % set.len() as u64) as usize] as char).collect())
+}
+
+fn rng_nanoid() -> String {
+    let set = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+    (0..21).map(|_| set[(rng_u64() % 64) as usize] as char).collect()
+}
+
+const LOREM: &[&str] = &[
+    "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do", "eiusmod", "tempor",
+    "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua",
+];
+
+fn lorem_words(n: i64) -> String {
+    let n = n.max(0) as usize;
+    (0..n).map(|i| LOREM[i % LOREM.len()]).collect::<Vec<_>>().join(" ")
+}
+
+fn caps_first(s: &str) -> String {
+    let mut ch = s.chars();
+    match ch.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + ch.as_str(),
+        None => String::new(),
+    }
+}
+
+fn divisor_count(n: i64) -> Result<i64, String> {
+    if n < 1 {
+        return Err("factor.count: the number must be positive".to_string());
+    }
+    let mut count = 0;
+    let mut d = 1;
+    while d * d <= n {
+        if n % d == 0 {
+            count += if d == n / d { 1 } else { 2 };
+        }
+        d += 1;
+    }
+    Ok(count)
+}
+
+fn divisor_sum(n: i64) -> Result<i64, String> {
+    if n < 1 {
+        return Err("factor.sum: the number must be positive".to_string());
+    }
+    let mut sum = 0i64;
+    let mut d = 1;
+    while d * d <= n {
+        if n % d == 0 {
+            sum += d;
+            if d != n / d {
+                sum += n / d;
+            }
+        }
+        d += 1;
+    }
+    Ok(sum)
+}
+
+fn totient(n: i64) -> Result<i64, String> {
+    if n < 1 {
+        return Err("totient.of: the number must be positive".to_string());
+    }
+    let mut result = n;
+    let mut nn = n;
+    let mut p = 2;
+    while p * p <= nn {
+        if nn % p == 0 {
+            while nn % p == 0 {
+                nn /= p;
+            }
+            result -= result / p;
+        }
+        p += 1;
+    }
+    if nn > 1 {
+        result -= result / nn;
+    }
+    Ok(result)
+}
+
+fn heat_index(tc: f64, rh: f64) -> f64 {
+    let t = tc * 9.0 / 5.0 + 32.0;
+    let hi = -42.379 + 2.049_015_23 * t + 10.143_331_27 * rh - 0.224_755_41 * t * rh
+        - 0.006_837_83 * t * t
+        - 0.054_817_17 * rh * rh
+        + 0.001_228_74 * t * t * rh
+        + 0.000_852_82 * t * rh * rh
+        - 0.000_001_99 * t * t * rh * rh;
+    (hi - 32.0) * 5.0 / 9.0
+}
+
+fn quadratic_root(a: f64, b: f64, c: f64, plus: bool) -> Result<f64, String> {
+    if a == 0.0 {
+        return Err("quadratic: 'a' is zero, so this is not a quadratic equation".to_string());
+    }
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return Err("quadratic: there are no real roots".to_string());
+    }
+    let sq = disc.sqrt();
+    Ok(if plus { (-b + sq) / (2.0 * a) } else { (-b - sq) / (2.0 * a) })
+}
+
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
 
 /// A float that must become an int (floor, ceiling, truncate, to_int).
@@ -1664,6 +2393,662 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             let var = v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64;
             Value::Real(var.sqrt())
         }
+        // batch A: unit conversions
+        AreaSqmToSqft => Value::Real(real(&args[0]) * 10.763_910_4),
+        AreaSqftToSqm => Value::Real(real(&args[0]) / 10.763_910_4),
+        AreaAcreToSqm => Value::Real(real(&args[0]) * 4046.856_42),
+        AreaSqmToAcre => Value::Real(real(&args[0]) / 4046.856_42),
+        AreaHectareToAcre => Value::Real(real(&args[0]) * 2.471_053_8),
+        AreaAcreToHectare => Value::Real(real(&args[0]) / 2.471_053_8),
+        VolLToGal => Value::Real(real(&args[0]) * 0.264_172_05),
+        VolGalToL => Value::Real(real(&args[0]) / 0.264_172_05),
+        VolLToMl => Value::Real(real(&args[0]) * 1000.0),
+        VolMlToL => Value::Real(real(&args[0]) / 1000.0),
+        VolCupToMl => Value::Real(real(&args[0]) * 236.588_24),
+        VolMlToCup => Value::Real(real(&args[0]) / 236.588_24),
+        SpeedKmhToMph => Value::Real(real(&args[0]) * 0.621_371_19),
+        SpeedMphToKmh => Value::Real(real(&args[0]) / 0.621_371_19),
+        SpeedMpsToKmh => Value::Real(real(&args[0]) * 3.6),
+        SpeedKmhToMps => Value::Real(real(&args[0]) / 3.6),
+        SpeedKnotToKmh => Value::Real(real(&args[0]) * 1.852),
+        SpeedKmhToKnot => Value::Real(real(&args[0]) / 1.852),
+        PaToBar => Value::Real(real(&args[0]) / 100_000.0),
+        BarToPa => Value::Real(real(&args[0]) * 100_000.0),
+        PsiToBar => Value::Real(real(&args[0]) * 0.068_947_57),
+        BarToPsi => Value::Real(real(&args[0]) / 0.068_947_57),
+        AtmToBar => Value::Real(real(&args[0]) * 1.013_25),
+        BarToAtm => Value::Real(real(&args[0]) / 1.013_25),
+        JouleToCal => Value::Real(real(&args[0]) * 0.239_005_7),
+        CalToJoule => Value::Real(real(&args[0]) / 0.239_005_7),
+        KwhToJoule => Value::Real(real(&args[0]) * 3_600_000.0),
+        JouleToKwh => Value::Real(real(&args[0]) / 3_600_000.0),
+        WattToHp => Value::Real(real(&args[0]) * 0.001_341_022),
+        HpToWatt => Value::Real(real(&args[0]) / 0.001_341_022),
+        MpgToL100 => {
+            let x = real(&args[0]);
+            if x == 0.0 { return Err("fuel.mpg_to_l100km: miles per gallon is zero".to_string()); }
+            Value::Real(235.214_583 / x)
+        }
+        L100ToMpg => {
+            let x = real(&args[0]);
+            if x == 0.0 { return Err("fuel.l100km_to_mpg: liters per 100km is zero".to_string()); }
+            Value::Real(235.214_583 / x)
+        }
+        NewtonToLbf => Value::Real(real(&args[0]) * 0.224_808_94),
+        LbfToNewton => Value::Real(real(&args[0]) / 0.224_808_94),
+        NmToLbft => Value::Real(real(&args[0]) * 0.737_562_15),
+        LbftToNm => Value::Real(real(&args[0]) / 0.737_562_15),
+        MbpsToMbs => Value::Real(real(&args[0]) / 8.0),
+        MbsToMbps => Value::Real(real(&args[0]) * 8.0),
+        HzToRpm => Value::Real(real(&args[0]) * 60.0),
+        RpmToHz => Value::Real(real(&args[0]) / 60.0),
+        TbspToMl => Value::Real(real(&args[0]) * 14.786_765),
+        MlToTbsp => Value::Real(real(&args[0]) / 14.786_765),
+        TspToMl => Value::Real(real(&args[0]) * 4.928_922),
+        MlToTsp => Value::Real(real(&args[0]) / 4.928_922),
+        NmiToKm => Value::Real(real(&args[0]) * 1.852),
+        KmToNmi => Value::Real(real(&args[0]) / 1.852),
+        AuToKm => Value::Real(real(&args[0]) * 149_597_870.7),
+        KmToAu => Value::Real(real(&args[0]) / 149_597_870.7),
+        LyToKm => Value::Real(real(&args[0]) * 9.460_730_472e12),
+        KmToLy => Value::Real(real(&args[0]) / 9.460_730_472e12),
+        StoneToKg => Value::Real(real(&args[0]) * 6.350_293_18),
+        KgToStone => Value::Real(real(&args[0]) / 6.350_293_18),
+        Gcm3ToKgm3 => Value::Real(real(&args[0]) * 1000.0),
+        Kgm3ToGcm3 => Value::Real(real(&args[0]) / 1000.0),
+        GainToDb => Value::Real(20.0 * real(&args[0]).log10()),
+        DbToGain => Value::Real(10f64.powf(real(&args[0]) / 20.0)),
+        BpmToMs => {
+            let x = real(&args[0]);
+            if x == 0.0 { return Err("tempo.bpm_to_ms: the tempo is zero".to_string()); }
+            Value::Real(60_000.0 / x)
+        }
+        MsToBpm => {
+            let x = real(&args[0]);
+            if x == 0.0 { return Err("tempo.ms_to_bpm: the duration is zero".to_string()); }
+            Value::Real(60_000.0 / x)
+        }
+        DegToGrad => Value::Real(real(&args[0]) * 10.0 / 9.0),
+        GradToDeg => Value::Real(real(&args[0]) * 9.0 / 10.0),
+        RadToGrad => Value::Real(real(&args[0]) * 200.0 / std::f64::consts::PI),
+        GradToRad => Value::Real(real(&args[0]) * std::f64::consts::PI / 200.0),
+        HoursToSeconds => Value::Real(real(&args[0]) * 3600.0),
+        SecondsToHours => Value::Real(real(&args[0]) / 3600.0),
+        DaysToSeconds => Value::Real(real(&args[0]) * 86400.0),
+        SecondsToDays => Value::Real(real(&args[0]) / 86400.0),
+        MinkmToKmh => {
+            let x = real(&args[0]);
+            if x == 0.0 { return Err("pace.minkm_to_kmh: the pace is zero".to_string()); }
+            Value::Real(60.0 / x)
+        }
+        KmhToMinkm => {
+            let x = real(&args[0]);
+            if x == 0.0 { return Err("pace.kmh_to_minkm: the speed is zero".to_string()); }
+            Value::Real(60.0 / x)
+        }
+
+        // batch B: maths
+        HyperSinh => Value::Real(real(&args[0]).sinh()),
+        HyperCosh => Value::Real(real(&args[0]).cosh()),
+        HyperTanh => Value::Real(real(&args[0]).tanh()),
+        AhyperAsinh => Value::Real(real(&args[0]).asinh()),
+        AhyperAcosh => Value::Real(real(&args[0]).acosh()),
+        AhyperAtanh => Value::Real(real(&args[0]).atanh()),
+        LogsTwo => Value::Real(real(&args[0]).log2()),
+        LogsTen => Value::Real(real(&args[0]).log10()),
+        LogsNatural => Value::Real(real(&args[0]).ln()),
+        TrigxSec => Value::Real(1.0 / real(&args[0]).to_radians().cos()),
+        TrigxCsc => Value::Real(1.0 / real(&args[0]).to_radians().sin()),
+        TrigxCot => Value::Real(1.0 / real(&args[0]).to_radians().tan()),
+        ChooseCombinations => Value::Int(combinations(int(&args[0]), int(&args[1]))?),
+        ChoosePermutations => Value::Int(permutations(int(&args[0]), int(&args[1]))?),
+        SeqTriangular => {
+            let n = int(&args[0]);
+            Value::Int(n.checked_mul(n + 1).ok_or(OVERFLOW)? / 2)
+        }
+        SeqSquare => {
+            let n = int(&args[0]);
+            Value::Int(n.checked_mul(n).ok_or(OVERFLOW)?)
+        }
+        SeqCube => {
+            let n = int(&args[0]);
+            Value::Int(n.checked_mul(n).and_then(|x| x.checked_mul(n)).ok_or(OVERFLOW)?)
+        }
+        SeqCatalan => Value::Int(catalan(int(&args[0]))?),
+        SeqTetrahedral => {
+            let n = int(&args[0]);
+            Value::Int(n.checked_mul(n + 1).and_then(|x| x.checked_mul(n + 2)).ok_or(OVERFLOW)? / 6)
+        }
+        ModularPow => Value::Int(mod_pow(int(&args[0]), int(&args[1]), int(&args[2]))?),
+        LerpBetween => {
+            let (a, c, t) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(a + (c - a) * t)
+        }
+        LerpMapRange => {
+            let (x, a, b2, c, d) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
+            if a == b2 {
+                return Err("lerp.map_range: the input range is empty".to_string());
+            }
+            Value::Real(c + (x - a) * (d - c) / (b2 - a))
+        }
+        RoundingUp => to_int_checked(real(&args[0]).ceil())?,
+        RoundingDown => to_int_checked(real(&args[0]).floor())?,
+        RoundingHalfUp => to_int_checked((real(&args[0]) + 0.5).floor())?,
+        RoundingToMultiple => {
+            let (x, m) = (real(&args[0]), real(&args[1]));
+            if m == 0.0 {
+                return Err("rounding.to_multiple: the step is zero".to_string());
+            }
+            Value::Real((x / m).round() * m)
+        }
+        Vec2Length => Value::Real(real(&args[0]).hypot(real(&args[1]))),
+        Vec2Dot => Value::Real(real(&args[0]) * real(&args[2]) + real(&args[1]) * real(&args[3])),
+        Vec2Angle => Value::Real(real(&args[1]).atan2(real(&args[0])).to_degrees()),
+        Vec3Length => {
+            let (x, y, z) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real((x * x + y * y + z * z).sqrt())
+        }
+        Vec3Dot => Value::Real(
+            real(&args[0]) * real(&args[3]) + real(&args[1]) * real(&args[4]) + real(&args[2]) * real(&args[5]),
+        ),
+        ComplexAbs => Value::Real(real(&args[0]).hypot(real(&args[1]))),
+        ComplexArg => Value::Real(real(&args[1]).atan2(real(&args[0]))),
+        ParityIsEven => Value::Bool(int(&args[0]) % 2 == 0),
+        ParityIsOdd => Value::Bool(int(&args[0]) % 2 != 0),
+        DivisibleBy => {
+            let d = int(&args[1]);
+            if d == 0 {
+                return Err("divisible.by: cannot divide by zero".to_string());
+            }
+            Value::Bool(int(&args[0]) % d == 0)
+        }
+        DigitsSum => Value::Int(int(&args[0]).unsigned_abs().to_string().bytes().map(|b| (b - b'0') as i64).sum()),
+        DigitsCount => Value::Int(int(&args[0]).unsigned_abs().to_string().len() as i64),
+        DigitsReverse => {
+            let n = int(&args[0]);
+            let s: String = n.unsigned_abs().to_string().chars().rev().collect();
+            let v: i64 = s.parse().map_err(|_| OVERFLOW.to_string())?;
+            Value::Int(if n < 0 { -v } else { v })
+        }
+        CollatzSteps => Value::Int(collatz(int(&args[0]))?),
+        PerfectIs => Value::Bool(is_perfect(int(&args[0]))),
+        ArmstrongIs => Value::Bool(is_armstrong(int(&args[0]))),
+        PalindromeText => {
+            let clean: String =
+                text(&args[0]).chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
+            Value::Bool(clean.chars().eq(clean.chars().rev()))
+        }
+        PalindromeNumber => {
+            let s = int(&args[0]).unsigned_abs().to_string();
+            Value::Bool(s.chars().eq(s.chars().rev()))
+        }
+        RangeContains => {
+            let (x, lo, hi) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Bool(x >= lo && x <= hi)
+        }
+        PointDistance => {
+            let (x1, y1, x2, y2) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+            Value::Real((x2 - x1).hypot(y2 - y1))
+        }
+        PointManhattan => {
+            Value::Real((real(&args[2]) - real(&args[0])).abs() + (real(&args[3]) - real(&args[1])).abs())
+        }
+        SlopeBetween => {
+            let (x1, y1, x2, y2) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+            if x1 == x2 {
+                return Err("slope.between: the line is vertical".to_string());
+            }
+            Value::Real((y2 - y1) / (x2 - x1))
+        }
+        RootSquare => Value::Real(real(&args[0]).sqrt()),
+        RootCube => Value::Real(real(&args[0]).cbrt()),
+        RootNth => {
+            let (x, n) = (real(&args[0]), real(&args[1]));
+            if n == 0.0 {
+                return Err("root.nth: the index is zero".to_string());
+            }
+            Value::Real(x.powf(1.0 / n))
+        }
+
+        // batch C: more text
+        CountWords => Value::Int(text(&args[0]).split_whitespace().count() as i64),
+        CountLines => {
+            let s = text(&args[0]);
+            Value::Int(if s.is_empty() { 0 } else { s.lines().count() as i64 })
+        }
+        CountChars => Value::Int(text(&args[0]).chars().count() as i64),
+        CountVowels => Value::Int(text(&args[0]).chars().filter(|c| "aeiouAEIOU".contains(*c)).count() as i64),
+        TruncateTo => {
+            let (s, n) = (text(&args[0]), int(&args[1]).max(0) as usize);
+            if s.chars().count() <= n {
+                string(s)
+            } else {
+                string(s.chars().take(n).collect::<String>() + "…")
+            }
+        }
+        TruncateWords => {
+            let (s, n) = (text(&args[0]), int(&args[1]).max(0) as usize);
+            let ws: Vec<&str> = s.split_whitespace().collect();
+            if ws.len() <= n {
+                string(s)
+            } else {
+                string(ws[..n].join(" ") + " …")
+            }
+        }
+        IndentBy => {
+            let (s, n) = (text(&args[0]), int(&args[1]).max(0) as usize);
+            let pad = " ".repeat(n);
+            string(s.lines().map(|l| format!("{}{}", pad, l)).collect::<Vec<_>>().join("\n"))
+        }
+        StripPrefix => {
+            let (s, p) = (text(&args[0]), text(&args[1]));
+            string(s.strip_prefix(p).unwrap_or(s))
+        }
+        StripSuffix => {
+            let (s, p) = (text(&args[0]), text(&args[1]));
+            string(s.strip_suffix(p).unwrap_or(s))
+        }
+        MaskAll => string(text(&args[0]).chars().map(|_| '*').collect::<String>()),
+        MaskMiddle => string(mask_middle(text(&args[0]), int(&args[1]))),
+        InitialsOf | AcronymOf => string(
+            text(&args[0]).split_whitespace().filter_map(|w| w.chars().next()).map(|c| c.to_ascii_uppercase()).collect::<String>(),
+        ),
+        PigLatin => string(pig_latin(text(&args[0]))),
+        AtbashApply => string(atbash(text(&args[0]))),
+        VigenereEncode => string(vigenere(text(&args[0]), text(&args[1]), true)?),
+        VigenereDecode => string(vigenere(text(&args[0]), text(&args[1]), false)?),
+        Rot47Apply => string(rot47(text(&args[0]))),
+        BinEncode => string(text(&args[0]).bytes().map(|b| format!("{:08b}", b)).collect::<Vec<_>>().join(" ")),
+        BinDecode => string(bin_decode(text(&args[0]))?),
+        Base32Encode => string(base32_encode(text(&args[0]).as_bytes())),
+        Base32Decode => string(base32_decode(text(&args[0]))?),
+        HtmlEscape => string(html_escape(text(&args[0]))),
+        HtmlUnescape => string(html_unescape(text(&args[0]))),
+        ShoutIt => string(format!("{}!", text(&args[0]).to_uppercase())),
+        ShoutWhisper => string(text(&args[0]).to_lowercase()),
+        WordsReverse => string(text(&args[0]).split_whitespace().rev().collect::<Vec<_>>().join(" ")),
+        WordsFirst => string(text(&args[0]).split_whitespace().next().unwrap_or("")),
+        WordsLast => string(text(&args[0]).split_whitespace().last().unwrap_or("")),
+        UnicodeCodepoint => match text(&args[0]).chars().next() {
+            Some(c) => Value::Int(c as i64),
+            None => return Err("unicode.codepoint: the string is empty".to_string()),
+        },
+        UnicodeFromCodepoint => {
+            let n = int(&args[0]);
+            let c = u32::try_from(n)
+                .ok()
+                .and_then(char::from_u32)
+                .ok_or_else(|| format!("unicode.from_codepoint: {} is not a character", n))?;
+            string(c.to_string())
+        }
+        UnicodeSize => Value::Int(text(&args[0]).chars().count() as i64),
+        NormalizeSpaces => string(text(&args[0]).split_whitespace().collect::<Vec<_>>().join(" ")),
+        AnagramOf => Value::Bool(anagram(text(&args[0]), text(&args[1]))),
+        FizzbuzzAt => {
+            let n = int(&args[0]);
+            string(match (n % 3, n % 5) {
+                (0, 0) => "FizzBuzz".to_string(),
+                (0, _) => "Fizz".to_string(),
+                (_, 0) => "Buzz".to_string(),
+                _ => n.to_string(),
+            })
+        }
+        QuoteAdd => string(format!("\"{}\"", text(&args[0]))),
+        RleEncode => string(rle_encode(text(&args[0]))),
+        RleDecode => string(rle_decode(text(&args[0]))?),
+        WrapAt => string(wrap_at(text(&args[0]), int(&args[1]))),
+        SpongebobMock => string(spongebob(text(&args[0]))),
+        ClapText => string(text(&args[0]).split_whitespace().collect::<Vec<_>>().join(" 👏 ")),
+
+        // batch D: science, finance, geometry, dates
+        BmiValue => {
+            let (w, h) = (real(&args[0]), real(&args[1]));
+            if h <= 0.0 {
+                return Err("bmi.value: the height must be positive".to_string());
+            }
+            Value::Real(w / (h * h))
+        }
+        BmiCategory => string(bmi_category(real(&args[0]))),
+        OhmVoltage => Value::Real(real(&args[0]) * real(&args[1])),
+        OhmCurrent => {
+            let r = real(&args[1]);
+            if r == 0.0 {
+                return Err("ohm.current: the resistance is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / r)
+        }
+        OhmResistance => {
+            let i = real(&args[1]);
+            if i == 0.0 {
+                return Err("ohm.resistance: the current is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / i)
+        }
+        OhmPower => Value::Real(real(&args[0]) * real(&args[1])),
+        PhysicsForce => Value::Real(real(&args[0]) * real(&args[1])),
+        PhysicsKinetic => {
+            let (m, v) = (real(&args[0]), real(&args[1]));
+            Value::Real(0.5 * m * v * v)
+        }
+        PhysicsMomentum => Value::Real(real(&args[0]) * real(&args[1])),
+        WaveFrequency => {
+            let wl = real(&args[1]);
+            if wl == 0.0 {
+                return Err("wave.frequency: the wavelength is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / wl)
+        }
+        WaveWavelength => {
+            let f = real(&args[1]);
+            if f == 0.0 {
+                return Err("wave.wavelength: the frequency is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / f)
+        }
+        WavePeriod => {
+            let f = real(&args[0]);
+            if f == 0.0 {
+                return Err("wave.period: the frequency is zero".to_string());
+            }
+            Value::Real(1.0 / f)
+        }
+        GravityOn => Value::Real(planet_gravity(text(&args[0]))?),
+        InterestSimple => Value::Real(real(&args[0]) * real(&args[1]) / 100.0 * real(&args[2])),
+        InterestCompound => {
+            let (p, r, t) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(p * (1.0 + r / 100.0).powf(t) - p)
+        }
+        LoanPayment => Value::Real(loan_payment(real(&args[0]), real(&args[1]), int(&args[2]))?),
+        TipAmount => Value::Real(real(&args[0]) * real(&args[1]) / 100.0),
+        TipTotal => Value::Real(real(&args[0]) * (1.0 + real(&args[1]) / 100.0)),
+        DiscountApply => Value::Real(real(&args[0]) * (1.0 - real(&args[1]) / 100.0)),
+        DiscountSaved => Value::Real(real(&args[0]) * real(&args[1]) / 100.0),
+        RoiPercent => {
+            let c = real(&args[1]);
+            if c == 0.0 {
+                return Err("roi.percent: the cost is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / c * 100.0)
+        }
+        MoneyFormat => string(money_format(real(&args[0]))),
+        BearingBetween => Value::Real(bearing(real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]))),
+        TriangleHypotenuse => Value::Real(real(&args[0]).hypot(real(&args[1]))),
+        TriangleHeron => Value::Real(heron(real(&args[0]), real(&args[1]), real(&args[2]))?),
+        TriangleIsRight => {
+            let mut s = [real(&args[0]), real(&args[1]), real(&args[2])];
+            s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            Value::Bool((s[0] * s[0] + s[1] * s[1] - s[2] * s[2]).abs() < 1e-9)
+        }
+        CircleArea => Value::Real(std::f64::consts::PI * real(&args[0]).powi(2)),
+        CircleCircumference => Value::Real(2.0 * std::f64::consts::PI * real(&args[0])),
+        CircleDiameter => Value::Real(2.0 * real(&args[0])),
+        RectangleArea => Value::Real(real(&args[0]) * real(&args[1])),
+        RectanglePerimeter => Value::Real(2.0 * (real(&args[0]) + real(&args[1]))),
+        RectangleDiagonal => Value::Real(real(&args[0]).hypot(real(&args[1]))),
+        SphereVolume => Value::Real(4.0 / 3.0 * std::f64::consts::PI * real(&args[0]).powi(3)),
+        SphereSurface => Value::Real(4.0 * std::f64::consts::PI * real(&args[0]).powi(2)),
+        CylinderVolume => {
+            let (r, h) = (real(&args[0]), real(&args[1]));
+            Value::Real(std::f64::consts::PI * r * r * h)
+        }
+        CylinderSurface => {
+            let (r, h) = (real(&args[0]), real(&args[1]));
+            Value::Real(2.0 * std::f64::consts::PI * r * (r + h))
+        }
+        ConeVolume => {
+            let (r, h) = (real(&args[0]), real(&args[1]));
+            Value::Real(std::f64::consts::PI * r * r * h / 3.0)
+        }
+        ConeSurface => {
+            let (r, h) = (real(&args[0]), real(&args[1]));
+            Value::Real(std::f64::consts::PI * r * (r + (r * r + h * h).sqrt()))
+        }
+        WeekdayOf => string(weekday_of(int(&args[0]))?),
+        MonthName => string(month_name(int(&args[0]))?),
+        MonthDays => Value::Int(days_in_month(int(&args[0]), int(&args[1]))?),
+        LeapYear => Value::Bool(is_leap(int(&args[0]))),
+        AgeYears => Value::Int(age_years(int(&args[0]), int(&args[1]))),
+        ZodiacSign => string(zodiac_sign(int(&args[0]), int(&args[1]))?),
+        SeasonOf => string(season_of(int(&args[0]))?),
+        GradeLetter => string(grade_letter(real(&args[0]))),
+        LogicXor => Value::Bool(boolv(&args[0]) ^ boolv(&args[1])),
+        LogicImplies => Value::Bool(!boolv(&args[0]) || boolv(&args[1])),
+        LogicNand => Value::Bool(!(boolv(&args[0]) && boolv(&args[1]))),
+        LogicNor => Value::Bool(!(boolv(&args[0]) || boolv(&args[1]))),
+        YesnoOf => string(if boolv(&args[0]) { "yes" } else { "no" }),
+        ScientificNotation => string(format!("{:e}", real(&args[0]))),
+        FractionToDecimal => {
+            let d = int(&args[1]);
+            if d == 0 {
+                return Err("fraction.to_decimal: the denominator is zero".to_string());
+            }
+            Value::Real(int(&args[0]) as f64 / d as f64)
+        }
+        FractionSimplify => string(fraction_simplify(int(&args[0]), int(&args[1]))?),
+        HeartrateMax => Value::Int((220 - int(&args[0])).max(0)),
+        HeartrateZone => {
+            let (age, pct) = (int(&args[0]), int(&args[1]));
+            Value::Int((220 - age).max(0) * pct / 100)
+        }
+
+        // batch E: hashing, validation, randomness, ids, utilities
+        FnvHash => Value::Int(fnv1a(text(&args[0]))),
+        Djb2Hash => Value::Int(djb2(text(&args[0]))),
+        SdbmHash => Value::Int(sdbm(text(&args[0]))),
+        AdlerValue => Value::Int(adler32(text(&args[0]))),
+        Ipv4Valid => Value::Bool(ipv4_valid(text(&args[0]))),
+        MacValid => Value::Bool(regex_is(r"^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$", text(&args[0]))),
+        HexcolorValid => Value::Bool(regex_is(r"^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$", text(&args[0]))),
+        WeburlValid => Value::Bool(regex_is(r"^https?://[^\s]+$", text(&args[0]))),
+        DiceRoll => {
+            let s = int(&args[0]);
+            if s < 1 {
+                return Err("dice.roll: the die needs at least 1 side".to_string());
+            }
+            Value::Int(rng_range(1, s))
+        }
+        DiceMany => {
+            let (count, sides) = (int(&args[0]), int(&args[1]));
+            if count < 0 {
+                return Err("dice.many: the count cannot be negative".to_string());
+            }
+            if sides < 1 {
+                return Err("dice.many: the die needs at least 1 side".to_string());
+            }
+            let mut total = 0i64;
+            for _ in 0..count {
+                total += rng_range(1, sides);
+            }
+            Value::Int(total)
+        }
+        CoinFlip => Value::Bool(rng_u64() & 1 == 0),
+        PickBetween => {
+            let (lo, hi) = (int(&args[0]), int(&args[1]));
+            if lo > hi {
+                return Err("pick.between: the minimum is greater than the maximum".to_string());
+            }
+            Value::Int(rng_range(lo, hi))
+        }
+        PickChance => Value::Bool((rng_u64() as f64 / u64::MAX as f64) < real(&args[0])),
+        TokenHex => string(rng_hex(int(&args[0]))?),
+        PasswordMake => string(rng_password(int(&args[0]))?),
+        NanoidMake => string(rng_nanoid()),
+        OtpCode => Value::Int(rng_range(100_000, 999_999)),
+        LoremWords => string(lorem_words(int(&args[0]))),
+        RandcolorHex => string(format!("#{:06x}", rng_u64() as u32 & 0xFF_FFFF)),
+        FactorCount => Value::Int(divisor_count(int(&args[0]))?),
+        FactorSum => Value::Int(divisor_sum(int(&args[0]))?),
+        TotientOf => Value::Int(totient(int(&args[0]))?),
+        CompareOf => {
+            let (a, b) = (real(&args[0]), real(&args[1]));
+            Value::Int(if a < b { -1 } else if a > b { 1 } else { 0 })
+        }
+        ClampintBetween => {
+            let (x, lo, hi) = (int(&args[0]), int(&args[1]), int(&args[2]));
+            Value::Int(x.max(lo).min(hi))
+        }
+        PowSquare => Value::Real(real(&args[0]).powi(2)),
+        PowCube => Value::Real(real(&args[0]).powi(3)),
+        PowOf => Value::Real(real(&args[0]).powf(real(&args[1]))),
+        CapsFirst => string(caps_first(text(&args[0]))),
+        SwapcaseApply => string(
+            text(&args[0])
+                .chars()
+                .map(|c| if c.is_uppercase() { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() })
+                .collect::<String>(),
+        ),
+        ConsonantsCount => Value::Int(
+            text(&args[0]).chars().filter(|c| c.is_ascii_alphabetic() && !"aeiouAEIOU".contains(*c)).count() as i64,
+        ),
+        Point3Distance => {
+            let d = |a: usize, b: usize| real(&args[b]) - real(&args[a]);
+            Value::Real((d(0, 3).powi(2) + d(1, 4).powi(2) + d(2, 5).powi(2)).sqrt())
+        }
+        MidpointOf => Value::Real((real(&args[0]) + real(&args[1])) / 2.0),
+        IsqrtOf => {
+            let n = int(&args[0]);
+            if n < 0 {
+                return Err("isqrt.of: the number is negative".to_string());
+            }
+            let mut r = (n as f64).sqrt() as i64;
+            while r > 0 && r.saturating_mul(r) > n {
+                r -= 1;
+            }
+            while (r + 1).saturating_mul(r + 1) <= n {
+                r += 1;
+            }
+            Value::Int(r)
+        }
+        CycleIndex => {
+            let len = int(&args[1]);
+            if len <= 0 {
+                return Err("cycle.index: the length must be positive".to_string());
+            }
+            Value::Int(int(&args[0]).rem_euclid(len))
+        }
+        DigitrootOf => {
+            let n = int(&args[0]).unsigned_abs();
+            Value::Int(if n == 0 { 0 } else { 1 + ((n - 1) % 9) as i64 })
+        }
+
+        // batch F: advanced geometry, finance, weather, physics
+        TrapezoidArea => Value::Real((real(&args[0]) + real(&args[1])) / 2.0 * real(&args[2])),
+        EllipseArea => Value::Real(std::f64::consts::PI * real(&args[0]) * real(&args[1])),
+        EllipsePerimeter => {
+            let (a, b) = (real(&args[0]), real(&args[1]));
+            Value::Real(std::f64::consts::PI * (3.0 * (a + b) - ((3.0 * a + b) * (a + 3.0 * b)).sqrt()))
+        }
+        PentagonArea => {
+            let s = real(&args[0]);
+            Value::Real(5.0 * s * s / (4.0 * (std::f64::consts::PI / 5.0).tan()))
+        }
+        HexagonArea => {
+            let s = real(&args[0]);
+            Value::Real(3.0 * 3f64.sqrt() / 2.0 * s * s)
+        }
+        PolygonInteriorAngle => {
+            let n = int(&args[0]);
+            if n < 3 {
+                return Err("polygon.interior_angle: a polygon needs at least 3 sides".to_string());
+            }
+            Value::Real((n - 2) as f64 * 180.0 / n as f64)
+        }
+        PolygonArea => {
+            let n = int(&args[0]);
+            let s = real(&args[1]);
+            if n < 3 {
+                return Err("polygon.area: a polygon needs at least 3 sides".to_string());
+            }
+            Value::Real(n as f64 * s * s / (4.0 * (std::f64::consts::PI / n as f64).tan()))
+        }
+        PyramidVolume => Value::Real(real(&args[0]) * real(&args[1]) / 3.0),
+        PrismVolume => Value::Real(real(&args[0]) * real(&args[1])),
+        TorusVolume => {
+            let (big, small) = (real(&args[0]), real(&args[1]));
+            Value::Real(2.0 * std::f64::consts::PI.powi(2) * big * small * small)
+        }
+        CuboidVolume => Value::Real(real(&args[0]) * real(&args[1]) * real(&args[2])),
+        CuboidSurface => {
+            let (l, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(2.0 * (l * w + l * h + w * h))
+        }
+        AnnulusArea => {
+            let (o, i) = (real(&args[0]), real(&args[1]));
+            Value::Real(std::f64::consts::PI * (o * o - i * i))
+        }
+        SavingsFutureValue => {
+            let (pmt, rate, n) = (real(&args[0]), real(&args[1]), int(&args[2]));
+            if n < 0 {
+                return Err("savings.future_value: the number of periods cannot be negative".to_string());
+            }
+            let r = rate / 100.0;
+            let n = n as f64;
+            Value::Real(if r == 0.0 { pmt * n } else { pmt * (((1.0 + r).powf(n) - 1.0) / r) })
+        }
+        DepreciationStraightLine => {
+            let (cost, salvage, life) = (real(&args[0]), real(&args[1]), int(&args[2]));
+            if life <= 0 {
+                return Err("depreciation.straight_line: the life must be positive".to_string());
+            }
+            Value::Real((cost - salvage) / life as f64)
+        }
+        CentsToCents => to_int_checked((real(&args[0]) * 100.0).round())?,
+        CentsFromCents => Value::Real(int(&args[0]) as f64 / 100.0),
+        MarkupPrice => Value::Real(real(&args[0]) * (1.0 + real(&args[1]) / 100.0)),
+        MarkupMargin => {
+            let (price, cost) = (real(&args[0]), real(&args[1]));
+            if price == 0.0 {
+                return Err("markup.margin: the price is zero".to_string());
+            }
+            Value::Real((price - cost) / price * 100.0)
+        }
+        BmrMen => {
+            let (w, h, age) = (real(&args[0]), real(&args[1]), int(&args[2]));
+            Value::Real(88.362 + 13.397 * w + 4.799 * h - 5.677 * age as f64)
+        }
+        BmrWomen => {
+            let (w, h, age) = (real(&args[0]), real(&args[1]), int(&args[2]));
+            Value::Real(447.593 + 9.247 * w + 3.098 * h - 4.330 * age as f64)
+        }
+        WindChill => {
+            let (t, v) = (real(&args[0]), real(&args[1]));
+            let vp = v.powf(0.16);
+            Value::Real(13.12 + 0.6215 * t - 11.37 * vp + 0.3965 * t * vp)
+        }
+        HeatIndex => Value::Real(heat_index(real(&args[0]), real(&args[1]))),
+        DewpointOf => {
+            let (t, rh) = (real(&args[0]), real(&args[1]));
+            if rh <= 0.0 {
+                return Err("dewpoint.of: the humidity must be positive".to_string());
+            }
+            let (a, b) = (17.27, 237.7);
+            let alpha = (a * t) / (b + t) + (rh / 100.0).ln();
+            Value::Real((b * alpha) / (a - alpha))
+        }
+        QuadraticDiscriminant => {
+            let (a, b, c) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(b * b - 4.0 * a * c)
+        }
+        QuadraticRoot1 => Value::Real(quadratic_root(real(&args[0]), real(&args[1]), real(&args[2]), true)?),
+        QuadraticRoot2 => Value::Real(quadratic_root(real(&args[0]), real(&args[1]), real(&args[2]), false)?),
+        MotionSpeed => {
+            let t = real(&args[1]);
+            if t == 0.0 {
+                return Err("motion.speed: the time is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / t)
+        }
+        MotionTime => {
+            let s = real(&args[1]);
+            if s == 0.0 {
+                return Err("motion.time: the speed is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / s)
+        }
+        MotionDistance => Value::Real(real(&args[0]) * real(&args[1])),
+        AprToMonthly => Value::Real(((1.0 + real(&args[0]) / 100.0).powf(1.0 / 12.0) - 1.0) * 100.0),
+        AprToAnnual => Value::Real(((1.0 + real(&args[0]) / 100.0).powi(12) - 1.0) * 100.0),
+
         other => panic!("internal error: {:?} is not a library function", other),
     })
 }

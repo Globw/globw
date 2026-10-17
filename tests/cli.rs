@@ -177,6 +177,18 @@ fn builtin_modules_batch() {
 }
 
 #[test]
+fn builtin_modules_big_batch() {
+    let dir = std::env::temp_dir().join("globw_big_batch_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import choose\nimport roman\nimport base32\nimport collatz\n\
+               output(choose.combinations(49, 6), \" \", roman.to(1994))\n\
+               output(base32.decode(base32.encode(\"hi\")), \" \", collatz.steps(27))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "13983816 MCMXCIV\nhi 111\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_module_encode_base64() {
     let dir = std::env::temp_dir().join("globw_encode_module_test");
     std::fs::create_dir_all(&dir).unwrap();

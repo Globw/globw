@@ -627,6 +627,17 @@ There are many more built-in modules, each imported the same way. Below, one row
 
 Most of these are plain functions whose errors (a bad number, a missing file, a value of the wrong kind) are catchable with `try`/`catch`. `shell`, `env.set`, `dir.make`, `file.copy`/`rename`/`delete` change the computer or the environment, by design: Globw does not forbid a capability just because it is powerful.
 
+**And many more.** Globw ships a large standard library; the modules below round it out (import each with `import <name>`; the function names follow the same `module.function(...)` shape and read for themselves). Grouped by theme:
+
+- **Unit conversions:** `area`, `volume`, `speed`, `pressure`, `energy`, `power`, `fuel`, `force`, `torque`, `datarate`, `frequency`, `cooking`, `nautical`, `astro`, `stone`, `density`, `db`, `tempo`, `grad`, `timeof`, `pace`.
+- **Maths:** `hyper`, `ahyper`, `logs`, `trigx`, `choose`, `seq`, `modular`, `lerp`, `rounding`, `vec2`, `vec3`, `complex`, `parity`, `divisible`, `digits`, `collatz`, `perfect`, `armstrong`, `palindrome`, `range`, `point`, `point3`, `slope`, `root`, `pow`, `isqrt`, `factor`, `totient`, `compare`, `clampint`, `cycle`, `digitroot`, `midpoint`.
+- **Text:** `count`, `truncate`, `indent`, `strip`, `mask`, `initials`, `acronym`, `pig`, `atbash`, `vigenere`, `rot47`, `bin`, `base32`, `html`, `shout`, `words`, `unicode`, `normalize`, `anagram`, `fizzbuzz`, `quote`, `rle`, `wrap`, `spongebob`, `clap`, `caps`, `swapcase`, `consonants`.
+- **Science & geometry:** `bmi`, `ohm`, `physics`, `wave`, `gravity`, `bearing`, `triangle`, `circle`, `rectangle`, `sphere`, `cylinder`, `cone`, `trapezoid`, `ellipse`, `pentagon`, `hexagon`, `polygon`, `pyramid`, `prism`, `torus`, `cuboid`, `annulus`, `quadratic`, `motion`, `wind`, `heat`, `dewpoint`, `bmr`, `heartrate`.
+- **Finance:** `interest`, `loan`, `tip`, `discount`, `roi`, `money`, `savings`, `depreciation`, `cents`, `markup`, `apr`.
+- **Dates:** `weekday`, `month`, `leap`, `age`, `zodiac`, `season`.
+- **Hashes & checks:** `fnv`, `djb2`, `sdbm`, `adler`, `ipv4`, `mac`, `hexcolor`, `weburl`, `grade`, `logic`, `yesno`, `scientific`, `fraction`.
+- **Randomness & ids:** `dice`, `coin`, `pick`, `token`, `password`, `nanoid`, `otp`, `lorem`, `randcolor`.
+
 ### 6.13 Classes
 
 A class groups data (fields) and the operations on it (methods). Objects are made with `new`.
