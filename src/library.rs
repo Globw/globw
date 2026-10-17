@@ -281,6 +281,20 @@ fn list(items: Vec<Value>) -> Value {
     Value::Seq(Rc::new(RefCell::new(items)))
 }
 
+/// Fetches a web page over HTTP(S) and returns its body as text (the `web` module).
+/// Network, server and timeout problems become ordinary run-time errors, so the
+/// program can handle them with `try`/`catch`.
+fn web_get(url: &str) -> Result<String, String> {
+    let response = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .map_err(|e| match e {
+            ureq::Error::Status(code, _) => format!("web.get: the server answered with status {}", code),
+            ureq::Error::Transport(t) => format!("web.get: cannot reach \"{}\": {}", url, t),
+        })?;
+    response.into_string().map_err(|e| format!("web.get: cannot read the reply: {}", e))
+}
+
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
 
 /// A float that must become an int (floor, ceiling, truncate, to_int).
@@ -595,6 +609,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             use sha2::{Digest, Sha512};
             string(hex(Sha512::digest(text(&args[0]).as_bytes())))
         }
+        WebGet => string(web_get(text(&args[0]))?),
         other => panic!("internal error: {:?} is not a library function", other),
     })
 }
