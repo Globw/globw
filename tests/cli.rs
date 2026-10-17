@@ -150,3 +150,14 @@ fn builtin_module_data_json() {
     let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "6.0 [1,2]\n"), "{}", stderr);
 }
+
+#[test]
+fn builtin_module_clock_roundtrip() {
+    let dir = std::env::temp_dir().join("globw_clock_module_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    // parse then format with the same pattern is independent of the local time zone
+    let src = "import clock\noutput(clock.format(clock.parse(\"2021-06-15 12:30:00\", \"%Y-%m-%d %H:%M:%S\"), \"%Y-%m-%d %H:%M:%S\"))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "2021-06-15 12:30:00\n"), "{}", stderr);
+}

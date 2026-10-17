@@ -134,6 +134,10 @@ pub enum Builtin {
     DataSize,
     DataKeys,
     DataToJson,
+    // module "clock" (dates and times)
+    ClockStamp,
+    ClockFormat,
+    ClockParse,
 }
 
 use Builtin::*;
@@ -255,10 +259,13 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (DataSize, "data.size", Sig::Fixed(&[S, S], Some(Int))),
     (DataKeys, "data.keys", Sig::Flexible { function: true }),
     (DataToJson, "data.to_json", Sig::Flexible { function: true }),
+    (ClockStamp, "clock.stamp", Sig::Fixed(&[], Some(Int))),
+    (ClockFormat, "clock.format", Sig::Fixed(&[I, S], Some(Str))),
+    (ClockParse, "clock.parse", Sig::Fixed(&[S, S], Some(Int))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
-pub const BUILTIN_MODULES: [&str; 4] = ["text", "hash", "web", "data"];
+pub const BUILTIN_MODULES: [&str; 5] = ["text", "hash", "web", "data", "clock"];
 
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)

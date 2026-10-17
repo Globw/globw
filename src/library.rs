@@ -378,6 +378,37 @@ fn to_json_value(v: &Value) -> Result<Json, String> {
     })
 }
 
+// ---------------------------------------------------------------- dates and times (the "clock" module)
+
+/// Formats a Unix timestamp (seconds) as local time, using a date pattern
+/// like "%Y-%m-%d %H:%M:%S". A bad pattern is a run-time error, not a crash.
+fn clock_format(stamp: i64, pattern: &str) -> Result<String, String> {
+    use chrono::format::{Item, StrftimeItems};
+    let utc = chrono::DateTime::from_timestamp(stamp, 0).ok_or("clock.format: the timestamp is out of range")?;
+    let local = utc.with_timezone(&chrono::Local);
+    let items: Vec<Item> = StrftimeItems::new(pattern).collect();
+    if items.iter().any(|it| matches!(it, Item::Error)) {
+        return Err(format!("clock.format: \"{}\" is not a valid date pattern", pattern));
+    }
+    Ok(local.format_with_items(items.iter()).to_string())
+}
+
+/// Reads a local date-and-time written like `pattern` and returns its Unix
+/// timestamp (seconds).
+fn clock_parse(s: &str, pattern: &str) -> Result<i64, String> {
+    use chrono::TimeZone;
+    let naive = chrono::NaiveDateTime::parse_from_str(s, pattern)
+        .map_err(|e| format!("clock.parse: {} does not match \"{}\" ({})", quote(s), pattern, e))?;
+    match chrono::Local.from_local_datetime(&naive).single() {
+        Some(dt) => Ok(dt.timestamp()),
+        None => Err(format!("clock.parse: {} is an ambiguous or impossible local time", quote(s))),
+    }
+}
+
+fn quote(s: &str) -> String {
+    format!("\"{}\"", s)
+}
+
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
 
 /// A float that must become an int (floor, ceiling, truncate, to_int).
@@ -736,6 +767,9 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
         }
         DataToJson => string(serde_json::to_string(&to_json_value(&args[0])?).map_err(|e| format!("cannot make JSON: {}", e))?),
+        ClockStamp => Value::Int(chrono::Utc::now().timestamp()),
+        ClockFormat => string(clock_format(int(&args[0]), text(&args[1]))?),
+        ClockParse => Value::Int(clock_parse(text(&args[0]), text(&args[1]))?),
         other => panic!("internal error: {:?} is not a library function", other),
     })
 }
