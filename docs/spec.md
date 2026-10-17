@@ -539,11 +539,12 @@ with `import <name>`, but there is no `.gw` file to find:
 import text          ' regular expressions
 import hash          ' digests
 import web           ' web requests
+import data          ' JSON
 ```
 
 - A built-in module is imported **plainly**: `import text` only, not `import text as t` nor `from text import ...`.
 - Its functions are used with the module prefix, like any module: `text.matches(s, pattern)`.
-- The built-in module names (`text`, `hash`, `web`) are not reserved: a file that does not import them can still use those words as its own names.
+- The built-in module names (`text`, `hash`, `web`, `data`) are not reserved: a file that does not import them can still use those words as its own names.
 
 | Module | Function | Result | What it does |
 |---|---|---|---|
@@ -554,8 +555,16 @@ import web           ' web requests
 | `hash` | `hash.sha256(s)` | `string` | the SHA-256 digest of `s`, as lowercase hexadecimal |
 | `hash` | `hash.sha512(s)` | `string` | the SHA-512 digest of `s`, as lowercase hexadecimal |
 | `web` | `web.get(url)` | `string` | fetches `url` over HTTP(S) and returns the reply body as text |
+| `data` | `data.text(json, path)` | `string` | the value at `path` as text (a JSON string, number or bool) |
+| `data` | `data.number(json, path)` | `float` | the value at `path`, which must be a JSON number |
+| `data` | `data.flag(json, path)` | `bool` | the value at `path`, which must be a JSON true/false |
+| `data` | `data.has(json, path)` | `bool` | whether `path` exists in the JSON |
+| `data` | `data.size(json, path)` | `int` | how many elements the array or object at `path` has |
+| `data` | `data.keys(json, path)` | `list of string` | the keys of the object at `path` |
+| `data` | `data.to_json(value)` | `string` | the JSON text of a Globw value (number, string, bool, `none`, list, set or dictionary; nested too) |
 
 - A bad regular expression, an unreachable address, a server error or a timeout (30 s for `web.get`) becomes an ordinary run-time error, so it can be handled with `try`/`catch`.
+- In a `data` **path**, object members are written `name` or `.name` and array positions `[n]`, **1-based**: `"users[1].name"`. An empty path `""` is the whole document. Asking for the wrong kind of value (e.g. `data.number` on text), a missing path or invalid JSON is a catchable run-time error. `data.to_json` fails on values that have no JSON form (functions, objects, matrices). (For now each `data.*` call parses the JSON again; a pre-parsed handle is planned.)
 
 ### 6.13 Classes
 

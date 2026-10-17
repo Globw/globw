@@ -126,6 +126,14 @@ pub enum Builtin {
     HashSha512,
     // module "web" (http requests)
     WebGet,
+    // module "data" (JSON)
+    DataText,
+    DataNumber,
+    DataFlag,
+    DataHas,
+    DataSize,
+    DataKeys,
+    DataToJson,
 }
 
 use Builtin::*;
@@ -240,10 +248,17 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (HashSha256, "hash.sha256", Sig::Fixed(&[S], Some(Str))),
     (HashSha512, "hash.sha512", Sig::Fixed(&[S], Some(Str))),
     (WebGet, "web.get", Sig::Fixed(&[S], Some(Str))),
+    (DataText, "data.text", Sig::Fixed(&[S, S], Some(Str))),
+    (DataNumber, "data.number", Sig::Fixed(&[S, S], Some(Real))),
+    (DataFlag, "data.flag", Sig::Fixed(&[S, S], Some(Bool))),
+    (DataHas, "data.has", Sig::Fixed(&[S, S], Some(Bool))),
+    (DataSize, "data.size", Sig::Fixed(&[S, S], Some(Int))),
+    (DataKeys, "data.keys", Sig::Flexible { function: true }),
+    (DataToJson, "data.to_json", Sig::Flexible { function: true }),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
-pub const BUILTIN_MODULES: [&str; 3] = ["text", "hash", "web"];
+pub const BUILTIN_MODULES: [&str; 4] = ["text", "hash", "web", "data"];
 
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)

@@ -139,3 +139,14 @@ fn builtin_module_hash_digests() {
     assert_eq!(code, 0, "{}", stderr);
     assert_eq!(stdout, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n");
 }
+
+#[test]
+fn builtin_module_data_json() {
+    let dir = std::env::temp_dir().join("globw_data_module_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    // a[2] is 1-based, to_json serializes a Globw list
+    let src = "import data\noutput(data.number(\"{\\\"a\\\":[5,6]}\", \"a[2]\"), \" \", data.to_json([1, 2]))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "6.0 [1,2]\n"), "{}", stderr);
+}

@@ -1,7 +1,8 @@
 ' Built-in modules: import a Rust-backed library with "import <name>".
-' "text" is regular expressions, "hash" is digests. (There is also "web".)
+' "text" is regex, "hash" is digests, "data" is JSON. (There is also "web".)
 import text
 import hash
+import data
 variables:
     entry as string
 entry = "order 2026-10-17 ref=AB12"
@@ -10,3 +11,6 @@ output(text.find(entry, "[A-Z]{2}[0-9]{2}"))
 output(text.replace_all(entry, "[0-9]", "#"))
 output(text.all("a1 bb22 ccc333", "[0-9]+"))
 output(hash.sha256("globw"))
+output(data.text("{\"city\":\"Roma\",\"days\":[1,2,3]}", "city"))
+output(data.size("{\"city\":\"Roma\",\"days\":[1,2,3]}", "days"))
+output(data.to_json([10, 20, 30]))
