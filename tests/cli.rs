@@ -120,3 +120,12 @@ fn uncaught_error_still_stops_the_program() {
     assert_eq!(stdout, "caught\n");
     assert!(stderr.contains("division by zero"), "{}", stderr);
 }
+
+#[test]
+fn builtin_module_text_regex() {
+    let dir = std::env::temp_dir().join("globw_text_module_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("p.gw"), "import text\noutput(text.matches(\"a1b2\", \"[0-9]\"), \" \", text.replace_all(\"a1b2\", \"[0-9]\", \"#\"))\n").unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "true a#b#\n"), "{}", stderr);
+}

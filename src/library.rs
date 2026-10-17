@@ -199,6 +199,13 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => other(format!("{} works with a dictionary", b.name())),
             }
         }
+        TextAll => {
+            arity(2)?;
+            match (a[0], a[1]) {
+                (Type::Base(Str), Type::Base(Str)) => ok(none(2), Type::List(Some(Str))),
+                _ => other("text.all needs a string and a pattern"),
+            }
+        }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
 }
@@ -254,6 +261,11 @@ fn seq(v: &Value) -> &Rc<RefCell<Vec<Value>>> {
 
 fn string(s: impl Into<Rc<str>>) -> Value {
     Value::Str(s.into())
+}
+
+/// Compiles a regular expression, turning a bad pattern into a run-time error.
+fn pattern(v: &Value) -> Result<regex::Regex, String> {
+    regex::Regex::new(text(v)).map_err(|e| format!("invalid pattern: {}", e.to_string().lines().last().unwrap_or("")))
 }
 
 fn list(items: Vec<Value>) -> Value {
@@ -562,6 +574,10 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             let t = local_time();
             string(format!("{:02}:{:02}:{:02}", t.3, t.4, t.5))
         }
+        TextMatches => Value::Bool(pattern(&args[1])?.is_match(text(&args[0]))),
+        TextFind => string(pattern(&args[1])?.find(text(&args[0])).map_or("", |m| m.as_str())),
+        TextReplaceAll => string(pattern(&args[1])?.replace_all(text(&args[0]), text(&args[2])).into_owned()),
+        TextAll => list(pattern(&args[1])?.find_iter(text(&args[0])).map(|m| string(m.as_str())).collect()),
         other => panic!("internal error: {:?} is not a library function", other),
     })
 }

@@ -13,7 +13,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::ast::*;
+use crate::builtins::is_builtin_module;
 use crate::checker::is_builtin_name;
+
+/// Alias target for a built-in module (one provided by the interpreter).
+const BUILTIN_MODULE: usize = usize::MAX;
 use crate::errors::{Error, Pos, SourceFile};
 use crate::tir::{BaseType, Type};
 
@@ -74,6 +78,9 @@ pub fn load(main: SourceFile, dir: &Path) -> (Vec<SourceFile>, Result<Program, V
         for imp in &imports {
             if by_name.contains_key(&imp.module) {
                 continue;
+            }
+            if is_builtin_module(&imp.module) {
+                continue; // provided by the interpreter, no file to load
             }
             if imp.module == modules[k].name {
                 return (files, Err(vec![Error::new(imp.pos, "a module cannot import itself")]));
@@ -150,6 +157,17 @@ fn merge(mut modules: Vec<Module>, by_name: &HashMap<String, usize>) -> Result<P
     }
     for (k, m) in modules.iter().enumerate() {
         for imp in &m.program.imports {
+            if is_builtin_module(&imp.module) {
+                if imp.alias.is_some() || imp.names.is_some() {
+                    errors.push(Error::new(
+                        imp.pos,
+                        format!("the built-in module \"{}\" is imported plainly: write import {}", imp.module, imp.module),
+                    ));
+                } else {
+                    t.aliases[k].insert(imp.module.clone(), BUILTIN_MODULE);
+                }
+                continue;
+            }
             let target = by_name[&imp.module];
             match &imp.names {
                 None => {
@@ -231,7 +249,11 @@ fn merge(mut modules: Vec<Module>, by_name: &HashMap<String, usize>) -> Result<P
         }
         scope.locals = p.locals.iter().map(|d| d.name.clone()).collect();
         let mut body: Vec<Stmt> =
-            p.imports.iter().filter(|i| !i.lazy).map(|i| t.load(by_name[&i.module], i.pos)).collect();
+            p.imports
+                .iter()
+                .filter(|i| !i.lazy && !is_builtin_module(&i.module))
+                .map(|i| t.load(by_name[&i.module], i.pos))
+                .collect();
         body.extend(scope.block(p.body));
         if k == 0 {
             out.locals = p.locals;
@@ -287,6 +309,10 @@ impl Scope<'_> {
         if let Some((prefix, rest)) = name.split_once('.') {
             if prefix == "self" || prefix == "parent" || self.locals.contains(prefix) {
                 // field or method access on an object, or a super call: resolved by the checker
+                return name.to_string();
+            }
+            if t.aliases[k].get(prefix) == Some(&BUILTIN_MODULE) {
+                // e.g. text.matches -> the built-in function of that name
                 return name.to_string();
             }
             let Some(&m) = t.aliases[k].get(prefix) else {

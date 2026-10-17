@@ -116,6 +116,11 @@ pub enum Builtin {
     Today,
     Now,
     Stop,
+    // module "text" (regular expressions)
+    TextMatches,
+    TextFind,
+    TextReplaceAll,
+    TextAll,
 }
 
 use Builtin::*;
@@ -223,7 +228,18 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (Today, "today", Sig::Fixed(&[], Some(Str))),
     (Now, "now", Sig::Fixed(&[], Some(Str))),
     (Stop, "stop", Sig::Fixed(&[], None)),
+    (TextMatches, "text.matches", Sig::Fixed(&[S, S], Some(Bool))),
+    (TextFind, "text.find", Sig::Fixed(&[S, S], Some(Str))),
+    (TextReplaceAll, "text.replace_all", Sig::Fixed(&[S, S, S], Some(Str))),
+    (TextAll, "text.all", Sig::Flexible { function: true }),
 ];
+
+/// Built-in modules provided by the interpreter (imported with `import <name>`).
+pub const BUILTIN_MODULES: [&str; 1] = ["text"];
+
+pub fn is_builtin_module(name: &str) -> bool {
+    BUILTIN_MODULES.contains(&name)
+}
 
 /// Why a call does not fit a built-in's signature.
 pub enum CheckError {
