@@ -574,6 +574,59 @@ import encode        ' base64
 - In a `data` **path**, object members are written `name` or `.name` and array positions `[n]`, **1-based**: `"users[1].name"`. An empty path `""` is the whole document. Asking for the wrong kind of value (e.g. `data.number` on text), a missing path or invalid JSON is a catchable run-time error. `data.to_json` fails on values that have no JSON form (functions, objects, matrices). (For now each `data.*` call parses the JSON again; a pre-parsed handle is planned.)
 - A `clock` **pattern** uses the usual date fields: `%Y` year, `%m` month, `%d` day, `%H` hour, `%M` minute, `%S` second (e.g. `"%Y-%m-%d %H:%M:%S"`). Timestamps are plain `int`s, so you can add or subtract seconds to do date arithmetic. An invalid pattern, or a text that does not match it, is a catchable run-time error.
 
+There are many more built-in modules, each imported the same way. Below, one row per module with its functions.
+
+| Module | Functions | Purpose |
+|---|---|---|
+| `shell` | `run(cmd)` | run a system command, return its output (its failure is a catchable error) |
+| `math` | `gcd(a,b)`, `lcm(a,b)`, `factorial(n)`, `is_prime(n)`, `sign(x)`, `hypot(a,b)`, `clamp(x,lo,hi)`, `cbrt(x)` | extra maths |
+| `bits` | `and`, `or`, `xor`, `not`, `left(n,by)`, `right(n,by)`, `ones(n)` | bitwise operations on ints |
+| `base` | `to(n, base)`, `from(text, base)` | whole numbers in any base from 2 to 36 |
+| `roman` | `to(n)`, `from(text)` | Roman numerals (1–3999) |
+| `temp` | `c_to_f`, `f_to_c`, `c_to_k`, `k_to_c` | temperature conversions |
+| `angle` | `to_radians`, `to_degrees`, `normalize` | angles (degrees) |
+| `percent` | `of(p, x)`, `change(from, to)` | percentages |
+| `geom` | `circle_area(r)`, `rect_area(w,h)`, `triangle_area(b,h)`, `sphere_volume(r)`, `cube_volume(s)` | areas and volumes |
+| `length` | `meters_to_feet`, `feet_to_meters`, `km_to_miles`, `miles_to_km` | length conversions |
+| `weight` | `kg_to_lb`, `lb_to_kg` | weight conversions |
+| `size` | `human(bytes)` | a byte count as `"1.5 MB"` |
+| `duration` | `human(seconds)` | a number of seconds as `"1h 2m 5s"` |
+| `geo` | `distance(lat1,lon1,lat2,lon2)` | distance in km between two coordinates |
+| `tax` | `add(amount, rate)`, `remove(amount, rate)` | add or remove a percentage tax |
+| `compass` | `direction(degrees)` | a bearing as `"N"`, `"NE"`, … |
+| `ordinal` | `of(n)` | `1` → `"1st"` |
+| `fib` | `at(n)` | the nth Fibonacci number |
+| `prime` | `next(n)`, `nth(n)` | the next prime after `n`, or the nth prime |
+| `str` | `repeat(s,n)`, `reverse(s)`, `pad_left(s,w,fill)`, `pad_right(s,w,fill)`, `center(s,w,fill)` | more string tools |
+| `hex` | `encode(s)`, `decode(s)` | text to/from hexadecimal |
+| `url` | `encode(s)`, `decode(s)` | percent-encoding for URLs |
+| `case` | `title(s)`, `snake(s)`, `camel(s)`, `kebab(s)` | naming styles |
+| `slug` | `make(s)` | a URL-friendly slug |
+| `ascii` | `is_digit(s)`, `is_alpha(s)`, `is_space(s)`, `is_upper(s)`, `is_lower(s)` | character-class checks of a whole string |
+| `morse` | `encode(s)`, `decode(s)` | Morse code |
+| `caesar` | `encode(s, shift)`, `decode(s, shift)` | Caesar cipher |
+| `rot13` | `apply(s)` | ROT13 |
+| `leet` | `encode(s)` | leetspeak |
+| `nato` | `encode(s)` | the NATO phonetic alphabet |
+| `color` | `hex(r,g,b)`, `gray(level)`, `invert(color)` | `#rrggbb` colors |
+| `valid` | `email(s)`, `integer(s)`, `number(s)` | simple format checks |
+| `luhn` | `valid(s)` | the Luhn checksum (card numbers) |
+| `isbn` | `valid(s)` | an ISBN-10 or ISBN-13 check digit |
+| `uuid` | `make()` | a random UUID (v4) |
+| `crc` | `value(s)` | the CRC-32 checksum of the text |
+| `encode` | `base64(s)`, `from_base64(s)` | Base64 |
+| `env` | `get(name)`, `has(name)`, `set(name, value)` | environment variables |
+| `path` | `join(a,b)`, `name(p)`, `stem(p)`, `extension(p)`, `parent(p)`, `is_absolute(p)` | file-path parts (text only) |
+| `os` | `name()`, `arch()`, `family()` | the operating system |
+| `dir` | `list(path)`, `make(path)`, `current()`, `exists(path)` | folders |
+| `file` | `size(p)`, `copy(from,to)`, `rename(from,to)`, `modified(p)`, `delete(p)` | file operations |
+| `tmp` | `path()` | the system temporary folder |
+| `args` | `count()`, `get(n)` | the arguments the program was started with |
+| `csv` | `fields(line)`, `line(list)` | one CSV line to or from a list of strings |
+| `stats` | `mean(list)`, `median(list)`, `stdev(list)` | statistics of a list of numbers |
+
+Most of these are plain functions whose errors (a bad number, a missing file, a value of the wrong kind) are catchable with `try`/`catch`. `shell`, `env.set`, `dir.make`, `file.copy`/`rename`/`delete` change the computer or the environment, by design: Globw does not forbid a capability just because it is powerful.
+
 ### 6.13 Classes
 
 A class groups data (fields) and the operations on it (methods). Objects are made with `new`.

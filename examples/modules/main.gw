@@ -1,7 +1,7 @@
 ' Modules: a normal import runs the module at once,
 ' a lazy import only just before its first use.
 import shapes as s
-from stats import mean, double_area as da
+from tally import mean, double_area as da
 lazy import charts
 lazy import never
 output("start")

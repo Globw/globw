@@ -222,6 +222,27 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             // any value can be turned into JSON; a bad one fails at run time
             ok(none(1), Type::Base(Str))
         }
+        DirList | CsvFields => {
+            arity(1)?;
+            if a[0] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Str) });
+            }
+            ok(none(1), Type::List(Some(Str)))
+        }
+        CsvLine => {
+            arity(1)?;
+            match collection(a[0]) {
+                Some(Str) => ok(none(1), Type::Base(Str)),
+                _ => other("csv.line works with an array or list of strings"),
+            }
+        }
+        StatsMean | StatsMedian | StatsStdev => {
+            arity(1)?;
+            match collection(a[0]) {
+                Some(e) if numeric(e) => ok(none(1), Type::Base(Real)),
+                _ => other(format!("{} works with an array or list of numbers", b.name())),
+            }
+        }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
 }
@@ -407,6 +428,634 @@ fn clock_parse(s: &str, pattern: &str) -> Result<i64, String> {
 
 fn quote(s: &str) -> String {
     format!("\"{}\"", s)
+}
+
+// ---------------------------------------------------------------- running commands (the "shell" module)
+
+/// Runs a command through the operating system's shell and returns its standard
+/// output. A command that fails (non-zero exit) is a catchable run-time error
+/// carrying its error output.
+fn shell_run(command: &str) -> Result<String, String> {
+    let mut c = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(command);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(command);
+        c
+    };
+    let out = c.output().map_err(|e| format!("shell.run: cannot start the command ({})", e))?;
+    if !out.status.success() {
+        let code = out.status.code().map_or_else(|| "stopped by a signal".to_string(), |n| format!("exit code {}", n));
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("shell.run: the command failed ({}): {}", code, err.trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+// ---------------------------------------------------------------- helpers for the extra modules
+
+fn gcd(a: i64, b: i64) -> i64 {
+    let (mut a, mut b) = (a.unsigned_abs(), b.unsigned_abs());
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a as i64
+}
+
+fn is_prime(n: i64) -> bool {
+    if n < 2 {
+        return false;
+    }
+    if n % 2 == 0 {
+        return n == 2;
+    }
+    let mut d: i64 = 3;
+    while d.saturating_mul(d) <= n {
+        if n % d == 0 {
+            return false;
+        }
+        d += 2;
+    }
+    true
+}
+
+fn prime_next(n: i64) -> i64 {
+    let mut c = if n < 2 { 2 } else { n + 1 };
+    while !is_prime(c) {
+        c += 1;
+    }
+    c
+}
+
+fn prime_nth(n: i64) -> Result<i64, String> {
+    if n < 1 {
+        return Err("prime.nth: the position starts at 1".to_string());
+    }
+    let (mut count, mut c) = (0, 1);
+    while count < n {
+        c += 1;
+        if is_prime(c) {
+            count += 1;
+        }
+    }
+    Ok(c)
+}
+
+fn fib_at(n: i64) -> Result<i64, String> {
+    if n < 0 {
+        return Err("fib.at: the position cannot be negative".to_string());
+    }
+    let (mut a, mut b): (i64, i64) = (0, 1);
+    for _ in 0..n {
+        let next = a.checked_add(b).ok_or(OVERFLOW)?;
+        (a, b) = (b, next);
+    }
+    Ok(a)
+}
+
+fn int_to_base(n: i64, base: i64) -> Result<String, String> {
+    if !(2..=36).contains(&base) {
+        return Err("base.to: the base must be from 2 to 36".to_string());
+    }
+    if n == 0 {
+        return Ok("0".to_string());
+    }
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let (base, mut v) = (base as u128, (n as i128).unsigned_abs());
+    let mut out = Vec::new();
+    while v > 0 {
+        out.push(digits[(v % base) as usize]);
+        v /= base;
+    }
+    if n < 0 {
+        out.push(b'-');
+    }
+    out.reverse();
+    Ok(String::from_utf8(out).unwrap())
+}
+
+fn base_from(s: &str, base: i64) -> Result<i64, String> {
+    if !(2..=36).contains(&base) {
+        return Err("base.from: the base must be from 2 to 36".to_string());
+    }
+    let t = s.trim();
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let n = i64::from_str_radix(body, base as u32)
+        .map_err(|_| format!("base.from: \"{}\" is not a base-{} number", s, base))?;
+    Ok(if neg { -n } else { n })
+}
+
+const ROMAN: &[(i64, &str)] = &[
+    (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"), (50, "L"), (40, "XL"), (10, "X"),
+    (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+];
+
+fn roman_to(n: i64) -> Result<String, String> {
+    if !(1..=3999).contains(&n) {
+        return Err("roman.to: the number must be from 1 to 3999".to_string());
+    }
+    let mut n = n;
+    let mut out = String::new();
+    for &(v, sym) in ROMAN {
+        while n >= v {
+            out.push_str(sym);
+            n -= v;
+        }
+    }
+    Ok(out)
+}
+
+fn roman_from(s: &str) -> Result<i64, String> {
+    let up = s.trim().to_uppercase();
+    let val = |c: char| match c {
+        'I' => 1, 'V' => 5, 'X' => 10, 'L' => 50, 'C' => 100, 'D' => 500, 'M' => 1000, _ => 0,
+    };
+    if up.is_empty() || up.chars().any(|c| val(c) == 0) {
+        return Err(format!("roman.from: \"{}\" is not a Roman numeral", s));
+    }
+    let nums: Vec<i64> = up.chars().map(val).collect();
+    let mut total = 0;
+    for i in 0..nums.len() {
+        if i + 1 < nums.len() && nums[i] < nums[i + 1] {
+            total -= nums[i];
+        } else {
+            total += nums[i];
+        }
+    }
+    // a valid numeral is the one roman_to would produce
+    if roman_to(total).map(|r| r == up).unwrap_or(false) {
+        Ok(total)
+    } else {
+        Err(format!("roman.from: \"{}\" is not a valid Roman numeral", s))
+    }
+}
+
+fn size_human(n: i64) -> String {
+    if n < 0 {
+        return format!("-{}", size_human(-n));
+    }
+    let units = ["B", "KB", "MB", "GB", "TB", "PB"];
+    let (mut v, mut i) = (n as f64, 0);
+    while v >= 1024.0 && i < units.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{} B", n)
+    } else {
+        format!("{:.1} {}", v, units[i])
+    }
+}
+
+fn duration_human(total: i64) -> String {
+    if total < 0 {
+        return format!("-{}", duration_human(-total));
+    }
+    if total == 0 {
+        return "0s".to_string();
+    }
+    let parts = [(86400, "d"), (3600, "h"), (60, "m"), (1, "s")];
+    let mut rest = total;
+    let mut out = Vec::new();
+    for (size, name) in parts {
+        let n = rest / size;
+        if n > 0 {
+            out.push(format!("{}{}", n, name));
+            rest %= size;
+        }
+    }
+    out.join(" ")
+}
+
+fn haversine(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+    let r = 6371.0; // mean Earth radius, km
+    let (p1, p2) = (lat1.to_radians(), lat2.to_radians());
+    let dphi = (lat2 - lat1).to_radians();
+    let dl = (lon2 - lon1).to_radians();
+    let a = (dphi / 2.0).sin().powi(2) + p1.cos() * p2.cos() * (dl / 2.0).sin().powi(2);
+    2.0 * r * a.sqrt().asin()
+}
+
+fn compass_direction(deg: f64) -> String {
+    const POINTS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+    let i = ((deg.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8;
+    POINTS[i].to_string()
+}
+
+fn ordinal_of(n: i64) -> String {
+    let last_two = n.unsigned_abs() % 100;
+    let suffix = if (11..=13).contains(&last_two) {
+        "th"
+    } else {
+        match n.unsigned_abs() % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        }
+    };
+    format!("{}{}", n, suffix)
+}
+
+fn pad(s: &str, width: i64, fill: &str, left: bool) -> String {
+    let fc = fill.chars().next().unwrap_or(' ');
+    let len = s.chars().count() as i64;
+    if width <= len {
+        return s.to_string();
+    }
+    let padding: String = std::iter::repeat(fc).take((width - len) as usize).collect();
+    if left {
+        format!("{}{}", padding, s)
+    } else {
+        format!("{}{}", s, padding)
+    }
+}
+
+fn center(s: &str, width: i64, fill: &str) -> String {
+    let fc = fill.chars().next().unwrap_or(' ');
+    let len = s.chars().count() as i64;
+    if width <= len {
+        return s.to_string();
+    }
+    let total = (width - len) as usize;
+    let left = total / 2;
+    let fillup = |n: usize| std::iter::repeat(fc).take(n).collect::<String>();
+    format!("{}{}{}", fillup(left), s, fillup(total - left))
+}
+
+fn hex_decode(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    if s.len() % 2 != 0 {
+        return Err("hex.decode: the text must have an even number of digits".to_string());
+    }
+    let b = s.as_bytes();
+    let mut bytes = Vec::with_capacity(s.len() / 2);
+    for pair in b.chunks(2) {
+        let hi = (pair[0] as char).to_digit(16).ok_or("hex.decode: not a hex digit")?;
+        let lo = (pair[1] as char).to_digit(16).ok_or("hex.decode: not a hex digit")?;
+        bytes.push((hi * 16 + lo) as u8);
+    }
+    String::from_utf8(bytes).map_err(|_| "hex.decode: the data is not text".to_string())
+}
+
+fn url_encode(s: &str) -> String {
+    let mut out = String::new();
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+fn url_decode(s: &str) -> Result<String, String> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' => {
+                if i + 2 >= b.len() {
+                    return Err("url.decode: a % is not followed by two hex digits".to_string());
+                }
+                let hi = (b[i + 1] as char).to_digit(16).ok_or("url.decode: bad hex after %")?;
+                let lo = (b[i + 2] as char).to_digit(16).ok_or("url.decode: bad hex after %")?;
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).map_err(|_| "url.decode: the data is not text".to_string())
+}
+
+fn case_title(s: &str) -> String {
+    s.split_whitespace()
+        .map(|w| {
+            let mut ch = w.chars();
+            match ch.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + &ch.as_str().to_lowercase(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Splits text into words, breaking on non-alphanumerics and at lowercase→uppercase.
+fn words(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut prev_lower = false;
+    for c in s.chars() {
+        if c.is_alphanumeric() {
+            if c.is_uppercase() && prev_lower && !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            cur.push(c);
+            prev_lower = c.is_lowercase() || c.is_numeric();
+        } else {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            prev_lower = false;
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn case_join(s: &str, sep: char) -> String {
+    words(s).iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join(&sep.to_string())
+}
+
+fn case_camel(s: &str) -> String {
+    words(s)
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let low = w.to_lowercase();
+            if i == 0 {
+                low
+            } else {
+                let mut ch = low.chars();
+                match ch.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + ch.as_str(),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect()
+}
+
+fn slug_make(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = true;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn all_chars(s: &str, pred: impl Fn(char) -> bool) -> bool {
+    !s.is_empty() && s.chars().all(pred)
+}
+
+fn all_cased(s: &str, upper: bool) -> bool {
+    let mut any = false;
+    for c in s.chars() {
+        if c.is_alphabetic() {
+            any = true;
+            if upper != c.is_uppercase() {
+                return false;
+            }
+        }
+    }
+    any
+}
+
+fn caesar(s: &str, shift: i64) -> String {
+    let sh = shift.rem_euclid(26) as u8;
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_uppercase() {
+                (b'A' + (c as u8 - b'A' + sh) % 26) as char
+            } else if c.is_ascii_lowercase() {
+                (b'a' + (c as u8 - b'a' + sh) % 26) as char
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+fn leet_encode(s: &str) -> String {
+    s.chars()
+        .map(|c| match c.to_ascii_lowercase() {
+            'a' => '4',
+            'e' => '3',
+            'i' => '1',
+            'o' => '0',
+            's' => '5',
+            't' => '7',
+            _ => c,
+        })
+        .collect()
+}
+
+const MORSE: &[(char, &str)] = &[
+    ('A', ".-"), ('B', "-..."), ('C', "-.-."), ('D', "-.."), ('E', "."), ('F', "..-."), ('G', "--."), ('H', "...."),
+    ('I', ".."), ('J', ".---"), ('K', "-.-"), ('L', ".-.."), ('M', "--"), ('N', "-."), ('O', "---"), ('P', ".--."),
+    ('Q', "--.-"), ('R', ".-."), ('S', "..."), ('T', "-"), ('U', "..-"), ('V', "...-"), ('W', ".--"), ('X', "-..-"),
+    ('Y', "-.--"), ('Z', "--.."), ('0', "-----"), ('1', ".----"), ('2', "..---"), ('3', "...--"), ('4', "....-"),
+    ('5', "....."), ('6', "-...."), ('7', "--..."), ('8', "---.."), ('9', "----."),
+];
+
+fn morse_encode(s: &str) -> Result<String, String> {
+    let mut out = Vec::new();
+    for c in s.to_uppercase().chars() {
+        if c.is_whitespace() {
+            out.push("/".to_string());
+        } else if let Some((_, code)) = MORSE.iter().find(|(ch, _)| *ch == c) {
+            out.push(code.to_string());
+        } else {
+            return Err(format!("morse.encode: cannot encode '{}'", c));
+        }
+    }
+    Ok(out.join(" "))
+}
+
+fn morse_decode(s: &str) -> Result<String, String> {
+    let mut out = String::new();
+    for token in s.split_whitespace() {
+        if token == "/" {
+            out.push(' ');
+        } else if let Some((ch, _)) = MORSE.iter().find(|(_, code)| *code == token) {
+            out.push(*ch);
+        } else {
+            return Err(format!("morse.decode: unknown code \"{}\"", token));
+        }
+    }
+    Ok(out)
+}
+
+const NATO: &[(char, &str)] = &[
+    ('A', "Alpha"), ('B', "Bravo"), ('C', "Charlie"), ('D', "Delta"), ('E', "Echo"), ('F', "Foxtrot"), ('G', "Golf"),
+    ('H', "Hotel"), ('I', "India"), ('J', "Juliett"), ('K', "Kilo"), ('L', "Lima"), ('M', "Mike"), ('N', "November"),
+    ('O', "Oscar"), ('P', "Papa"), ('Q', "Quebec"), ('R', "Romeo"), ('S', "Sierra"), ('T', "Tango"), ('U', "Uniform"),
+    ('V', "Victor"), ('W', "Whiskey"), ('X', "X-ray"), ('Y', "Yankee"), ('Z', "Zulu"), ('0', "Zero"), ('1', "One"),
+    ('2', "Two"), ('3', "Three"), ('4', "Four"), ('5', "Five"), ('6', "Six"), ('7', "Seven"), ('8', "Eight"),
+    ('9', "Nine"),
+];
+
+fn nato_encode(s: &str) -> String {
+    s.to_uppercase()
+        .chars()
+        .filter_map(|c| NATO.iter().find(|(ch, _)| *ch == c).map(|(_, w)| (*w).to_string()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn color_invert(s: &str) -> Result<String, String> {
+    let t = s.trim();
+    let h = t.strip_prefix('#').unwrap_or(t);
+    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("color.invert: \"{}\" is not a #rrggbb color", s));
+    }
+    let n = u32::from_str_radix(h, 16).unwrap();
+    Ok(format!("#{:06x}", 0xFF_FFFF - n))
+}
+
+fn regex_is(pattern: &str, s: &str) -> bool {
+    regex::Regex::new(pattern).map(|re| re.is_match(s)).unwrap_or(false)
+}
+
+fn luhn_valid(s: &str) -> bool {
+    let clean: String = s.chars().filter(|c| !c.is_whitespace() && *c != '-').collect();
+    if clean.is_empty() || !clean.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    let mut sum = 0;
+    for (i, c) in clean.chars().rev().enumerate() {
+        let mut d = c.to_digit(10).unwrap();
+        if i % 2 == 1 {
+            d *= 2;
+            if d > 9 {
+                d -= 9;
+            }
+        }
+        sum += d;
+    }
+    sum % 10 == 0
+}
+
+fn isbn_valid(s: &str) -> bool {
+    let clean: String = s.chars().filter(|c| !c.is_whitespace() && *c != '-').collect();
+    match clean.len() {
+        10 => {
+            let mut sum = 0i32;
+            for (i, c) in clean.chars().enumerate() {
+                let v = if i == 9 && (c == 'X' || c == 'x') {
+                    10
+                } else {
+                    match c.to_digit(10) {
+                        Some(d) => d as i32,
+                        None => return false,
+                    }
+                };
+                sum += (10 - i as i32) * v;
+            }
+            sum % 11 == 0
+        }
+        13 => {
+            let mut sum = 0i32;
+            for (i, c) in clean.chars().enumerate() {
+                let d = match c.to_digit(10) {
+                    Some(d) => d as i32,
+                    None => return false,
+                };
+                sum += if i % 2 == 0 { d } else { 3 * d };
+            }
+            sum % 10 == 0
+        }
+        _ => false,
+    }
+}
+
+enum PathPart {
+    Name,
+    Stem,
+    Ext,
+    Parent,
+}
+
+fn path_part(p: &str, part: PathPart) -> String {
+    let path = std::path::Path::new(p);
+    let piece = match part {
+        PathPart::Name => path.file_name(),
+        PathPart::Stem => path.file_stem(),
+        PathPart::Ext => path.extension(),
+        PathPart::Parent => return path.parent().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+    };
+    piece.map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// The arguments the program was given, after the interpreter and the script path.
+fn program_args() -> Vec<String> {
+    std::env::args().skip(2).collect()
+}
+
+fn csv_fields(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                cur.push(c);
+            }
+        } else {
+            match c {
+                '"' => in_quotes = true,
+                ',' => out.push(std::mem::take(&mut cur)),
+                _ => cur.push(c),
+            }
+        }
+    }
+    out.push(cur);
+    out
+}
+
+fn csv_line(fields: impl Iterator<Item = String>) -> String {
+    fields
+        .map(|f| {
+            if f.contains([',', '"', '\n']) {
+                format!("\"{}\"", f.replace('"', "\"\""))
+            } else {
+                f
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The numbers of an array or list argument (for the `stats` module).
+fn numbers(v: &Value) -> Result<Vec<f64>, String> {
+    let items = seq(v).borrow();
+    if items.is_empty() {
+        return Err("the list is empty".to_string());
+    }
+    no_empty_elements(&items, "stats")?;
+    Ok(items.iter().map(real).collect())
 }
 
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
@@ -780,6 +1429,240 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 .decode(text(&args[0]))
                 .map_err(|e| format!("encode.from_base64: not valid base64 ({})", e))?;
             string(String::from_utf8(bytes).map_err(|_| "encode.from_base64: the decoded data is not text".to_string())?)
+        }
+        ShellRun => string(shell_run(text(&args[0]))?),
+
+        // math
+        MathGcd => Value::Int(gcd(int(&args[0]), int(&args[1]))),
+        MathLcm => {
+            let (x, y) = (int(&args[0]), int(&args[1]));
+            let g = gcd(x, y);
+            if g == 0 {
+                Value::Int(0)
+            } else {
+                Value::Int((x / g).checked_mul(y).ok_or(OVERFLOW)?.abs())
+            }
+        }
+        MathFactorial => {
+            let n = int(&args[0]);
+            if n < 0 {
+                return Err("math.factorial: the number cannot be negative".to_string());
+            }
+            let mut acc: i64 = 1;
+            for k in 2..=n {
+                acc = acc.checked_mul(k).ok_or(OVERFLOW)?;
+            }
+            Value::Int(acc)
+        }
+        MathIsPrime => Value::Bool(is_prime(int(&args[0]))),
+        MathSign => {
+            let x = real(&args[0]);
+            Value::Int(if x > 0.0 { 1 } else if x < 0.0 { -1 } else { 0 })
+        }
+        MathHypot => Value::Real(real(&args[0]).hypot(real(&args[1]))),
+        MathClamp => Value::Real(real(&args[0]).max(real(&args[1])).min(real(&args[2]))),
+        MathCbrt => Value::Real(real(&args[0]).cbrt()),
+
+        // bits
+        BitsAnd => Value::Int(int(&args[0]) & int(&args[1])),
+        BitsOr => Value::Int(int(&args[0]) | int(&args[1])),
+        BitsXor => Value::Int(int(&args[0]) ^ int(&args[1])),
+        BitsNot => Value::Int(!int(&args[0])),
+        BitsLeft => Value::Int(int(&args[0]).wrapping_shl(int(&args[1]).clamp(0, 63) as u32)),
+        BitsRight => Value::Int(int(&args[0]).wrapping_shr(int(&args[1]).clamp(0, 63) as u32)),
+        BitsOnes => Value::Int(int(&args[0]).count_ones() as i64),
+
+        // base and roman
+        BaseTo => string(int_to_base(int(&args[0]), int(&args[1]))?),
+        BaseFrom => Value::Int(base_from(text(&args[0]), int(&args[1]))?),
+        RomanTo => string(roman_to(int(&args[0]))?),
+        RomanFrom => Value::Int(roman_from(text(&args[0]))?),
+
+        // temperatures, angles, percentages
+        TempCToF => Value::Real(real(&args[0]) * 9.0 / 5.0 + 32.0),
+        TempFToC => Value::Real((real(&args[0]) - 32.0) * 5.0 / 9.0),
+        TempCToK => Value::Real(real(&args[0]) + 273.15),
+        TempKToC => Value::Real(real(&args[0]) - 273.15),
+        AngleToRadians => Value::Real(real(&args[0]).to_radians()),
+        AngleToDegrees => Value::Real(real(&args[0]).to_degrees()),
+        AngleNormalize => Value::Real(real(&args[0]).rem_euclid(360.0)),
+        PercentOf => Value::Real(real(&args[0]) / 100.0 * real(&args[1])),
+        PercentChange => {
+            let (from, to) = (real(&args[0]), real(&args[1]));
+            if from == 0.0 {
+                return Err("percent.change: the starting value is zero".to_string());
+            }
+            Value::Real((to - from) / from * 100.0)
+        }
+
+        // geometry and units
+        GeomCircleArea => Value::Real(std::f64::consts::PI * real(&args[0]).powi(2)),
+        GeomRectArea => Value::Real(real(&args[0]) * real(&args[1])),
+        GeomTriangleArea => Value::Real(real(&args[0]) * real(&args[1]) / 2.0),
+        GeomSphereVolume => Value::Real(4.0 / 3.0 * std::f64::consts::PI * real(&args[0]).powi(3)),
+        GeomCubeVolume => Value::Real(real(&args[0]).powi(3)),
+        LengthMToFt => Value::Real(real(&args[0]) * 3.280_839_895),
+        LengthFtToM => Value::Real(real(&args[0]) / 3.280_839_895),
+        LengthKmToMi => Value::Real(real(&args[0]) * 0.621_371_192),
+        LengthMiToKm => Value::Real(real(&args[0]) / 0.621_371_192),
+        WeightKgToLb => Value::Real(real(&args[0]) * 2.204_622_622),
+        WeightLbToKg => Value::Real(real(&args[0]) / 2.204_622_622),
+        SizeHuman => string(size_human(int(&args[0]))),
+        DurationHuman => string(duration_human(int(&args[0]))),
+        GeoDistance => Value::Real(haversine(real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]))),
+        TaxAdd => Value::Real(real(&args[0]) * (1.0 + real(&args[1]) / 100.0)),
+        TaxRemove => Value::Real(real(&args[0]) / (1.0 + real(&args[1]) / 100.0)),
+        CompassDirection => string(compass_direction(real(&args[0]))),
+
+        // number helpers
+        OrdinalOf => string(ordinal_of(int(&args[0]))),
+        FibAt => Value::Int(fib_at(int(&args[0]))?),
+        PrimeNext => Value::Int(prime_next(int(&args[0]))),
+        PrimeNth => Value::Int(prime_nth(int(&args[0]))?),
+
+        // strings
+        StrRepeat => {
+            let (s, n) = (text(&args[0]), int(&args[1]));
+            if n < 0 {
+                return Err("str.repeat: the count cannot be negative".to_string());
+            }
+            if s.len().saturating_mul(n as usize) > 50_000_000 {
+                return Err("str.repeat: the result would be too large".to_string());
+            }
+            string(s.repeat(n as usize))
+        }
+        StrReverse => string(text(&args[0]).chars().rev().collect::<String>()),
+        StrPadLeft => string(pad(text(&args[0]), int(&args[1]), text(&args[2]), true)),
+        StrPadRight => string(pad(text(&args[0]), int(&args[1]), text(&args[2]), false)),
+        StrCenter => string(center(text(&args[0]), int(&args[1]), text(&args[2]))),
+        HexEncode => string(hex(text(&args[0]).as_bytes())),
+        HexDecode => string(hex_decode(text(&args[0]))?),
+        UrlEncode => string(url_encode(text(&args[0]))),
+        UrlDecode => string(url_decode(text(&args[0]))?),
+        CaseTitle => string(case_title(text(&args[0]))),
+        CaseSnake => string(case_join(text(&args[0]), '_')),
+        CaseKebab => string(case_join(text(&args[0]), '-')),
+        CaseCamel => string(case_camel(text(&args[0]))),
+        SlugMake => string(slug_make(text(&args[0]))),
+        AsciiIsDigit => Value::Bool(all_chars(text(&args[0]), |c| c.is_ascii_digit())),
+        AsciiIsAlpha => Value::Bool(all_chars(text(&args[0]), |c| c.is_ascii_alphabetic())),
+        AsciiIsSpace => Value::Bool(all_chars(text(&args[0]), |c| c.is_ascii_whitespace())),
+        AsciiIsUpper => Value::Bool(all_cased(text(&args[0]), true)),
+        AsciiIsLower => Value::Bool(all_cased(text(&args[0]), false)),
+        MorseEncode => string(morse_encode(text(&args[0]))?),
+        MorseDecode => string(morse_decode(text(&args[0]))?),
+        CaesarEncode => string(caesar(text(&args[0]), int(&args[1]))),
+        CaesarDecode => string(caesar(text(&args[0]), -int(&args[1]))),
+        Rot13Apply => string(caesar(text(&args[0]), 13)),
+        LeetEncode => string(leet_encode(text(&args[0]))),
+        NatoEncode => string(nato_encode(text(&args[0]))),
+
+        // colors and validation
+        ColorHex => {
+            let c = |v: &Value| int(v).clamp(0, 255);
+            string(format!("#{:02x}{:02x}{:02x}", c(&args[0]), c(&args[1]), c(&args[2])))
+        }
+        ColorGray => {
+            let v = int(&args[0]).clamp(0, 255);
+            string(format!("#{:02x}{:02x}{:02x}", v, v, v))
+        }
+        ColorInvert => string(color_invert(text(&args[0]))?),
+        ValidEmail => Value::Bool(regex_is(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", text(&args[0]))),
+        ValidInteger => Value::Bool(regex_is(r"^[+-]?[0-9]+$", text(&args[0]).trim())),
+        ValidNumber => Value::Bool(regex_is(r"^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)$", text(&args[0]).trim())),
+        LuhnValid => Value::Bool(luhn_valid(text(&args[0]))),
+        IsbnValid => Value::Bool(isbn_valid(text(&args[0]))),
+        UuidMake => string(uuid::Uuid::new_v4().to_string()),
+        CrcValue => Value::Int(i64::from(crc32fast::hash(text(&args[0]).as_bytes()))),
+
+        // environment, paths and the operating system
+        EnvGet => string(std::env::var(text(&args[0])).unwrap_or_default()),
+        EnvHas => Value::Bool(std::env::var_os(text(&args[0])).is_some()),
+        EnvSet => {
+            std::env::set_var(text(&args[0]), text(&args[1]));
+            Value::Null
+        }
+        PathJoin => string(std::path::Path::new(text(&args[0])).join(text(&args[1])).to_string_lossy().into_owned()),
+        PathName => string(path_part(text(&args[0]), PathPart::Name)),
+        PathStem => string(path_part(text(&args[0]), PathPart::Stem)),
+        PathExtension => string(path_part(text(&args[0]), PathPart::Ext)),
+        PathParent => string(path_part(text(&args[0]), PathPart::Parent)),
+        PathIsAbsolute => Value::Bool(std::path::Path::new(text(&args[0])).is_absolute()),
+        OsName => string(std::env::consts::OS),
+        OsArch => string(std::env::consts::ARCH),
+        OsFamily => string(std::env::consts::FAMILY),
+        DirList => {
+            let path = text(&args[0]);
+            let mut names = Vec::new();
+            for entry in std::fs::read_dir(path).map_err(|e| format!("dir.list: cannot read \"{}\": {}", path, e))? {
+                let entry = entry.map_err(|e| format!("dir.list: {}", e))?;
+                names.push(string(entry.file_name().to_string_lossy().into_owned()));
+            }
+            list(names)
+        }
+        DirMake => {
+            let p = text(&args[0]);
+            std::fs::create_dir_all(p).map_err(|e| format!("dir.make: cannot create \"{}\": {}", p, e))?;
+            Value::Null
+        }
+        DirCurrent => string(std::env::current_dir().map_err(|e| format!("dir.current: {}", e))?.to_string_lossy().into_owned()),
+        DirExists => Value::Bool(std::path::Path::new(text(&args[0])).is_dir()),
+        FileSize => {
+            let p = text(&args[0]);
+            let m = std::fs::metadata(p).map_err(|e| format!("file.size: cannot read \"{}\": {}", p, e))?;
+            Value::Int(m.len() as i64)
+        }
+        FileCopy => {
+            std::fs::copy(text(&args[0]), text(&args[1])).map_err(|e| format!("file.copy: {}", e))?;
+            Value::Null
+        }
+        FileRename => {
+            std::fs::rename(text(&args[0]), text(&args[1])).map_err(|e| format!("file.rename: {}", e))?;
+            Value::Null
+        }
+        FileModified => {
+            let p = text(&args[0]);
+            let m = std::fs::metadata(p).map_err(|e| format!("file.modified: {}", e))?;
+            let t = m.modified().map_err(|e| format!("file.modified: {}", e))?;
+            Value::Int(t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
+        }
+        FileDelete => {
+            let p = text(&args[0]);
+            std::fs::remove_file(p).map_err(|e| format!("file.delete: cannot delete \"{}\": {}", p, e))?;
+            Value::Null
+        }
+        TmpPath => string(std::env::temp_dir().to_string_lossy().into_owned()),
+        ArgsCount => Value::Int(program_args().len() as i64),
+        ArgsGet => {
+            let a = program_args();
+            let i = int(&args[0]);
+            if i < 1 || i as usize > a.len() {
+                return Err(format!("args.get: there is no argument number {}", i));
+            }
+            string(a[i as usize - 1].clone())
+        }
+
+        // CSV and statistics
+        CsvFields => list(csv_fields(text(&args[0])).into_iter().map(string).collect()),
+        CsvLine => {
+            let items = seq(&args[0]).borrow();
+            string(csv_line(items.iter().map(display)))
+        }
+        StatsMean => {
+            let v = numbers(&args[0])?;
+            Value::Real(v.iter().sum::<f64>() / v.len() as f64)
+        }
+        StatsMedian => {
+            let mut v = numbers(&args[0])?;
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            let n = v.len();
+            Value::Real(if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2.0 })
+        }
+        StatsStdev => {
+            let v = numbers(&args[0])?;
+            let m = v.iter().sum::<f64>() / v.len() as f64;
+            let var = v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64;
+            Value::Real(var.sqrt())
         }
         other => panic!("internal error: {:?} is not a library function", other),
     })

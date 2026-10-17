@@ -163,6 +163,20 @@ fn builtin_module_clock_roundtrip() {
 }
 
 #[test]
+fn builtin_modules_batch() {
+    let dir = std::env::temp_dir().join("globw_batch_module_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import math\nimport roman\nimport base\nimport str\nimport stats\nimport luhn\n\
+               output(math.gcd(24, 36), \" \", math.factorial(5))\n\
+               output(roman.to(2024), \" \", base.to(255, 16))\n\
+               output(str.pad_left(\"7\", 3, \"0\"), \" \", stats.median([3.0, 1.0, 2.0]))\n\
+               output(luhn.valid(\"4539578763621486\"))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "12 120\nMMXXIV ff\n007 2.0\ntrue\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_module_encode_base64() {
     let dir = std::env::temp_dir().join("globw_encode_module_test");
     std::fs::create_dir_all(&dir).unwrap();

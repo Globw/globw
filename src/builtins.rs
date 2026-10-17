@@ -141,6 +141,166 @@ pub enum Builtin {
     // module "encode" (base64)
     EncodeBase64,
     EncodeFromBase64,
+    // module "shell" (run a system command)
+    ShellRun,
+    // module "math" (extra maths)
+    MathGcd,
+    MathLcm,
+    MathFactorial,
+    MathIsPrime,
+    MathSign,
+    MathHypot,
+    MathClamp,
+    MathCbrt,
+    // module "bits" (bitwise operations)
+    BitsAnd,
+    BitsOr,
+    BitsXor,
+    BitsNot,
+    BitsLeft,
+    BitsRight,
+    BitsOnes,
+    // module "base" (number bases)
+    BaseTo,
+    BaseFrom,
+    // module "roman" (Roman numerals)
+    RomanTo,
+    RomanFrom,
+    // module "temp" (temperatures)
+    TempCToF,
+    TempFToC,
+    TempCToK,
+    TempKToC,
+    // module "angle"
+    AngleToRadians,
+    AngleToDegrees,
+    AngleNormalize,
+    // module "percent"
+    PercentOf,
+    PercentChange,
+    // module "geom" (areas and volumes)
+    GeomCircleArea,
+    GeomRectArea,
+    GeomTriangleArea,
+    GeomSphereVolume,
+    GeomCubeVolume,
+    // module "length" (unit conversions)
+    LengthMToFt,
+    LengthFtToM,
+    LengthKmToMi,
+    LengthMiToKm,
+    // module "weight"
+    WeightKgToLb,
+    WeightLbToKg,
+    // module "size" (byte sizes)
+    SizeHuman,
+    // module "duration"
+    DurationHuman,
+    // module "geo" (coordinates)
+    GeoDistance,
+    // module "ordinal"
+    OrdinalOf,
+    // module "fib" (Fibonacci)
+    FibAt,
+    // module "prime"
+    PrimeNext,
+    PrimeNth,
+    // module "str" (more strings)
+    StrRepeat,
+    StrReverse,
+    StrPadLeft,
+    StrPadRight,
+    StrCenter,
+    // module "hex"
+    HexEncode,
+    HexDecode,
+    // module "url"
+    UrlEncode,
+    UrlDecode,
+    // module "case" (naming styles)
+    CaseTitle,
+    CaseSnake,
+    CaseCamel,
+    CaseKebab,
+    // module "slug"
+    SlugMake,
+    // module "ascii" (character classes)
+    AsciiIsDigit,
+    AsciiIsAlpha,
+    AsciiIsSpace,
+    AsciiIsUpper,
+    AsciiIsLower,
+    // module "morse"
+    MorseEncode,
+    MorseDecode,
+    // module "caesar" (cipher)
+    CaesarEncode,
+    CaesarDecode,
+    // module "rot13"
+    Rot13Apply,
+    // module "leet"
+    LeetEncode,
+    // module "nato" (phonetic alphabet)
+    NatoEncode,
+    // module "color"
+    ColorHex,
+    ColorGray,
+    ColorInvert,
+    // module "valid" (validation)
+    ValidEmail,
+    ValidInteger,
+    ValidNumber,
+    // module "luhn"
+    LuhnValid,
+    // module "isbn"
+    IsbnValid,
+    // module "uuid"
+    UuidMake,
+    // module "crc" (checksum)
+    CrcValue,
+    // module "env" (environment variables)
+    EnvGet,
+    EnvHas,
+    EnvSet,
+    // module "path" (file paths)
+    PathJoin,
+    PathName,
+    PathStem,
+    PathExtension,
+    PathParent,
+    PathIsAbsolute,
+    // module "os"
+    OsName,
+    OsArch,
+    OsFamily,
+    // module "dir" (folders)
+    DirList,
+    DirMake,
+    DirCurrent,
+    DirExists,
+    // module "file" (file operations)
+    FileSize,
+    FileCopy,
+    FileRename,
+    FileModified,
+    FileDelete,
+    // module "tmp"
+    TmpPath,
+    // module "args" (program arguments)
+    ArgsCount,
+    ArgsGet,
+    // module "csv"
+    CsvFields,
+    CsvLine,
+    // module "stats"
+    StatsMean,
+    StatsMedian,
+    StatsStdev,
+    // module "tax"
+    TaxAdd,
+    TaxRemove,
+    // module "compass"
+    CompassDirection,
 }
 
 use Builtin::*;
@@ -267,10 +427,130 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (ClockParse, "clock.parse", Sig::Fixed(&[S, S], Some(Int))),
     (EncodeBase64, "encode.base64", Sig::Fixed(&[S], Some(Str))),
     (EncodeFromBase64, "encode.from_base64", Sig::Fixed(&[S], Some(Str))),
+    (ShellRun, "shell.run", Sig::Fixed(&[S], Some(Str))),
+    (MathGcd, "math.gcd", Sig::Fixed(&[I, I], Some(Int))),
+    (MathLcm, "math.lcm", Sig::Fixed(&[I, I], Some(Int))),
+    (MathFactorial, "math.factorial", Sig::Fixed(&[I], Some(Int))),
+    (MathIsPrime, "math.is_prime", Sig::Fixed(&[I], Some(Bool))),
+    (MathSign, "math.sign", Sig::Fixed(&[R], Some(Int))),
+    (MathHypot, "math.hypot", Sig::Fixed(&[R, R], Some(Real))),
+    (MathClamp, "math.clamp", Sig::Fixed(&[R, R, R], Some(Real))),
+    (MathCbrt, "math.cbrt", Sig::Fixed(&[R], Some(Real))),
+    (BitsAnd, "bits.and", Sig::Fixed(&[I, I], Some(Int))),
+    (BitsOr, "bits.or", Sig::Fixed(&[I, I], Some(Int))),
+    (BitsXor, "bits.xor", Sig::Fixed(&[I, I], Some(Int))),
+    (BitsNot, "bits.not", Sig::Fixed(&[I], Some(Int))),
+    (BitsLeft, "bits.left", Sig::Fixed(&[I, I], Some(Int))),
+    (BitsRight, "bits.right", Sig::Fixed(&[I, I], Some(Int))),
+    (BitsOnes, "bits.ones", Sig::Fixed(&[I], Some(Int))),
+    (BaseTo, "base.to", Sig::Fixed(&[I, I], Some(Str))),
+    (BaseFrom, "base.from", Sig::Fixed(&[S, I], Some(Int))),
+    (RomanTo, "roman.to", Sig::Fixed(&[I], Some(Str))),
+    (RomanFrom, "roman.from", Sig::Fixed(&[S], Some(Int))),
+    (TempCToF, "temp.c_to_f", Sig::Fixed(&[R], Some(Real))),
+    (TempFToC, "temp.f_to_c", Sig::Fixed(&[R], Some(Real))),
+    (TempCToK, "temp.c_to_k", Sig::Fixed(&[R], Some(Real))),
+    (TempKToC, "temp.k_to_c", Sig::Fixed(&[R], Some(Real))),
+    (AngleToRadians, "angle.to_radians", Sig::Fixed(&[R], Some(Real))),
+    (AngleToDegrees, "angle.to_degrees", Sig::Fixed(&[R], Some(Real))),
+    (AngleNormalize, "angle.normalize", Sig::Fixed(&[R], Some(Real))),
+    (PercentOf, "percent.of", Sig::Fixed(&[R, R], Some(Real))),
+    (PercentChange, "percent.change", Sig::Fixed(&[R, R], Some(Real))),
+    (GeomCircleArea, "geom.circle_area", Sig::Fixed(&[R], Some(Real))),
+    (GeomRectArea, "geom.rect_area", Sig::Fixed(&[R, R], Some(Real))),
+    (GeomTriangleArea, "geom.triangle_area", Sig::Fixed(&[R, R], Some(Real))),
+    (GeomSphereVolume, "geom.sphere_volume", Sig::Fixed(&[R], Some(Real))),
+    (GeomCubeVolume, "geom.cube_volume", Sig::Fixed(&[R], Some(Real))),
+    (LengthMToFt, "length.meters_to_feet", Sig::Fixed(&[R], Some(Real))),
+    (LengthFtToM, "length.feet_to_meters", Sig::Fixed(&[R], Some(Real))),
+    (LengthKmToMi, "length.km_to_miles", Sig::Fixed(&[R], Some(Real))),
+    (LengthMiToKm, "length.miles_to_km", Sig::Fixed(&[R], Some(Real))),
+    (WeightKgToLb, "weight.kg_to_lb", Sig::Fixed(&[R], Some(Real))),
+    (WeightLbToKg, "weight.lb_to_kg", Sig::Fixed(&[R], Some(Real))),
+    (SizeHuman, "size.human", Sig::Fixed(&[I], Some(Str))),
+    (DurationHuman, "duration.human", Sig::Fixed(&[I], Some(Str))),
+    (GeoDistance, "geo.distance", Sig::Fixed(&[R, R, R, R], Some(Real))),
+    (OrdinalOf, "ordinal.of", Sig::Fixed(&[I], Some(Str))),
+    (FibAt, "fib.at", Sig::Fixed(&[I], Some(Int))),
+    (PrimeNext, "prime.next", Sig::Fixed(&[I], Some(Int))),
+    (PrimeNth, "prime.nth", Sig::Fixed(&[I], Some(Int))),
+    (StrRepeat, "str.repeat", Sig::Fixed(&[S, I], Some(Str))),
+    (StrReverse, "str.reverse", Sig::Fixed(&[S], Some(Str))),
+    (StrPadLeft, "str.pad_left", Sig::Fixed(&[S, I, S], Some(Str))),
+    (StrPadRight, "str.pad_right", Sig::Fixed(&[S, I, S], Some(Str))),
+    (StrCenter, "str.center", Sig::Fixed(&[S, I, S], Some(Str))),
+    (HexEncode, "hex.encode", Sig::Fixed(&[S], Some(Str))),
+    (HexDecode, "hex.decode", Sig::Fixed(&[S], Some(Str))),
+    (UrlEncode, "url.encode", Sig::Fixed(&[S], Some(Str))),
+    (UrlDecode, "url.decode", Sig::Fixed(&[S], Some(Str))),
+    (CaseTitle, "case.title", Sig::Fixed(&[S], Some(Str))),
+    (CaseSnake, "case.snake", Sig::Fixed(&[S], Some(Str))),
+    (CaseCamel, "case.camel", Sig::Fixed(&[S], Some(Str))),
+    (CaseKebab, "case.kebab", Sig::Fixed(&[S], Some(Str))),
+    (SlugMake, "slug.make", Sig::Fixed(&[S], Some(Str))),
+    (AsciiIsDigit, "ascii.is_digit", Sig::Fixed(&[S], Some(Bool))),
+    (AsciiIsAlpha, "ascii.is_alpha", Sig::Fixed(&[S], Some(Bool))),
+    (AsciiIsSpace, "ascii.is_space", Sig::Fixed(&[S], Some(Bool))),
+    (AsciiIsUpper, "ascii.is_upper", Sig::Fixed(&[S], Some(Bool))),
+    (AsciiIsLower, "ascii.is_lower", Sig::Fixed(&[S], Some(Bool))),
+    (MorseEncode, "morse.encode", Sig::Fixed(&[S], Some(Str))),
+    (MorseDecode, "morse.decode", Sig::Fixed(&[S], Some(Str))),
+    (CaesarEncode, "caesar.encode", Sig::Fixed(&[S, I], Some(Str))),
+    (CaesarDecode, "caesar.decode", Sig::Fixed(&[S, I], Some(Str))),
+    (Rot13Apply, "rot13.apply", Sig::Fixed(&[S], Some(Str))),
+    (LeetEncode, "leet.encode", Sig::Fixed(&[S], Some(Str))),
+    (NatoEncode, "nato.encode", Sig::Fixed(&[S], Some(Str))),
+    (ColorHex, "color.hex", Sig::Fixed(&[I, I, I], Some(Str))),
+    (ColorGray, "color.gray", Sig::Fixed(&[I], Some(Str))),
+    (ColorInvert, "color.invert", Sig::Fixed(&[S], Some(Str))),
+    (ValidEmail, "valid.email", Sig::Fixed(&[S], Some(Bool))),
+    (ValidInteger, "valid.integer", Sig::Fixed(&[S], Some(Bool))),
+    (ValidNumber, "valid.number", Sig::Fixed(&[S], Some(Bool))),
+    (LuhnValid, "luhn.valid", Sig::Fixed(&[S], Some(Bool))),
+    (IsbnValid, "isbn.valid", Sig::Fixed(&[S], Some(Bool))),
+    (UuidMake, "uuid.make", Sig::Fixed(&[], Some(Str))),
+    (CrcValue, "crc.value", Sig::Fixed(&[S], Some(Int))),
+    (EnvGet, "env.get", Sig::Fixed(&[S], Some(Str))),
+    (EnvHas, "env.has", Sig::Fixed(&[S], Some(Bool))),
+    (EnvSet, "env.set", Sig::Fixed(&[S, S], None)),
+    (PathJoin, "path.join", Sig::Fixed(&[S, S], Some(Str))),
+    (PathName, "path.name", Sig::Fixed(&[S], Some(Str))),
+    (PathStem, "path.stem", Sig::Fixed(&[S], Some(Str))),
+    (PathExtension, "path.extension", Sig::Fixed(&[S], Some(Str))),
+    (PathParent, "path.parent", Sig::Fixed(&[S], Some(Str))),
+    (PathIsAbsolute, "path.is_absolute", Sig::Fixed(&[S], Some(Bool))),
+    (OsName, "os.name", Sig::Fixed(&[], Some(Str))),
+    (OsArch, "os.arch", Sig::Fixed(&[], Some(Str))),
+    (OsFamily, "os.family", Sig::Fixed(&[], Some(Str))),
+    (DirList, "dir.list", Sig::Flexible { function: true }),
+    (DirMake, "dir.make", Sig::Fixed(&[S], None)),
+    (DirCurrent, "dir.current", Sig::Fixed(&[], Some(Str))),
+    (DirExists, "dir.exists", Sig::Fixed(&[S], Some(Bool))),
+    (FileSize, "file.size", Sig::Fixed(&[S], Some(Int))),
+    (FileCopy, "file.copy", Sig::Fixed(&[S, S], None)),
+    (FileRename, "file.rename", Sig::Fixed(&[S, S], None)),
+    (FileModified, "file.modified", Sig::Fixed(&[S], Some(Int))),
+    (FileDelete, "file.delete", Sig::Fixed(&[S], None)),
+    (TmpPath, "tmp.path", Sig::Fixed(&[], Some(Str))),
+    (ArgsCount, "args.count", Sig::Fixed(&[], Some(Int))),
+    (ArgsGet, "args.get", Sig::Fixed(&[I], Some(Str))),
+    (CsvFields, "csv.fields", Sig::Flexible { function: true }),
+    (CsvLine, "csv.line", Sig::Flexible { function: true }),
+    (StatsMean, "stats.mean", Sig::Flexible { function: true }),
+    (StatsMedian, "stats.median", Sig::Flexible { function: true }),
+    (StatsStdev, "stats.stdev", Sig::Flexible { function: true }),
+    (TaxAdd, "tax.add", Sig::Fixed(&[R, R], Some(Real))),
+    (TaxRemove, "tax.remove", Sig::Fixed(&[R, R], Some(Real))),
+    (CompassDirection, "compass.direction", Sig::Fixed(&[R], Some(Str))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
-pub const BUILTIN_MODULES: [&str; 6] = ["text", "hash", "web", "data", "clock", "encode"];
+pub const BUILTIN_MODULES: &[&str] = &[
+    "text", "hash", "web", "data", "clock", "encode", "shell", "math", "bits", "base", "roman", "temp", "angle",
+    "percent", "geom", "length", "weight", "size", "duration", "geo", "ordinal", "fib", "prime", "str", "hex", "url",
+    "case", "slug", "ascii", "morse", "caesar", "rot13", "leet", "nato", "color", "valid", "luhn", "isbn", "uuid",
+    "crc", "env", "path", "os", "dir", "file", "tmp", "args", "csv", "stats", "tax", "compass",
+];
 
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)
