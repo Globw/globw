@@ -70,7 +70,7 @@
         "globw.path": {
           "type": "string",
           "default": "",
-          "description": "Path to globw.exe. Empty: use the build in C:\\Users\\Utente\\easier, or `globw` from PATH."
+          "description": "Path to globw.exe. Empty: use the build in C:\\Users\\Utente\\globw, or `globw` from PATH."
         }
       }
     }

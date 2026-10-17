@@ -6,7 +6,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { parseErrors } = require('./parse');
 
-const LOCAL_BUILD = 'C:\\Users\\Utente\\easier\\target\\release\\globw.exe';
+const LOCAL_BUILD = 'C:\\Users\\Utente\\globw\\target\\release\\globw.exe';
 
 function globwPath() {
     const configured = vscode.workspace.getConfiguration('globw').get('path');
