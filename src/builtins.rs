@@ -121,6 +121,9 @@ pub enum Builtin {
     TextFind,
     TextReplaceAll,
     TextAll,
+    // module "hash" (digests)
+    HashSha256,
+    HashSha512,
 }
 
 use Builtin::*;
@@ -232,10 +235,12 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (TextFind, "text.find", Sig::Fixed(&[S, S], Some(Str))),
     (TextReplaceAll, "text.replace_all", Sig::Fixed(&[S, S, S], Some(Str))),
     (TextAll, "text.all", Sig::Flexible { function: true }),
+    (HashSha256, "hash.sha256", Sig::Fixed(&[S], Some(Str))),
+    (HashSha512, "hash.sha512", Sig::Fixed(&[S], Some(Str))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
-pub const BUILTIN_MODULES: [&str; 1] = ["text"];
+pub const BUILTIN_MODULES: [&str; 2] = ["text", "hash"];
 
 pub fn is_builtin_module(name: &str) -> bool {
     BUILTIN_MODULES.contains(&name)

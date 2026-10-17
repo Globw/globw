@@ -268,6 +268,15 @@ fn pattern(v: &Value) -> Result<regex::Regex, String> {
     regex::Regex::new(text(v)).map_err(|e| format!("invalid pattern: {}", e.to_string().lines().last().unwrap_or("")))
 }
 
+/// Lowercase hexadecimal text of a byte sequence (used by the `hash` module).
+fn hex(bytes: impl AsRef<[u8]>) -> String {
+    let mut s = String::with_capacity(bytes.as_ref().len() * 2);
+    for b in bytes.as_ref() {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
+}
+
 fn list(items: Vec<Value>) -> Value {
     Value::Seq(Rc::new(RefCell::new(items)))
 }
@@ -578,6 +587,14 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         TextFind => string(pattern(&args[1])?.find(text(&args[0])).map_or("", |m| m.as_str())),
         TextReplaceAll => string(pattern(&args[1])?.replace_all(text(&args[0]), text(&args[2])).into_owned()),
         TextAll => list(pattern(&args[1])?.find_iter(text(&args[0])).map(|m| string(m.as_str())).collect()),
+        HashSha256 => {
+            use sha2::{Digest, Sha256};
+            string(hex(Sha256::digest(text(&args[0]).as_bytes())))
+        }
+        HashSha512 => {
+            use sha2::{Digest, Sha512};
+            string(hex(Sha512::digest(text(&args[0]).as_bytes())))
+        }
         other => panic!("internal error: {:?} is not a library function", other),
     })
 }

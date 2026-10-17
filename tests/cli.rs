@@ -129,3 +129,13 @@ fn builtin_module_text_regex() {
     let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "true a#b#\n"), "{}", stderr);
 }
+
+#[test]
+fn builtin_module_hash_digests() {
+    let dir = std::env::temp_dir().join("globw_hash_module_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("p.gw"), "import hash\noutput(hash.sha256(\"abc\"))\n").unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n");
+}
