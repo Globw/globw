@@ -5,7 +5,7 @@ variables:
     i as int
 x = 50
 dx = 3
-window(640, 400, "Easier demo")
+window(640, 400, "Globw demo")
 while(open())
     clear("#202040")
     for(i from 0 to 9)
@@ -17,7 +17,7 @@ while(open())
     if(x > 610 or x < 30)
         dx = -dx
     end if
-    text(20, 20, "Ciao da Easier! perché no?", "yellow")
+    text(20, 20, "Ciao da Globw! perché no?", "yellow")
     text(20, 50, "Mouse: " + mouse_x() + ", " + mouse_y(), "white")
     if(key("SPACE"))
         text(20, 80, "SPACE premuto", "pink")

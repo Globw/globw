@@ -21,7 +21,7 @@ mod win {
     }
 
     pub fn message_box(text: &str, kind: u32) -> i32 {
-        let (text, caption) = (wide(text), wide("Easier"));
+        let (text, caption) = (wide(text), wide("Globw"));
         // SAFETY: both strings are NUL-terminated UTF-16 buffers that outlive the call.
         unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), kind | MB_SETFOREGROUND) }
     }
@@ -179,8 +179,8 @@ mod input_box {
 
     /// Shows the box and waits; `None` if the user cancelled.
     pub fn ask(question: &str) -> Option<String> {
-        let class = wide("EasierInputBox");
-        let (title, label) = (wide("Easier"), wide(question));
+        let class = wide("GlobwInputBox");
+        let (title, label) = (wide("Globw"), wide(question));
         let (static_cls, edit_cls, button_cls) = (wide("STATIC"), wide("EDIT"), wide("BUTTON"));
         let (ok, cancel, empty) = (wide("OK"), wide("Cancel"), wide(""));
         ANSWER.with(|a| *a.borrow_mut() = None);
