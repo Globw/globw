@@ -531,6 +531,32 @@ shapes.calls = 0
 - Errors in a module name its file: `Error in shapes.gw at line 4, column 12: ...`.
 - Errors: a module that does not exist, a name the module does not define, `m.name` without `import m`, a variable or function named like an imported module or name, an import after other statements, a module importing itself or the main program.
 
+**Built-in modules.** Some modules are provided by Globw itself, backed by Rust
+libraries and reinterpreted with Globw names. They are imported the same way,
+with `import <name>`, but there is no `.gw` file to find:
+
+```
+import text          ' regular expressions
+import hash          ' digests
+import web           ' web requests
+```
+
+- A built-in module is imported **plainly**: `import text` only, not `import text as t` nor `from text import ...`.
+- Its functions are used with the module prefix, like any module: `text.matches(s, pattern)`.
+- The built-in module names (`text`, `hash`, `web`) are not reserved: a file that does not import them can still use those words as its own names.
+
+| Module | Function | Result | What it does |
+|---|---|---|---|
+| `text` | `text.matches(s, pattern)` | `bool` | whether `s` contains a match of the regular expression `pattern` |
+| `text` | `text.find(s, pattern)` | `string` | the first match, or `""` if there is none |
+| `text` | `text.all(s, pattern)` | `list of string` | every match, in order |
+| `text` | `text.replace_all(s, pattern, with)` | `string` | `s` with every match replaced by `with` |
+| `hash` | `hash.sha256(s)` | `string` | the SHA-256 digest of `s`, as lowercase hexadecimal |
+| `hash` | `hash.sha512(s)` | `string` | the SHA-512 digest of `s`, as lowercase hexadecimal |
+| `web` | `web.get(url)` | `string` | fetches `url` over HTTP(S) and returns the reply body as text |
+
+- A bad regular expression, an unreachable address, a server error or a timeout (30 s for `web.get`) becomes an ordinary run-time error, so it can be handled with `try`/`catch`.
+
 ### 6.13 Classes
 
 A class groups data (fields) and the operations on it (methods). Objects are made with `new`.

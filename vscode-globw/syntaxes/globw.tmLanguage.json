@@ -61,6 +61,17 @@
     "keywords": {
       "patterns": [
         {
+          "match": "\\b(text|hash|web)\\.([\\p{L}_][\\p{L}\\p{N}_]*)(?=\\s*\\()",
+          "captures": {
+            "1": {
+              "name": "support.class.module.globw"
+            },
+            "2": {
+              "name": "support.function.builtin.globw"
+            }
+          }
+        },
+        {
           "name": "variable.language.self.globw",
           "match": "\\bparent\\b"
         },
