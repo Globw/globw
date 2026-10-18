@@ -18,6 +18,100 @@ fn base(kind: TExprKind, t: BaseType, pos: Pos) -> TExpr {
     TExpr { kind, ty: Type::Base(t), pos }
 }
 
+// ---- grid expression fusion -------------------------------------------------
+// A tree of element-wise grid builtins (a+b, a*k, sqrt(a), ...) is collapsed
+// into a single `grid.eval` call carrying an RPN program, so the whole
+// expression runs in one parallel pass with no temporary grids.
+
+#[derive(Default)]
+struct Fuser {
+    leaves: Vec<TExpr>,
+    scalars: Vec<TExpr>,
+    prog: Vec<String>,
+}
+
+impl Fuser {
+    fn leaf(&mut self, e: TExpr) {
+        // the same grid used twice (sqrt(a) and a/3) becomes one leaf, read once
+        let k = self.leaves.iter().position(|x| *x == e).unwrap_or_else(|| {
+            self.leaves.push(e);
+            self.leaves.len() - 1
+        });
+        self.prog.push(format!("l{}", k));
+    }
+    fn scalar(&mut self, e: TExpr) {
+        self.prog.push(format!("s{}", self.scalars.len()));
+        self.scalars.push(e);
+    }
+    fn walk(&mut self, e: TExpr) {
+        use Builtin::*;
+        let TExprKind::Builtin(b, mut args) = e.kind else {
+            self.leaf(e);
+            return;
+        };
+        match b {
+            GridAdd | GridSub | GridMul | GridDiv => {
+                let rhs = args.pop().expect("binary");
+                let lhs = args.pop().expect("binary");
+                self.walk(lhs);
+                self.walk(rhs);
+                self.prog.push(matches!(b, GridAdd).then(|| "+").or_else(|| matches!(b, GridSub).then(|| "-")).or_else(|| matches!(b, GridMul).then(|| "*")).unwrap_or("/").to_string());
+            }
+            GridScale | GridOffset | GridSubScalar | GridDivScalar => {
+                let s = args.pop().expect("scalar");
+                let g = args.pop().expect("grid");
+                self.walk(g);
+                self.scalar(s);
+                self.prog.push(match b {
+                    GridScale => "*",
+                    GridOffset => "+",
+                    GridSubScalar => "-",
+                    _ => "/",
+                }.to_string());
+            }
+            GridScalarSub | GridScalarDiv => {
+                let s = args.pop().expect("scalar");
+                let g = args.pop().expect("grid");
+                self.scalar(s);
+                self.walk(g);
+                self.prog.push(if b == GridScalarSub { "-" } else { "/" }.to_string());
+            }
+            GridSqrt | GridSquare | GridAbs => {
+                let g = args.pop().expect("grid");
+                self.walk(g);
+                self.prog.push(match b {
+                    GridSqrt => "q",
+                    GridSquare => "sq",
+                    _ => "ab",
+                }.to_string());
+            }
+            _ => self.leaf(TExpr { kind: TExprKind::Builtin(b, args), ty: e.ty, pos: e.pos }),
+        }
+    }
+}
+
+fn is_fuseable_root(e: &TExpr) -> bool {
+    use Builtin::*;
+    matches!(&e.kind, TExprKind::Builtin(b, _) if matches!(b,
+        GridAdd | GridSub | GridMul | GridDiv | GridScale | GridOffset | GridSubScalar
+        | GridScalarSub | GridDivScalar | GridScalarDiv | GridSqrt | GridSquare | GridAbs))
+}
+
+/// Collapses an element-wise grid expression into one fused `grid.eval` call.
+pub(crate) fn fuse(e: TExpr) -> TExpr {
+    if e.ty != Type::Grid || !is_fuseable_root(&e) {
+        return e;
+    }
+    let pos = e.pos;
+    let mut f = Fuser::default();
+    f.walk(e);
+    let mut args = Vec::with_capacity(1 + f.leaves.len() + f.scalars.len());
+    args.push(TExpr { kind: TExprKind::Str(f.prog.join(" ").into()), ty: Type::Base(BaseType::Str), pos });
+    args.extend(f.leaves);
+    args.extend(f.scalars);
+    TExpr { kind: TExprKind::Builtin(Builtin::GridEval, args), ty: Type::Grid, pos }
+}
+
 /// Converts an integer expression to real when `target` is real.
 pub(crate) fn convert(e: TExpr, target: Option<BaseType>) -> TExpr {
     if target != Some(BaseType::Real) || e.ty != Type::Base(BaseType::Int) {

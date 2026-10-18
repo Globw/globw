@@ -345,6 +345,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), Type::Base(Real))
         }
+        GridEval => ok(none(a.len()), Type::Grid), // compiler-generated; its arguments are already typed
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
 }
@@ -1924,6 +1925,96 @@ fn grid_zip(a: &Value, b: &Value, f: impl Fn(f64, f64) -> f64 + Sync + Send) -> 
     Ok(grid_val(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| f(x, y)).collect()))
 }
 
+/// One step of a fused grid kernel (a tiny stack machine run per element).
+#[derive(Clone, Copy)]
+enum Micro {
+    Leaf(usize),
+    Scalar(usize),
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Sqrt,
+    Square,
+    Abs,
+}
+
+fn parse_program(src: &str) -> Result<Vec<Micro>, String> {
+    src.split_whitespace()
+        .map(|t| match t {
+            "+" => Ok(Micro::Add),
+            "-" => Ok(Micro::Sub),
+            "*" => Ok(Micro::Mul),
+            "/" => Ok(Micro::Div),
+            "q" => Ok(Micro::Sqrt),
+            "sq" => Ok(Micro::Square),
+            "ab" => Ok(Micro::Abs),
+            _ => {
+                if let Some(k) = t.strip_prefix('l') {
+                    k.parse().map(Micro::Leaf).map_err(|_| "grid: bad kernel".to_string())
+                } else if let Some(k) = t.strip_prefix('s') {
+                    k.parse().map(Micro::Scalar).map_err(|_| "grid: bad kernel".to_string())
+                } else {
+                    Err(format!("grid: bad kernel token \"{}\"", t))
+                }
+            }
+        })
+        .collect()
+}
+
+#[inline]
+fn run_program(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize) -> f64 {
+    let mut st = [0f64; 32];
+    let mut sp = 0usize;
+    for m in program {
+        match m {
+            Micro::Leaf(k) => {
+                st[sp] = leaves[*k][i];
+                sp += 1;
+            }
+            Micro::Scalar(k) => {
+                st[sp] = scalars[*k];
+                sp += 1;
+            }
+            Micro::Add => {
+                sp -= 1;
+                st[sp - 1] += st[sp];
+            }
+            Micro::Sub => {
+                sp -= 1;
+                st[sp - 1] -= st[sp];
+            }
+            Micro::Mul => {
+                sp -= 1;
+                st[sp - 1] *= st[sp];
+            }
+            Micro::Div => {
+                sp -= 1;
+                st[sp - 1] /= st[sp];
+            }
+            Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
+            Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
+            Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+        }
+    }
+    st[0]
+}
+
+/// Runs a fused element-wise kernel: one parallel pass over the leaf grids,
+/// with no temporary arrays. `rest` holds the leaf grids then the scalars.
+fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
+    let program = parse_program(text(program))?;
+    let borrows: Vec<std::cell::Ref<Vec<f64>>> =
+        rest.iter().filter(|v| matches!(v, Value::Floats(_))).map(|v| floats(v).borrow()).collect();
+    let leaves: Vec<&[f64]> = borrows.iter().map(|r| r.as_slice()).collect();
+    let scalars: Vec<f64> = rest.iter().filter(|v| !matches!(v, Value::Floats(_))).map(real).collect();
+    let n = leaves.first().map_or(0, |l| l.len());
+    if leaves.iter().any(|l| l.len() != n) {
+        return Err("grid: the grids in an expression must have the same size".to_string());
+    }
+    Ok(grid_val((0..n).into_par_iter().map(|i| run_program(&program, &leaves, &scalars, i)).collect()))
+}
+
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
 
 /// A float that must become an int (floor, ceiling, truncate, to_int).
@@ -3261,6 +3352,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         }
         GridSumSquares => Value::Real(floats(&args[0]).borrow().par_iter().map(|&x| x * x).sum()),
         GridNorm => Value::Real(floats(&args[0]).borrow().par_iter().map(|&x| x * x).sum::<f64>().sqrt()),
+        GridEval => grid_eval(&args[0], &args[1..])?,
 
         other => panic!("internal error: {:?} is not a library function", other),
     })

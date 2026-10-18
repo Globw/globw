@@ -667,14 +667,19 @@ Grids are values: a temporary made by an operator frees itself when it is no
 longer used, so loops do not leak. The reductions `sum_squares`, `norm` and `dot`
 are **fused** — one pass over memory, no temporary array.
 
+**Fusion.** An element-wise expression assigned to a grid, like
+`c = grid.sqrt(a) * 1.5 - a / 3.0`, is compiled into **one** kernel that runs in a
+single parallel pass with no temporary grids — not one pass per operator.
+
 **Speed.** On a 10-million element grid, against NumPy (16 cores):
 - `grid.sum_squares(a)` runs in ~0.36 ms, vs NumPy `np.sum(a**2)` ~14 ms and `np.einsum` ~2 ms.
-- the element-wise expression `grid.sqrt(a) * 1.5 - a / 3.0` runs in ~27 ms, vs ~39 ms for the same NumPy expression.
+- the fused expression `grid.sqrt(a) * 1.5 - a / 3.0` runs in ~13 ms, vs ~41 ms for the same NumPy expression (~3x).
 
 Globw wins because grids are contiguous unboxed floats worked on across every
-core, while NumPy's element-wise operations are single-threaded (and `np.sum(a**2)`
-also builds a temporary). Fusing whole expressions into one kernel — the next
-step — will widen the element-wise margin further.
+core, while NumPy's element-wise operations are single-threaded (and build
+temporaries). The fused expression is still interpreted per element; compiling
+each kernel to machine code (a JIT) would take it close to the memory-bandwidth
+limit.
 
 ### 6.13 Classes
 

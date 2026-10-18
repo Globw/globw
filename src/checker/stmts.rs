@@ -348,6 +348,8 @@ impl<'p> Checker<'p> {
         if whole && t.indices.is_empty() {
             // a whole list, dictionary or object, like `words = split(s, " ")` or `p = new Point(1, 2)`
             let (expected, name) = (var.full_type(), var.name.clone());
+            // fuse an element-wise grid expression into one parallel pass
+            let v = if expected == Type::Grid { super::exprs::fuse(v) } else { v };
             if !fits(expected, v.ty) {
                 self.report(Error::new(
                     v.pos,
