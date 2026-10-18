@@ -346,6 +346,20 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             ok(none(1), Type::Base(Real))
         }
         GridEval => ok(none(a.len()), Type::Grid), // compiler-generated; its arguments are already typed
+        GridMatmul => {
+            arity(5)?;
+            for (index, t) in [(0usize, a[0]), (3, a[3])] {
+                if t != Type::Grid {
+                    return Err(CheckError::Arg { index, expected: Type::Grid });
+                }
+            }
+            for index in [1usize, 2, 4] {
+                if a[index] != Type::Base(Int) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Int) });
+                }
+            }
+            ok(none(5), Type::Grid)
+        }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
 }
@@ -3353,6 +3367,35 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         GridSumSquares => Value::Real(floats(&args[0]).borrow().par_iter().map(|&x| x * x).sum()),
         GridNorm => Value::Real(floats(&args[0]).borrow().par_iter().map(|&x| x * x).sum::<f64>().sqrt()),
         GridEval => grid_eval(&args[0], &args[1..])?,
+        GridMatmul => {
+            // a is (rows x inner), b is (inner x cols), both row-major; result rows x cols
+            let (rows, inner, cols) = (int(&args[1]), int(&args[2]), int(&args[4]));
+            if rows < 0 || inner < 0 || cols < 0 {
+                return Err("nungw.matmul: the dimensions cannot be negative".to_string());
+            }
+            let (rows, inner, cols) = (rows as usize, inner as usize, cols as usize);
+            let va = floats(&args[0]).borrow();
+            let vb = floats(&args[3]).borrow();
+            if va.len() != rows * inner {
+                return Err(format!("nungw.matmul: the first matrix should have {} values ({}x{}), it has {}", rows * inner, rows, inner, va.len()));
+            }
+            if vb.len() != inner * cols {
+                return Err(format!("nungw.matmul: the second matrix should have {} values ({}x{}), it has {}", inner * cols, inner, cols, vb.len()));
+            }
+            let mut out = vec![0.0f64; rows * cols];
+            // SAFETY: the strides describe row-major matrices of exactly the lengths checked above.
+            unsafe {
+                matrixmultiply::dgemm(
+                    rows, inner, cols,
+                    1.0,
+                    va.as_ptr(), inner as isize, 1,
+                    vb.as_ptr(), cols as isize, 1,
+                    0.0,
+                    out.as_mut_ptr(), cols as isize, 1,
+                );
+            }
+            grid_val(out)
+        }
 
         other => panic!("internal error: {:?} is not a library function", other),
     })

@@ -201,6 +201,20 @@ fn builtin_module_grid_engine() {
 }
 
 #[test]
+fn builtin_module_nungw_matmul() {
+    let dir = std::env::temp_dir().join("globw_nungw_matmul_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    // [[1,2,3],[4,5,6]] x [[7,8],[9,10],[11,12]] = [[58,64],[139,154]]
+    let src = "import nungw\nvariables:\n    a, b as nungw of float\n\
+               a = nungw.of([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])\n\
+               b = nungw.of([7.0, 8.0, 9.0, 10.0, 11.0, 12.0])\n\
+               output(nungw.to_list(nungw.matmul(a, 2, 3, b, 2)))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[58.0, 64.0, 139.0, 154.0]\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_module_encode_base64() {
     let dir = std::env::temp_dir().join("globw_encode_module_test");
     std::fs::create_dir_all(&dir).unwrap();

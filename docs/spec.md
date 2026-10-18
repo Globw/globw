@@ -663,6 +663,7 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.size(g)`, `nungw.get(g, i)`, `nungw.set(g, i, v)`, `nungw.to_list(g)` | inspect, read, change, read back |
 | `nungw.sqrt/square/abs(g)` | element-wise, giving a new array (same as the operators) |
 | `nungw.sum/mean/max/min(g)`, `nungw.dot(a, b)`, `nungw.sum_squares(g)`, `nungw.norm(g)` | reductions to a single number |
+| `nungw.matmul(a, rows, inner, b, cols)` | matrix product: `a` is `rows`×`inner`, `b` is `inner`×`cols` (row-major), result `rows`×`cols` |
 
 A nungw is a value: a temporary made by an operator frees itself when it is no
 longer used, so loops do not leak. The reductions `sum_squares`, `norm` and `dot`
@@ -681,6 +682,11 @@ core, while NumPy's element-wise operations are single-threaded (and build
 temporaries). The fused expression is still interpreted per element; compiling
 each kernel to machine code (a JIT) would take it close to the memory-bandwidth
 limit.
+
+For **matrix multiplication** (`nungw.matmul`) a cache-blocked, multi-threaded
+kernel is used. It is fast — a 2000×2000 product in ~39 ms — but here NumPy's
+BLAS still wins (~21 ms): matching decades-tuned BLAS assembly would mean linking
+the same kind of library. This is the one area where NumPy keeps the lead.
 
 ### 6.13 Classes
 

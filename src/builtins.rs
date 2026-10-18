@@ -467,6 +467,7 @@ pub enum Builtin {
     GridSum, GridMean, GridMax, GridMin, GridDot, GridSumSquares, GridNorm,
     /// the fused element-wise kernel (compiler-generated from a grid expression)
     GridEval,
+    GridMatmul,
 }
 
 use Builtin::*;
@@ -1035,6 +1036,7 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GridSumSquares, "nungw.sum_squares", Sig::Flexible { function: true }),
     (GridNorm, "nungw.norm", Sig::Flexible { function: true }),
     (GridEval, "nungw.eval", Sig::Flexible { function: true }),
+    (GridMatmul, "nungw.matmul", Sig::Flexible { function: true }),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
