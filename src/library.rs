@@ -346,6 +346,20 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             ok(none(1), Type::Base(Real))
         }
         GridEval => ok(none(a.len()), Type::Grid), // compiler-generated; its arguments are already typed
+        CounterItems => {
+            arity(1)?;
+            match collection(a[0]) {
+                Some(Str) => ok(none(1), crate::tir::dict_of(Str, Type::Base(Int))),
+                _ => other("counter.items works with an array or list of strings"),
+            }
+        }
+        CounterChars | CounterWords => {
+            arity(1)?;
+            if a[0] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Str) });
+            }
+            ok(none(1), crate::tir::dict_of(Str, Type::Base(Int)))
+        }
         GridMatmul => {
             arity(5)?;
             for (index, t) in [(0usize, a[0]), (3, a[3])] {
@@ -447,6 +461,25 @@ fn web_get(url: &str) -> Result<String, String> {
             ureq::Error::Transport(t) => format!("web.get: cannot reach \"{}\": {}", url, t),
         })?;
     response.into_string().map_err(|e| format!("web.get: cannot read the reply: {}", e))
+}
+
+/// Turns a ureq error into a Globw run-time message for a `web.*` call.
+fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Status(code, _) => format!("{}: the server answered with status {}", ctx, code),
+        ureq::Error::Transport(t) => format!("{}: cannot reach \"{}\": {}", ctx, url, t),
+    }
+}
+
+/// Tallies the items, returning a dictionary from each distinct value to its count.
+fn count_into(items: impl Iterator<Item = String>) -> Value {
+    let mut d = Dict::default();
+    for s in items {
+        let k = DictKey::Str(s.into());
+        let n = d.get(&k).map(int).unwrap_or(0);
+        d.set(k, Value::Int(n + 1));
+    }
+    Value::Dict(Rc::new(RefCell::new(d)))
 }
 
 // ---------------------------------------------------------------- JSON (the "data" module)
@@ -3443,6 +3476,48 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             unsafe { out.set_len(rows * cols) };
             matmul_into(&mut out, &va, &vb, rows, inner, cols);
             grid_val(out)
+        }
+        CounterItems => count_into(seq(&args[0]).borrow().iter().map(|v| text(v).to_string())),
+        CounterChars => count_into(text(&args[0]).chars().map(|c| c.to_string())),
+        CounterWords => count_into(text(&args[0]).split_whitespace().map(|w| w.to_string())),
+        WebPost => {
+            let (url, body) = (text(&args[0]), text(&args[1]));
+            let r = ureq::post(url)
+                .timeout(std::time::Duration::from_secs(30))
+                .send_string(body)
+                .map_err(|e| web_error("web.post", url, e))?;
+            string(r.into_string().map_err(|e| format!("web.post: cannot read the reply: {}", e))?)
+        }
+        WebStatus => {
+            let url = text(&args[0]);
+            match ureq::get(url).timeout(std::time::Duration::from_secs(30)).call() {
+                Ok(r) => Value::Int(i64::from(r.status())),
+                Err(ureq::Error::Status(code, _)) => Value::Int(i64::from(code)),
+                Err(ureq::Error::Transport(t)) => return Err(format!("web.status: cannot reach \"{}\": {}", url, t)),
+            }
+        }
+        WebDownload => {
+            let (url, path) = (text(&args[0]), text(&args[1]));
+            let r = ureq::get(url).timeout(std::time::Duration::from_secs(30)).call().map_err(|e| web_error("web.download", url, e))?;
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut r.into_reader(), &mut bytes).map_err(|e| format!("web.download: {}", e))?;
+            std::fs::write(path, &bytes).map_err(|e| format!("web.download: cannot write \"{}\": {}", path, e))?;
+            Value::Null
+        }
+        DataPretty => {
+            let v: Json = serde_json::from_str(text(&args[0])).map_err(|e| format!("data.pretty: invalid JSON: {}", e))?;
+            string(serde_json::to_string_pretty(&v).unwrap_or_default())
+        }
+        DataType => {
+            let root = json_root(&args[0])?;
+            string(match json_at(&root, text(&args[1]))? {
+                Json::Null => "none",
+                Json::Bool(_) => "bool",
+                Json::Number(_) => "number",
+                Json::String(_) => "text",
+                Json::Array(_) => "list",
+                Json::Object(_) => "object",
+            })
         }
 
         other => panic!("internal error: {:?} is not a library function", other),

@@ -468,6 +468,17 @@ pub enum Builtin {
     /// the fused element-wise kernel (compiler-generated from a grid expression)
     GridEval,
     GridMatmul,
+    // module "counter" (tallies)
+    CounterItems,
+    CounterChars,
+    CounterWords,
+    // module "web" (more requests)
+    WebPost,
+    WebStatus,
+    WebDownload,
+    // module "data" (more JSON)
+    DataPretty,
+    DataType,
 }
 
 use Builtin::*;
@@ -1037,6 +1048,14 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GridNorm, "nungw.norm", Sig::Flexible { function: true }),
     (GridEval, "nungw.eval", Sig::Flexible { function: true }),
     (GridMatmul, "nungw.matmul", Sig::Flexible { function: true }),
+    (CounterItems, "counter.items", Sig::Flexible { function: true }),
+    (CounterChars, "counter.chars", Sig::Flexible { function: true }),
+    (CounterWords, "counter.words", Sig::Flexible { function: true }),
+    (WebPost, "web.post", Sig::Fixed(&[S, S], Some(Str))),
+    (WebStatus, "web.status", Sig::Fixed(&[S], Some(Int))),
+    (WebDownload, "web.download", Sig::Fixed(&[S, S], None)),
+    (DataPretty, "data.pretty", Sig::Fixed(&[S], Some(Str))),
+    (DataType, "data.type", Sig::Fixed(&[S, S], Some(Str))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1068,6 +1087,8 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "savings", "depreciation", "cents", "markup", "bmr", "wind", "heat", "dewpoint", "quadratic", "motion", "apr",
     // array engine
     "nungw",
+    // collections
+    "counter",
 ];
 
 pub fn is_builtin_module(name: &str) -> bool {

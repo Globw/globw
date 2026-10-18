@@ -557,6 +557,9 @@ import encode        ' base64
 | `hash` | `hash.sha256(s)` | `string` | the SHA-256 digest of `s`, as lowercase hexadecimal |
 | `hash` | `hash.sha512(s)` | `string` | the SHA-512 digest of `s`, as lowercase hexadecimal |
 | `web` | `web.get(url)` | `string` | fetches `url` over HTTP(S) and returns the reply body as text |
+| `web` | `web.post(url, body)` | `string` | sends `body` with a POST request and returns the reply as text |
+| `web` | `web.status(url)` | `int` | the HTTP status code of a GET to `url` (e.g. 200, 404) |
+| `web` | `web.download(url, path)` | — | saves the bytes at `url` to the file `path` |
 | `data` | `data.text(json, path)` | `string` | the value at `path` as text (a JSON string, number or bool) |
 | `data` | `data.number(json, path)` | `float` | the value at `path`, which must be a JSON number |
 | `data` | `data.flag(json, path)` | `bool` | the value at `path`, which must be a JSON true/false |
@@ -564,6 +567,8 @@ import encode        ' base64
 | `data` | `data.size(json, path)` | `int` | how many elements the array or object at `path` has |
 | `data` | `data.keys(json, path)` | `list of string` | the keys of the object at `path` |
 | `data` | `data.to_json(value)` | `string` | the JSON text of a Globw value (number, string, bool, `none`, list, set or dictionary; nested too) |
+| `data` | `data.pretty(json)` | `string` | the JSON re-formatted on several indented lines |
+| `data` | `data.type(json, path)` | `string` | the kind at `path`: `"number"`, `"text"`, `"bool"`, `"list"`, `"object"` or `"none"` |
 | `clock` | `clock.stamp()` | `int` | the current time as a Unix timestamp (seconds since 1970-01-01 UTC) |
 | `clock` | `clock.format(stamp, pattern)` | `string` | a Unix timestamp written as **local** time with a date pattern |
 | `clock` | `clock.parse(text, pattern)` | `int` | reads a local date-and-time written like `pattern` and returns its Unix timestamp |
@@ -637,6 +642,7 @@ Most of these are plain functions whose errors (a bad number, a missing file, a 
 - **Dates:** `weekday`, `month`, `leap`, `age`, `zodiac`, `season`.
 - **Hashes & checks:** `fnv`, `djb2`, `sdbm`, `adler`, `ipv4`, `mac`, `hexcolor`, `weburl`, `grade`, `logic`, `yesno`, `scientific`, `fraction`.
 - **Randomness & ids:** `dice`, `coin`, `pick`, `token`, `password`, `nanoid`, `otp`, `lorem`, `randcolor`.
+- **Collections:** `counter` — `counter.items(list)`, `counter.chars(s)`, `counter.words(s)` tally into a dictionary (like Python's `Counter`).
 
 **The array engine (`nungw`).** For heavy number crunching, `nungw of float` is a
 first-class type: a one-dimensional array of floats kept in contiguous memory and

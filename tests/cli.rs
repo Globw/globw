@@ -201,6 +201,18 @@ fn builtin_module_grid_engine() {
 }
 
 #[test]
+fn builtin_modules_counter_and_data() {
+    let dir = std::env::temp_dir().join("globw_counter_data_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import counter\nimport data\n\
+               output(counter.chars(\"banana\"))\n\
+               output(data.type(\"{\\\"n\\\":3}\", \"n\"))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "{'b': 1, 'a': 3, 'n': 2}\nnumber\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_module_nungw_matmul() {
     let dir = std::env::temp_dir().join("globw_nungw_matmul_test");
     std::fs::create_dir_all(&dir).unwrap();
