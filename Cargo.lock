@@ -428,6 +428,7 @@ dependencies = [
  "crc32fast",
  "font8x8",
  "fontdue",
+ "libloading",
  "matrixmultiply",
  "minifb",
  "rayon",

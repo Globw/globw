@@ -15,6 +15,7 @@ chrono = "0.4.42"
 crc32fast = "1.4.2"
 font8x8 = "0.3"
 fontdue = "0.9.4"
+libloading = "0.8.6"
 matrixmultiply = { version = "0.3.9", features = ["threading"] }
 rayon = "1.10.0"
 minifb = "0.29"

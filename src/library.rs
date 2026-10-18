@@ -1939,6 +1939,61 @@ fn grid_zip(a: &Value, b: &Value, f: impl Fn(f64, f64) -> f64 + Sync + Send) -> 
     Ok(grid_val(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| f(x, y)).collect()))
 }
 
+/// The optimized BLAS, loaded once at run time if one can be found. Globw uses
+/// it for `nungw.matmul` (as NumPy uses OpenBLAS); without it, a parallel pure-Rust
+/// kernel is used instead. Looked for via the `GLOBW_BLAS` path, then common names.
+static BLAS: std::sync::OnceLock<Option<libloading::Library>> = std::sync::OnceLock::new();
+
+/// A row-major C = A*B (ILP64 cblas) as exported by OpenBLAS / scipy-openblas.
+type CblasDgemm = unsafe extern "C" fn(
+    i32, i32, i32, // layout, transA, transB
+    i64, i64, i64, // M, N, K
+    f64, *const f64, i64, // alpha, A, lda
+    *const f64, i64, // B, ldb
+    f64, *mut f64, i64, // beta, C, ldc
+);
+
+fn blas_lib() -> Option<&'static libloading::Library> {
+    BLAS.get_or_init(|| {
+        let mut names: Vec<String> = Vec::new();
+        if let Ok(p) = std::env::var("GLOBW_BLAS") {
+            names.push(p);
+        }
+        names.extend(["openblas.dll", "libopenblas.dll", "libopenblas.so", "libopenblas.dylib"].map(String::from));
+        for name in names {
+            // SAFETY: loading a shared library; the symbol is used with the matching signature.
+            if let Ok(lib) = unsafe { libloading::Library::new(&name) } {
+                return Some(lib);
+            }
+        }
+        None
+    })
+    .as_ref()
+}
+
+/// C (rows x cols, row-major) = A (rows x inner) * B (inner x cols). Uses the
+/// optimized BLAS if present, otherwise a cache-blocked parallel Rust kernel.
+fn matmul_into(out: &mut [f64], a: &[f64], b: &[f64], rows: usize, inner: usize, cols: usize) {
+    if let Some(lib) = blas_lib() {
+        // SAFETY: the ILP64 cblas signature matches; strides describe the row-major matrices.
+        unsafe {
+            for sym in [b"scipy_cblas_dgemm64_\0".as_slice(), b"cblas_dgemm64_\0", b"cblas_dgemm_64_\0"] {
+                if let Ok(f) = lib.get::<CblasDgemm>(sym) {
+                    // 101 = CblasRowMajor, 111 = CblasNoTrans
+                    (*f)(101, 111, 111, rows as i64, cols as i64, inner as i64, 1.0, a.as_ptr(), inner as i64, b.as_ptr(), cols as i64, 0.0, out.as_mut_ptr(), cols as i64);
+                    return;
+                }
+            }
+        }
+    }
+    // SAFETY: the strides describe row-major matrices of exactly the given lengths.
+    unsafe {
+        matrixmultiply::dgemm(
+            rows, inner, cols, 1.0, a.as_ptr(), inner as isize, 1, b.as_ptr(), cols as isize, 1, 0.0, out.as_mut_ptr(), cols as isize, 1,
+        );
+    }
+}
+
 /// One step of a fused grid kernel (a tiny stack machine run per element).
 #[derive(Clone, Copy)]
 enum Micro {
@@ -3382,18 +3437,11 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             if vb.len() != inner * cols {
                 return Err(format!("nungw.matmul: the second matrix should have {} values ({}x{}), it has {}", inner * cols, inner, cols, vb.len()));
             }
-            let mut out = vec![0.0f64; rows * cols];
-            // SAFETY: the strides describe row-major matrices of exactly the lengths checked above.
-            unsafe {
-                matrixmultiply::dgemm(
-                    rows, inner, cols,
-                    1.0,
-                    va.as_ptr(), inner as isize, 1,
-                    vb.as_ptr(), cols as isize, 1,
-                    0.0,
-                    out.as_mut_ptr(), cols as isize, 1,
-                );
-            }
+            // the kernel overwrites every element (beta = 0), so skip zero-filling
+            let mut out: Vec<f64> = Vec::with_capacity(rows * cols);
+            // SAFETY: matmul_into writes all rows*cols elements before they are read.
+            unsafe { out.set_len(rows * cols) };
+            matmul_into(&mut out, &va, &vb, rows, inner, cols);
             grid_val(out)
         }
 
