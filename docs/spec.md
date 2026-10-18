@@ -710,6 +710,30 @@ runs in ~25 ms against NumPy's ~22 ms — **a tie**. Without a BLAS, the built-i
 kernel does it in ~39 ms. So on linear algebra Globw matches NumPy when it has the
 same library, and stays within ~2× on its own.
 
+**Databases (`db`).** `import db` gives a real SQL database, backed by SQLite
+(the same engine behind Python's `sqlite3`). A connection is an `int` handle.
+
+```
+import db
+import data
+variables:
+    c, n as int
+    rows as string
+c = db.open("shop.db")               ' a file, or ":memory:" for a temporary one
+n = db.run(c, "create table if not exists items (name text, price real)")
+n = db.run(c, "insert into items values ('pen', 1.5), ('book', 9.0)")
+rows = db.query(c, "select name, price from items order by price")
+output(data.text(rows, "[1].name"), " costs ", data.number(rows, "[1].price"))
+db.close(c)
+```
+
+- `db.open(path)` opens (creating it if needed) a SQLite file — or `":memory:"` — and returns a connection handle. Data in a file **persists** between runs.
+- `db.run(c, sql)` runs a statement (`create`/`insert`/`update`/`delete`) and returns the number of rows changed.
+- `db.value(c, sql)` runs a query and returns the first column of the first row as text (`""` if there are no rows) — handy for counts and single values.
+- `db.query(c, sql)` runs a query and returns the whole result as a **JSON** array of row objects, which you read with the `data` module (`data.size`, `data.text(rows, "[1].name")`, …).
+- `db.close(c)` closes the connection.
+- SQL errors, a bad query or a closed handle become catchable run-time errors. (The SQL is sent as written; build it carefully.)
+
 ### 6.13 Classes
 
 A class groups data (fields) and the operations on it (methods). Objects are made with `new`.

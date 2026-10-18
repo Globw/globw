@@ -660,6 +660,13 @@ pub enum Builtin {
     ContrastRatio,
     SplitbillPerPerson,
     ElapsedPercent,
+
+    // module "db" (SQLite databases)
+    DbOpen,
+    DbRun,
+    DbValue,
+    DbQuery,
+    DbClose,
 }
 
 use Builtin::*;
@@ -1461,6 +1468,13 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (ContrastRatio, "contrast.ratio", Sig::Fixed(&[S, S], Some(Real))),
     (SplitbillPerPerson, "splitbill.per_person", Sig::Fixed(&[R, I], Some(Real))),
     (ElapsedPercent, "elapsed.percent", Sig::Fixed(&[R, R], Some(Real))),
+
+    // module "db" (SQLite)
+    (DbOpen, "db.open", Sig::Fixed(&[S], Some(Int))),
+    (DbRun, "db.run", Sig::Fixed(&[I, S], Some(Int))),
+    (DbValue, "db.value", Sig::Fixed(&[I, S], Some(Str))),
+    (DbQuery, "db.query", Sig::Fixed(&[I, S], Some(Str))),
+    (DbClose, "db.close", Sig::Fixed(&[I], None)),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1518,6 +1532,8 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "humidex", "ph", "sound", "note", "prob", "odds", "collatzmax", "happy", "aliquot", "polygonal", "pronic",
     "pentagonal", "hexagonal", "star", "lucas", "tribonacci", "padovan", "primorial", "primecount", "prevprime",
     "coprime", "amicable", "multi", "a1z26", "revbits", "luminance", "contrast", "splitbill", "elapsed",
+    // databases
+    "db",
 ];
 
 pub fn is_builtin_module(name: &str) -> bool {

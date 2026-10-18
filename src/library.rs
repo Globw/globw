@@ -1137,6 +1137,42 @@ fn rel_lum(s: &str) -> Result<f64, String> {
     Ok(0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b))
 }
 
+// ---- the "db" module (SQLite) ----
+
+thread_local! {
+    static DBS: RefCell<Vec<Option<rusqlite::Connection>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn db_with<T>(h: i64, f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>) -> Result<T, String> {
+    DBS.with(|d| {
+        let d = d.borrow();
+        match usize::try_from(h).ok().and_then(|i| d.get(i)).and_then(|o| o.as_ref()) {
+            Some(conn) => f(conn),
+            None => Err("db: this is not an open database (use db.open first)".to_string()),
+        }
+    })
+}
+
+fn sqlite_to_string(v: rusqlite::types::ValueRef) -> String {
+    use rusqlite::types::ValueRef;
+    match v {
+        ValueRef::Null => String::new(),
+        ValueRef::Integer(n) => n.to_string(),
+        ValueRef::Real(r) => format_real(r),
+        ValueRef::Text(t) | ValueRef::Blob(t) => String::from_utf8_lossy(t).into_owned(),
+    }
+}
+
+fn sqlite_to_json(v: rusqlite::types::ValueRef) -> Json {
+    use rusqlite::types::ValueRef;
+    match v {
+        ValueRef::Null => Json::Null,
+        ValueRef::Integer(n) => Json::from(n),
+        ValueRef::Real(r) => serde_json::Number::from_f64(r).map(Json::Number).unwrap_or(Json::Null),
+        ValueRef::Text(t) | ValueRef::Blob(t) => Json::String(String::from_utf8_lossy(t).into_owned()),
+    }
+}
+
 fn collatz_peak(n: i64) -> Result<i64, String> {
     if n < 1 {
         return Err("collatzmax.peak: the number must be positive".to_string());
@@ -3788,6 +3824,53 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 return Err("elapsed.percent: the total is zero".to_string());
             }
             Value::Real(real(&args[0]) / t * 100.0)
+        }
+
+        // module "db" (SQLite)
+        DbOpen => {
+            let conn = rusqlite::Connection::open(text(&args[0])).map_err(|e| format!("db.open: {}", e))?;
+            Value::Int(DBS.with(|d| {
+                let mut d = d.borrow_mut();
+                d.push(Some(conn));
+                (d.len() - 1) as i64
+            }))
+        }
+        DbRun => {
+            let n = db_with(int(&args[0]), |c| c.execute(text(&args[1]), []).map_err(|e| format!("db.run: {}", e)))?;
+            Value::Int(n as i64)
+        }
+        DbValue => db_with(int(&args[0]), |c| {
+            let mut stmt = c.prepare(text(&args[1])).map_err(|e| format!("db.value: {}", e))?;
+            let mut rows = stmt.query([]).map_err(|e| format!("db.value: {}", e))?;
+            match rows.next().map_err(|e| format!("db.value: {}", e))? {
+                Some(row) => Ok(string(sqlite_to_string(row.get_ref(0).map_err(|e| format!("db.value: {}", e))?))),
+                None => Ok(string("")),
+            }
+        })?,
+        DbQuery => db_with(int(&args[0]), |c| {
+            let mut stmt = c.prepare(text(&args[1])).map_err(|e| format!("db.query: {}", e))?;
+            let cols: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+            let mut rows = stmt.query([]).map_err(|e| format!("db.query: {}", e))?;
+            let mut arr: Vec<Json> = Vec::new();
+            while let Some(row) = rows.next().map_err(|e| format!("db.query: {}", e))? {
+                let mut obj = serde_json::Map::new();
+                for (i, name) in cols.iter().enumerate() {
+                    let v = sqlite_to_json(row.get_ref(i).map_err(|e| format!("db.query: {}", e))?);
+                    obj.insert(name.clone(), v);
+                }
+                arr.push(Json::Object(obj));
+            }
+            Ok(string(serde_json::to_string(&Json::Array(arr)).unwrap_or_default()))
+        })?,
+        DbClose => {
+            if let Ok(i) = usize::try_from(int(&args[0])) {
+                DBS.with(|d| {
+                    if let Some(slot) = d.borrow_mut().get_mut(i) {
+                        *slot = None;
+                    }
+                });
+            }
+            Value::Null
         }
         HashSha256 => {
             use sha2::{Digest, Sha256};

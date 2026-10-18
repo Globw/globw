@@ -223,6 +223,21 @@ fn builtin_module_text_regex_extras() {
 }
 
 #[test]
+fn builtin_module_db_sqlite() {
+    let dir = std::env::temp_dir().join("globw_db_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import db\nvariables:\n    c, n as int\n\
+               c = db.open(\":memory:\")\n\
+               n = db.run(c, \"create table t (x int)\")\n\
+               n = db.run(c, \"insert into t values (1), (2), (3)\")\n\
+               output(db.value(c, \"select sum(x) from t\"), \" \", db.query(c, \"select x from t where x > 1 order by x\"))\n\
+               db.close(c)\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "6 [{\"x\":2},{\"x\":3}]\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_modules_batch_g() {
     let dir = std::env::temp_dir().join("globw_batch_g_test");
     std::fs::create_dir_all(&dir).unwrap();
