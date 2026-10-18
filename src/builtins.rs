@@ -457,6 +457,13 @@ pub enum Builtin {
     QuadraticDiscriminant, QuadraticRoot1, QuadraticRoot2,
     MotionSpeed, MotionTime, MotionDistance,
     AprToMonthly, AprToAnnual,
+
+    // ---- module "grid": fast contiguous float arrays (the array engine) ----
+    GridRange, GridZeros, GridFill, GridOf,
+    GridSize, GridGet, GridSet, GridFree, GridToList,
+    GridAdd, GridSub, GridMul, GridDiv, GridScale, GridOffset,
+    GridSqrt, GridSquare, GridAbs,
+    GridSum, GridMean, GridMax, GridMin, GridDot, GridSumSquares, GridNorm,
 }
 
 use Builtin::*;
@@ -993,6 +1000,33 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (MotionDistance, "motion.distance", Sig::Fixed(&[R, R], Some(Real))),
     (AprToMonthly, "apr.to_monthly", Sig::Fixed(&[R], Some(Real))),
     (AprToAnnual, "apr.to_annual", Sig::Fixed(&[R], Some(Real))),
+
+    // ---- module "grid": fast contiguous float arrays ----
+    (GridRange, "grid.range", Sig::Fixed(&[I], Some(Int))),
+    (GridZeros, "grid.zeros", Sig::Fixed(&[I], Some(Int))),
+    (GridFill, "grid.fill", Sig::Fixed(&[I, R], Some(Int))),
+    (GridOf, "grid.of", Sig::Flexible { function: true }),
+    (GridSize, "grid.size", Sig::Fixed(&[I], Some(Int))),
+    (GridGet, "grid.get", Sig::Fixed(&[I, I], Some(Real))),
+    (GridSet, "grid.set", Sig::Fixed(&[I, I, R], None)),
+    (GridFree, "grid.free", Sig::Fixed(&[I], None)),
+    (GridToList, "grid.to_list", Sig::Flexible { function: true }),
+    (GridAdd, "grid.add", Sig::Fixed(&[I, I], Some(Int))),
+    (GridSub, "grid.sub", Sig::Fixed(&[I, I], Some(Int))),
+    (GridMul, "grid.mul", Sig::Fixed(&[I, I], Some(Int))),
+    (GridDiv, "grid.div", Sig::Fixed(&[I, I], Some(Int))),
+    (GridScale, "grid.scale", Sig::Fixed(&[I, R], Some(Int))),
+    (GridOffset, "grid.offset", Sig::Fixed(&[I, R], Some(Int))),
+    (GridSqrt, "grid.sqrt", Sig::Fixed(&[I], Some(Int))),
+    (GridSquare, "grid.square", Sig::Fixed(&[I], Some(Int))),
+    (GridAbs, "grid.abs", Sig::Fixed(&[I], Some(Int))),
+    (GridSum, "grid.sum", Sig::Fixed(&[I], Some(Real))),
+    (GridMean, "grid.mean", Sig::Fixed(&[I], Some(Real))),
+    (GridMax, "grid.max", Sig::Fixed(&[I], Some(Real))),
+    (GridMin, "grid.min", Sig::Fixed(&[I], Some(Real))),
+    (GridDot, "grid.dot", Sig::Fixed(&[I, I], Some(Real))),
+    (GridSumSquares, "grid.sum_squares", Sig::Fixed(&[I], Some(Real))),
+    (GridNorm, "grid.norm", Sig::Fixed(&[I], Some(Real))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1022,6 +1056,8 @@ pub const BUILTIN_MODULES: &[&str] = &[
     // batch F
     "trapezoid", "ellipse", "pentagon", "hexagon", "polygon", "pyramid", "prism", "torus", "cuboid", "annulus",
     "savings", "depreciation", "cents", "markup", "bmr", "wind", "heat", "dewpoint", "quadratic", "motion", "apr",
+    // array engine
+    "grid",
 ];
 
 pub fn is_builtin_module(name: &str) -> bool {

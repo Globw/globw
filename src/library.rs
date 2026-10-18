@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
+use rayon::prelude::*;
 use serde_json::Value as Json;
 
 use crate::builtins::{Builtin, CheckError, Checked};
@@ -242,6 +243,20 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 Some(e) if numeric(e) => ok(none(1), Type::Base(Real)),
                 _ => other(format!("{} works with an array or list of numbers", b.name())),
             }
+        }
+        GridOf => {
+            arity(1)?;
+            match collection(a[0]) {
+                Some(e) if numeric(e) => ok(none(1), Type::Base(Int)),
+                _ => other("grid.of works with an array or list of numbers"),
+            }
+        }
+        GridToList => {
+            arity(1)?;
+            if a[0] != Type::Base(Int) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Int) });
+            }
+            ok(none(1), Type::List(Some(Real)))
         }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
@@ -1787,6 +1802,62 @@ fn quadratic_root(a: f64, b: f64, c: f64, plus: bool) -> Result<f64, String> {
     Ok(if plus { (-b + sq) / (2.0 * a) } else { (-b - sq) / (2.0 * a) })
 }
 
+// ---------------------------------------------------------------- the "grid" array engine
+//
+// Grids are contiguous Vec<f64> buffers kept in a registry; a Globw program holds
+// an int handle. Element-wise kernels and reductions loop over unboxed memory in
+// parallel (rayon), which is where the speed against a scalar loop comes from.
+
+thread_local! {
+    static GRIDS: RefCell<Vec<Vec<f64>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn grid_new(data: Vec<f64>) -> i64 {
+    GRIDS.with(|g| {
+        let mut g = g.borrow_mut();
+        g.push(data);
+        (g.len() - 1) as i64
+    })
+}
+
+fn grid_read<T>(h: i64, f: impl FnOnce(&[f64]) -> T) -> Result<T, String> {
+    GRIDS.with(|g| {
+        let g = g.borrow();
+        let v = usize::try_from(h).ok().and_then(|i| g.get(i)).ok_or("grid: invalid handle")?;
+        Ok(f(v))
+    })
+}
+
+fn grid_map(h: i64, f: impl Fn(f64) -> f64 + Sync + Send) -> Result<i64, String> {
+    let out: Vec<f64> = grid_read(h, |v| v.par_iter().map(|&x| f(x)).collect())?;
+    Ok(grid_new(out))
+}
+
+fn grid_zip(a: i64, b: i64, f: impl Fn(f64, f64) -> f64 + Sync + Send) -> Result<i64, String> {
+    let out = GRIDS.with(|g| {
+        let g = g.borrow();
+        let va = usize::try_from(a).ok().and_then(|i| g.get(i)).ok_or("grid: invalid handle")?;
+        let vb = usize::try_from(b).ok().and_then(|i| g.get(i)).ok_or("grid: invalid handle")?;
+        if va.len() != vb.len() {
+            return Err(format!("grid: the sizes differ ({} and {})", va.len(), vb.len()));
+        }
+        Ok::<Vec<f64>, String>(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| f(x, y)).collect())
+    })?;
+    Ok(grid_new(out))
+}
+
+fn grid_dot(a: i64, b: i64) -> Result<Value, String> {
+    GRIDS.with(|g| {
+        let g = g.borrow();
+        let va = usize::try_from(a).ok().and_then(|i| g.get(i)).ok_or("grid: invalid handle")?;
+        let vb = usize::try_from(b).ok().and_then(|i| g.get(i)).ok_or("grid: invalid handle")?;
+        if va.len() != vb.len() {
+            return Err(format!("grid.dot: the sizes differ ({} and {})", va.len(), vb.len()));
+        }
+        Ok(Value::Real(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| x * y).sum()))
+    })
+}
+
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
 
 /// A float that must become an int (floor, ceiling, truncate, to_int).
@@ -3048,6 +3119,71 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         MotionDistance => Value::Real(real(&args[0]) * real(&args[1])),
         AprToMonthly => Value::Real(((1.0 + real(&args[0]) / 100.0).powf(1.0 / 12.0) - 1.0) * 100.0),
         AprToAnnual => Value::Real(((1.0 + real(&args[0]) / 100.0).powi(12) - 1.0) * 100.0),
+
+        // module "grid": fast contiguous float arrays
+        GridRange => Value::Int(grid_new((0..int(&args[0]).max(0)).map(|i| i as f64).collect())),
+        GridZeros => Value::Int(grid_new(vec![0.0; int(&args[0]).max(0) as usize])),
+        GridFill => Value::Int(grid_new(vec![real(&args[1]); int(&args[0]).max(0) as usize])),
+        GridOf => Value::Int(grid_new(seq(&args[0]).borrow().iter().map(real).collect())),
+        GridSize => Value::Int(grid_read(int(&args[0]), |v| v.len() as i64)?),
+        GridGet => {
+            let i = int(&args[1]);
+            let x = grid_read(int(&args[0]), |v| if i < 1 || i as usize > v.len() { None } else { Some(v[i as usize - 1]) })?;
+            Value::Real(x.ok_or_else(|| format!("grid.get: there is no element number {}", i))?)
+        }
+        GridSet => {
+            let (i, val) = (int(&args[1]), real(&args[2]));
+            GRIDS.with(|g| {
+                let mut g = g.borrow_mut();
+                let v = g.get_mut(int(&args[0]) as usize).ok_or("grid: invalid handle")?;
+                if i < 1 || i as usize > v.len() {
+                    return Err(format!("grid.set: there is no element number {}", i));
+                }
+                v[i as usize - 1] = val;
+                Ok::<(), String>(())
+            })?;
+            Value::Null
+        }
+        GridFree => {
+            GRIDS.with(|g| {
+                if let Some(v) = g.borrow_mut().get_mut(int(&args[0]) as usize) {
+                    *v = Vec::new();
+                }
+            });
+            Value::Null
+        }
+        GridToList => {
+            let items = grid_read(int(&args[0]), |v| v.iter().map(|&x| Value::Real(x)).collect::<Vec<_>>())?;
+            list(items)
+        }
+        GridAdd => Value::Int(grid_zip(int(&args[0]), int(&args[1]), |x, y| x + y)?),
+        GridSub => Value::Int(grid_zip(int(&args[0]), int(&args[1]), |x, y| x - y)?),
+        GridMul => Value::Int(grid_zip(int(&args[0]), int(&args[1]), |x, y| x * y)?),
+        GridDiv => Value::Int(grid_zip(int(&args[0]), int(&args[1]), |x, y| x / y)?),
+        GridScale => {
+            let k = real(&args[1]);
+            Value::Int(grid_map(int(&args[0]), move |x| x * k)?)
+        }
+        GridOffset => {
+            let k = real(&args[1]);
+            Value::Int(grid_map(int(&args[0]), move |x| x + k)?)
+        }
+        GridSqrt => Value::Int(grid_map(int(&args[0]), |x| x.sqrt())?),
+        GridSquare => Value::Int(grid_map(int(&args[0]), |x| x * x)?),
+        GridAbs => Value::Int(grid_map(int(&args[0]), |x| x.abs())?),
+        GridSum => Value::Real(grid_read(int(&args[0]), |v| v.par_iter().sum())?),
+        GridMean => {
+            let (s, n) = grid_read(int(&args[0]), |v| (v.par_iter().sum::<f64>(), v.len()))?;
+            if n == 0 {
+                return Err("grid.mean: the grid is empty".to_string());
+            }
+            Value::Real(s / n as f64)
+        }
+        GridMax => Value::Real(grid_read(int(&args[0]), |v| v.par_iter().cloned().reduce(|| f64::NEG_INFINITY, f64::max))?),
+        GridMin => Value::Real(grid_read(int(&args[0]), |v| v.par_iter().cloned().reduce(|| f64::INFINITY, f64::min))?),
+        GridDot => grid_dot(int(&args[0]), int(&args[1]))?,
+        GridSumSquares => Value::Real(grid_read(int(&args[0]), |v| v.par_iter().map(|&x| x * x).sum())?),
+        GridNorm => Value::Real(grid_read(int(&args[0]), |v| v.par_iter().map(|&x| x * x).sum::<f64>().sqrt())?),
 
         other => panic!("internal error: {:?} is not a library function", other),
     })
