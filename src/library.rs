@@ -369,6 +369,28 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(2), Type::List(Some(Str)))
         }
+        ChartLine | ChartBars => {
+            arity(2)?;
+            if collection(a[0]).map_or(true, |e| !numeric(e)) {
+                return other("chart.line/bars works with a list of numbers and a file path");
+            }
+            if a[1] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(Str) });
+            }
+            ok(none(2), Type::Unknown)
+        }
+        ChartScatter => {
+            arity(3)?;
+            for index in [0usize, 1] {
+                if collection(a[index]).map_or(true, |e| !numeric(e)) {
+                    return other("chart.scatter works with two lists of numbers and a file path");
+                }
+            }
+            if a[2] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 2, expected: Type::Base(Str) });
+            }
+            ok(none(3), Type::Unknown)
+        }
         GridMatmul => {
             arity(5)?;
             for (index, t) in [(0usize, a[0]), (3, a[3])] {
@@ -478,6 +500,98 @@ fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
         ureq::Error::Status(code, _) => format!("{}: the server answered with status {}", ctx, code),
         ureq::Error::Transport(t) => format!("{}: cannot reach \"{}\": {}", ctx, url, t),
     }
+}
+
+// ---------------------------------------------------------------- the "chart" module (SVG plots)
+
+enum ChartKind {
+    Line,
+    Bars,
+    Scatter,
+}
+
+const CHART_W: f64 = 640.0;
+const CHART_H: f64 = 400.0;
+const CHART_M: f64 = 45.0;
+
+fn chart_range(d: &[f64]) -> (f64, f64) {
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for &v in d {
+        lo = lo.min(v);
+        hi = hi.max(v);
+    }
+    if (hi - lo).abs() < 1e-12 {
+        hi = lo + 1.0;
+    }
+    (lo, hi)
+}
+
+fn chart_header() -> String {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\">\n\
+         <rect width=\"{w}\" height=\"{h}\" fill=\"white\"/>\n\
+         <rect x=\"{m}\" y=\"{m}\" width=\"{pw}\" height=\"{ph}\" fill=\"none\" stroke=\"#ccc\"/>\n",
+        w = CHART_W, h = CHART_H, m = CHART_M, pw = CHART_W - 2.0 * CHART_M, ph = CHART_H - 2.0 * CHART_M
+    )
+}
+
+fn chart_svg(data: &[f64], bars: bool) -> String {
+    let (lo, hi) = chart_range(data);
+    let n = data.len();
+    let sx = |i: usize| CHART_M + (CHART_W - 2.0 * CHART_M) * i as f64 / (n.max(2) - 1) as f64;
+    let sy = |v: f64| (CHART_H - CHART_M) - (v - lo) / (hi - lo) * (CHART_H - 2.0 * CHART_M);
+    let mut s = chart_header();
+    if bars {
+        let bw = (CHART_W - 2.0 * CHART_M) / n as f64 * 0.7;
+        for (i, &v) in data.iter().enumerate() {
+            let cx = CHART_M + (CHART_W - 2.0 * CHART_M) * (i as f64 + 0.5) / n as f64;
+            let top = sy(v);
+            s.push_str(&format!(
+                "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" fill=\"#4682b4\"/>\n",
+                cx - bw / 2.0, top, bw, (CHART_H - CHART_M) - top
+            ));
+        }
+    } else {
+        let pts: Vec<String> = data.iter().enumerate().map(|(i, &v)| format!("{:.1},{:.1}", sx(i), sy(v))).collect();
+        s.push_str(&format!("<polyline points=\"{}\" fill=\"none\" stroke=\"#4682b4\" stroke-width=\"2\"/>\n", pts.join(" ")));
+    }
+    s.push_str(&format!("<text x=\"4\" y=\"{:.0}\" font-size=\"11\" fill=\"#666\">{:.3}</text>\n", CHART_M + 4.0, hi));
+    s.push_str(&format!("<text x=\"4\" y=\"{:.0}\" font-size=\"11\" fill=\"#666\">{:.3}</text>\n", CHART_H - CHART_M, lo));
+    s.push_str("</svg>\n");
+    s
+}
+
+fn chart_svg_scatter(xs: &[f64], ys: &[f64]) -> String {
+    let (xlo, xhi) = chart_range(xs);
+    let (ylo, yhi) = chart_range(ys);
+    let sx = |v: f64| CHART_M + (v - xlo) / (xhi - xlo) * (CHART_W - 2.0 * CHART_M);
+    let sy = |v: f64| (CHART_H - CHART_M) - (v - ylo) / (yhi - ylo) * (CHART_H - 2.0 * CHART_M);
+    let mut s = chart_header();
+    for (&x, &y) in xs.iter().zip(ys) {
+        s.push_str(&format!("<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"3\" fill=\"#4682b4\"/>\n", sx(x), sy(y)));
+    }
+    s.push_str("</svg>\n");
+    s
+}
+
+fn chart_write(xs: &Value, ys: Option<&Value>, kind: ChartKind, path: &str) -> Result<Value, String> {
+    let data: Vec<f64> = seq(xs).borrow().iter().map(real).collect();
+    if data.is_empty() {
+        return Err("chart: the data is empty".to_string());
+    }
+    let svg = match kind {
+        ChartKind::Line => chart_svg(&data, false),
+        ChartKind::Bars => chart_svg(&data, true),
+        ChartKind::Scatter => {
+            let yd: Vec<f64> = seq(ys.expect("scatter has y")).borrow().iter().map(real).collect();
+            if yd.len() != data.len() {
+                return Err("chart.scatter: the two lists must have the same length".to_string());
+            }
+            chart_svg_scatter(&data, &yd)
+        }
+    };
+    std::fs::write(path, svg).map_err(|e| format!("chart: cannot write \"{}\": {}", path, e))?;
+    Ok(Value::Null)
 }
 
 /// Tallies the items, returning a dictionary from each distinct value to its count.
@@ -2447,6 +2561,9 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             };
             string(g)
         }
+        ChartLine => chart_write(&args[0], None, ChartKind::Line, text(&args[1]))?,
+        ChartBars => chart_write(&args[0], None, ChartKind::Bars, text(&args[1]))?,
+        ChartScatter => chart_write(&args[0], Some(&args[1]), ChartKind::Scatter, text(&args[2]))?,
         HashSha256 => {
             use sha2::{Digest, Sha256};
             string(hex(Sha256::digest(text(&args[0]).as_bytes())))

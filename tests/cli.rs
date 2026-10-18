@@ -223,6 +223,19 @@ fn builtin_module_text_regex_extras() {
 }
 
 #[test]
+fn builtin_module_chart_svg() {
+    let dir = std::env::temp_dir().join("globw_chart_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let svg = dir.join("c.svg").to_str().unwrap().replace('\\', "/");
+    let src = format!("import chart\nchart.line([1.0, 4.0, 2.0, 5.0], \"{}\")\noutput(\"done\")\n", svg);
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "done\n"), "{}", stderr);
+    let out = std::fs::read_to_string(dir.join("c.svg")).unwrap();
+    assert!(out.contains("<svg") && out.contains("<polyline"), "{}", out);
+}
+
+#[test]
 fn builtin_module_nungw_matmul() {
     let dir = std::env::temp_dir().join("globw_nungw_matmul_test");
     std::fs::create_dir_all(&dir).unwrap();

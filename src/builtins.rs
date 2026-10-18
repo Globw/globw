@@ -483,6 +483,10 @@ pub enum Builtin {
     TextSplit,
     TextCount,
     TextGroup,
+    // module "chart" (plots to SVG files, like matplotlib savefig)
+    ChartLine,
+    ChartBars,
+    ChartScatter,
 }
 
 use Builtin::*;
@@ -1063,6 +1067,9 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (TextSplit, "text.split", Sig::Flexible { function: true }),
     (TextCount, "text.count", Sig::Fixed(&[S, S], Some(Int))),
     (TextGroup, "text.group", Sig::Fixed(&[S, S, I], Some(Str))),
+    (ChartLine, "chart.line", Sig::Flexible { function: false }),
+    (ChartBars, "chart.bars", Sig::Flexible { function: false }),
+    (ChartScatter, "chart.scatter", Sig::Flexible { function: false }),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1096,6 +1103,8 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "nungw",
     // collections
     "counter",
+    // plotting
+    "chart",
 ];
 
 pub fn is_builtin_module(name: &str) -> bool {

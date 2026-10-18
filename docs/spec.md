@@ -646,6 +646,7 @@ Most of these are plain functions whose errors (a bad number, a missing file, a 
 - **Hashes & checks:** `fnv`, `djb2`, `sdbm`, `adler`, `ipv4`, `mac`, `hexcolor`, `weburl`, `grade`, `logic`, `yesno`, `scientific`, `fraction`.
 - **Randomness & ids:** `dice`, `coin`, `pick`, `token`, `password`, `nanoid`, `otp`, `lorem`, `randcolor`.
 - **Collections:** `counter` — `counter.items(list)`, `counter.chars(s)`, `counter.words(s)` tally into a dictionary (like Python's `Counter`).
+- **Charts:** `chart` — `chart.line(list, path)`, `chart.bars(list, path)`, `chart.scatter(xs, ys, path)` write an SVG plot to a file (like matplotlib's `savefig`). Paths use `/` (a Globw string cannot hold a lone `\`).
 
 **The array engine (`nungw`).** For heavy number crunching, `nungw of float` is a
 first-class type: a one-dimensional array of floats kept in contiguous memory and
