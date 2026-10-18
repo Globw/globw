@@ -61,6 +61,8 @@ pub enum Type {
     Set(BaseType),
     /// a tuple (a fixed group of possibly different types), made with `tuple_type`
     Tuple(u32),
+    /// a fast contiguous array of floats (the `grid` engine); at run time an int handle
+    Grid,
 }
 
 /// A type stored in the type table, so that `Type` stays small and `Copy`
@@ -329,6 +331,7 @@ impl Type {
             Type::None => "none",
             Type::Set(_) => "a set",
             Type::Tuple(_) => "a tuple",
+            Type::Grid => "a grid",
         }
     }
 
@@ -367,6 +370,7 @@ impl Type {
             Type::Array(_) => "arrays".to_string(),
             Type::Matrix(_) => "matrices".to_string(),
             Type::Object(id) => format!("{} objects", class_name(id)),
+            Type::Grid => "grids".to_string(),
             _ => "values".to_string(),
         }
     }

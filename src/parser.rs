@@ -376,6 +376,18 @@ impl Parser {
         if self.is_name("tuple") {
             return Ok((Shape::Scalar, BaseType::Int, self.tuple_type_spec()?));
         }
+        if self.is_name("grid") {
+            self.advance();
+            if !self.is_name("of") {
+                return self.fail("expected \"of\", like grid of float");
+            }
+            self.advance();
+            let p = self.pos();
+            if self.base_type()? != BaseType::Real {
+                return Err(Error::new(p, "a grid holds floats: write grid of float"));
+            }
+            return Ok((Shape::Scalar, BaseType::Int, Type::Grid));
+        }
         if self.is_name("list") || self.is_name("dict") || self.is_name("set") {
             let full = self.collection_type()?;
             let shape = match full {

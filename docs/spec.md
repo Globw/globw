@@ -638,33 +638,43 @@ Most of these are plain functions whose errors (a bad number, a missing file, a 
 - **Hashes & checks:** `fnv`, `djb2`, `sdbm`, `adler`, `ipv4`, `mac`, `hexcolor`, `weburl`, `grade`, `logic`, `yesno`, `scientific`, `fraction`.
 - **Randomness & ids:** `dice`, `coin`, `pick`, `token`, `password`, `nanoid`, `otp`, `lorem`, `randcolor`.
 
-**The array engine (`grid`).** For heavy number crunching, `import grid` gives fast
-one-dimensional arrays of floats kept in contiguous memory and worked on in
-parallel. A grid is referred to by a handle (an `int`); its element-wise kernels
-and reductions loop over unboxed memory on every CPU core.
+**The array engine (`grid`).** For heavy number crunching, `grid of float` is a
+first-class type: a one-dimensional array of floats kept in contiguous memory and
+worked on across every CPU core. `import grid` to use it. The usual operators
+work element-wise, and `g[i]` reads an element (1-based).
 
 ```
 import grid
 variables:
-    a as int
-a = grid.range(10000000)          ' 0, 1, 2, ... as a fast float array
-output(grid.sum_squares(a))       ' fused: one pass, no temporary array
+    a, c as grid of float
+a = grid.range(10000000)             ' 0, 1, 2, ... as a fast float array
+c = grid.sqrt(a) * 1.5 - a / 3.0     ' operators work element-wise
+output(c[1], " ", grid.sum(c))       ' index (1-based) and a reduction
 ```
+
+- **Operators:** `a + b`, `a - b`, `a * b`, `a / b` between two grids, and between a
+  grid and a number (`a * 2.0`, `100.0 - a`), all element-wise, giving a new grid.
+- **Indexing:** `g[i]` reads the i-th float (1-based). `grid.set(g, i, v)` writes one.
 
 | Function | Purpose |
 |---|---|
-| `grid.range(n)`, `grid.zeros(n)`, `grid.fill(n, v)`, `grid.of(list)` | build a grid, returning its handle |
-| `grid.size(h)`, `grid.get(h, i)`, `grid.set(h, i, v)`, `grid.to_list(h)`, `grid.free(h)` | inspect, change, read back, release |
-| `grid.add/sub/mul/div(a, b)`, `grid.scale(a, k)`, `grid.offset(a, k)` | element-wise, returning a new grid |
-| `grid.sqrt/square/abs(a)` | element-wise, returning a new grid |
-| `grid.sum/mean/max/min(a)`, `grid.dot(a, b)`, `grid.sum_squares(a)`, `grid.norm(a)` | reductions to a single number |
+| `grid.range(n)`, `grid.zeros(n)`, `grid.fill(n, v)`, `grid.of(list)` | build a grid |
+| `grid.size(g)`, `grid.get(g, i)`, `grid.set(g, i, v)`, `grid.to_list(g)` | inspect, read, change, read back |
+| `grid.sqrt/square/abs(g)` | element-wise, giving a new grid (same as the operators) |
+| `grid.sum/mean/max/min(g)`, `grid.dot(a, b)`, `grid.sum_squares(g)`, `grid.norm(g)` | reductions to a single number |
 
-The reductions `sum_squares`, `norm` and `dot` are **fused**: they compute in a
-single pass over memory without building a temporary array. On a 10-million
-element grid, `grid.sum_squares` runs in ~0.36 ms, against ~14 ms for NumPy's
-`np.sum(a**2)` and ~2 ms for `np.einsum` — the contiguous memory, the single
-fused pass and the use of every core together beat a single-threaded library.
-This is the first step toward a first-class `grid of float` type with operators.
+Grids are values: a temporary made by an operator frees itself when it is no
+longer used, so loops do not leak. The reductions `sum_squares`, `norm` and `dot`
+are **fused** — one pass over memory, no temporary array.
+
+**Speed.** On a 10-million element grid, against NumPy (16 cores):
+- `grid.sum_squares(a)` runs in ~0.36 ms, vs NumPy `np.sum(a**2)` ~14 ms and `np.einsum` ~2 ms.
+- the element-wise expression `grid.sqrt(a) * 1.5 - a / 3.0` runs in ~27 ms, vs ~39 ms for the same NumPy expression.
+
+Globw wins because grids are contiguous unboxed floats worked on across every
+core, while NumPy's element-wise operations are single-threaded (and `np.sum(a**2)`
+also builds a temporary). Fusing whole expressions into one kernel — the next
+step — will widen the element-wise margin further.
 
 ### 6.13 Classes
 

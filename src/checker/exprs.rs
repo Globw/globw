@@ -2,6 +2,7 @@
 //! to variables of still-unknown type.
 
 use crate::ast::{BinOp, Expr, ExprKind, Shape, UnOp};
+use crate::builtins::Builtin;
 use crate::errors::{Error, Pos};
 use crate::lexer::miscased_value_keyword;
 use crate::tir::*;
@@ -326,6 +327,16 @@ impl<'p> Checker<'p> {
                 self.int_expr(t, "the index")
             })
             .collect();
+        if self.var(p).full_type() == Type::Grid {
+            self.check_assigned(p, name, pos);
+            if idx.len() != 1 {
+                self.report(Error::new(pos, format!("a grid needs exactly 1 index, like {}[i]", name)));
+                return unknown(pos);
+            }
+            let g = TExpr { kind: TExprKind::Load(p), ty: Type::Grid, pos };
+            let i = idx.into_iter().next().expect("one index");
+            return TExpr { kind: TExprKind::Builtin(Builtin::GridGet, vec![g, i]), ty: Type::Base(BaseType::Real), pos };
+        }
         let v = self.var(p);
         let (shape, elem) = (v.shape.clone(), v.ty);
         let elem_ty = elem.map_or(Type::Unknown, Type::Base);
@@ -376,6 +387,10 @@ impl<'p> Checker<'p> {
             }
             let check = base(TExprKind::IsNone(Box::new(other)), Bool, pos);
             return if op == NotEq { base(TExprKind::Not(Box::new(check)), Bool, pos) } else { check };
+        }
+        // operators on grids become calls to the grid engine
+        if a.ty == Type::Grid || b.ty == Type::Grid {
+            return self.grid_binary(op, a, b, pos);
         }
         match op {
             And | Or => {
@@ -460,6 +475,43 @@ impl<'p> Checker<'p> {
                     self.report(Error::new(pos, format!("{} needs conditions (true/false) on both sides", symbol(op))));
                     unknown(pos)
                 }
+            }
+        }
+    }
+
+    /// Lowers an operator with a grid operand to a call to the `grid` engine.
+    fn grid_binary(&mut self, op: BinOp, a: TExpr, b: TExpr, pos: Pos) -> TExpr {
+        use BinOp::*;
+        let grid = |bi: Builtin, args: Vec<TExpr>| TExpr { kind: TExprKind::Builtin(bi, args), ty: Type::Grid, pos };
+        if a.ty == Type::Grid && b.ty == Type::Grid {
+            return match op {
+                Add => grid(Builtin::GridAdd, vec![a, b]),
+                Sub => grid(Builtin::GridSub, vec![a, b]),
+                Mul => grid(Builtin::GridMul, vec![a, b]),
+                Div => grid(Builtin::GridDiv, vec![a, b]),
+                _ => {
+                    self.report(Error::new(pos, format!("cannot use {} between two grids", symbol(op))));
+                    unknown(pos)
+                }
+            };
+        }
+        // one side is a grid, the other a number
+        let (g, scalar, grid_left) = if a.ty == Type::Grid { (a, b, true) } else { (b, a, false) };
+        if scalar.ty.base().map_or(true, |t| !matches!(t, BaseType::Int | BaseType::Real)) {
+            self.report(Error::new(pos, format!("cannot use {} between a grid and {}", symbol(op), scalar.ty.name())));
+            return unknown(pos);
+        }
+        let s = convert(scalar, Some(BaseType::Real));
+        match (op, grid_left) {
+            (Add, _) => grid(Builtin::GridOffset, vec![g, s]),
+            (Mul, _) => grid(Builtin::GridScale, vec![g, s]),
+            (Sub, true) => grid(Builtin::GridSubScalar, vec![g, s]),
+            (Sub, false) => grid(Builtin::GridScalarSub, vec![g, s]),
+            (Div, true) => grid(Builtin::GridDivScalar, vec![g, s]),
+            (Div, false) => grid(Builtin::GridScalarDiv, vec![g, s]),
+            _ => {
+                self.report(Error::new(pos, format!("cannot use {} between a grid and a number", symbol(op))));
+                unknown(pos)
             }
         }
     }

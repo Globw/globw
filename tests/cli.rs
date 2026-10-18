@@ -192,12 +192,12 @@ fn builtin_modules_big_batch() {
 fn builtin_module_grid_engine() {
     let dir = std::env::temp_dir().join("globw_grid_module_test");
     std::fs::create_dir_all(&dir).unwrap();
-    let src = "import grid\nvariables:\n    a as int\na = grid.of([3.0, 4.0])\n\
+    let src = "import grid\nvariables:\n    a, c as grid of float\na = grid.of([3.0, 4.0])\n\
                output(grid.sum(a), \" \", grid.dot(a, a), \" \", grid.norm(a))\n\
-               output(grid.to_list(grid.scale(a, 2.0)))\n";
+               c = a * 2.0\noutput(grid.to_list(c), \" \", a[2])\n";
     std::fs::write(dir.join("p.gw"), src).unwrap();
     let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
-    assert_eq!((code, stdout.as_str()), (0, "7.0 25.0 5.0\n[6.0, 8.0]\n"), "{}", stderr);
+    assert_eq!((code, stdout.as_str()), (0, "7.0 25.0 5.0\n[6.0, 8.0] 4.0\n"), "{}", stderr);
 }
 
 #[test]

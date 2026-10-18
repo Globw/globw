@@ -344,7 +344,7 @@ impl<'p> Checker<'p> {
     fn assign(&mut self, t: TTarget, v: TExpr) -> TStmt {
         let var = self.var(t.place);
         let whole = var.shape != Shape::Scalar
-            || matches!(var.full_type(), Type::Object(_) | Type::Func(_) | Type::Tuple(_));
+            || matches!(var.full_type(), Type::Object(_) | Type::Func(_) | Type::Tuple(_) | Type::Grid);
         if whole && t.indices.is_empty() {
             // a whole list, dictionary or object, like `words = split(s, " ")` or `p = new Point(1, 2)`
             let (expected, name) = (var.full_type(), var.name.clone());

@@ -27,6 +27,8 @@ pub enum Value {
     Func(u32),
     /// a set of simple values, kept as the keys of a dictionary
     Set(Rc<RefCell<Dict>>),
+    /// a grid: a contiguous array of floats (the `grid` engine)
+    Floats(Rc<RefCell<Vec<f64>>>),
 }
 
 /// An object: its class id and the values of its fields, in slot order.
@@ -260,6 +262,15 @@ fn repr_at(v: &Value, depth: usize) -> String {
             let pairs: Vec<String> =
                 names.iter().zip(&o.fields).map(|(n, f)| format!("{}={}", n, repr_at(f, depth + 1))).collect();
             format!("{}({})", crate::tir::class_name(o.class), pairs.join(", "))
+        }
+        Value::Floats(g) => {
+            let g = g.borrow();
+            if g.len() <= 8 {
+                format!("grid[{}]", g.iter().map(|x| format_real(*x)).collect::<Vec<_>>().join(", "))
+            } else {
+                let head = g.iter().take(6).map(|x| format_real(*x)).collect::<Vec<_>>().join(", ");
+                format!("grid[{}, ... {} floats]", head, g.len())
+            }
         }
     }
 }
