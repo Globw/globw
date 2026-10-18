@@ -391,6 +391,63 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(3), Type::Unknown)
         }
+        TableHeaders => {
+            arity(1)?;
+            if a[0] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Str) });
+            }
+            ok(none(1), Type::List(Some(Str)))
+        }
+        TableColumn | TableNumbers => {
+            arity(2)?;
+            for (index, t) in a.iter().enumerate() {
+                if *t != Type::Base(Str) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Str) });
+                }
+            }
+            ok(none(2), Type::List(Some(if b == TableNumbers { Real } else { Str })))
+        }
+        IterCombinations | IterPermutations => {
+            arity(2)?;
+            if a[0] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Str) });
+            }
+            if a[1] != Type::Base(Int) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(Int) });
+            }
+            ok(none(2), Type::List(Some(Str)))
+        }
+        IterProduct => {
+            arity(2)?;
+            for (index, t) in a.iter().enumerate() {
+                if *t != Type::Base(Str) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Str) });
+                }
+            }
+            ok(none(2), Type::List(Some(Str)))
+        }
+        PickShuffle => {
+            arity(1)?;
+            match collection(a[0]) {
+                Some(_) => ok(none(1), Type::Unknown),
+                None => other("pick.shuffle works with an array or list"),
+            }
+        }
+        PickChoice => {
+            arity(1)?;
+            match collection(a[0]) {
+                Some(e) => ok(none(1), Type::Base(e)),
+                None => other("pick.choice works with an array or list"),
+            }
+        }
+        PickSample => {
+            arity(2)?;
+            let Some(e) = collection(a[0]) else { return other("pick.sample works with an array or list and a count") };
+            if a[1] != Type::Base(Int) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(Int) });
+            }
+            ok(none(2), Type::List(Some(e)))
+        }
         GridMatmul => {
             arity(5)?;
             for (index, t) in [(0usize, a[0]), (3, a[3])] {
@@ -592,6 +649,110 @@ fn chart_write(xs: &Value, ys: Option<&Value>, kind: ChartKind, path: &str) -> R
     };
     std::fs::write(path, svg).map_err(|e| format!("chart: cannot write \"{}\": {}", path, e))?;
     Ok(Value::Null)
+}
+
+// ---- table (CSV) helpers ----
+
+fn csv_lines(csv: &str) -> Vec<&str> {
+    csv.lines().filter(|l| !l.trim().is_empty()).collect()
+}
+
+fn table_col_index<'a>(csv: &'a str, name: &str) -> Result<(Vec<&'a str>, usize), String> {
+    let lines = csv_lines(csv);
+    let header = *lines.first().ok_or("table: the CSV is empty")?;
+    let idx = csv_fields(header)
+        .iter()
+        .position(|h| h == name)
+        .ok_or_else(|| format!("table: there is no column \"{}\"", name))?;
+    Ok((lines, idx))
+}
+
+fn table_cell_number(fields: &[String], idx: usize) -> Result<f64, String> {
+    let cell = fields.get(idx).map(|s| s.trim()).unwrap_or("");
+    cell.parse::<f64>().map_err(|_| format!("table: \"{}\" is not a number", cell))
+}
+
+// ---- iter (combinatorics over a string's characters) ----
+
+fn char_combinations(s: &str, k: i64) -> Result<Vec<String>, String> {
+    if k < 0 {
+        return Err("iter.combinations: the count cannot be negative".to_string());
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let k = k as usize;
+    if k == 0 {
+        return Ok(vec![String::new()]);
+    }
+    if k > chars.len() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    let mut idx: Vec<usize> = (0..k).collect();
+    loop {
+        out.push(idx.iter().map(|&i| chars[i]).collect::<String>());
+        if out.len() > 1_000_000 {
+            return Err("iter.combinations: too many results".to_string());
+        }
+        let mut i = k;
+        loop {
+            if i == 0 {
+                return Ok(out);
+            }
+            i -= 1;
+            if idx[i] != i + chars.len() - k {
+                break;
+            }
+        }
+        idx[i] += 1;
+        for j in i + 1..k {
+            idx[j] = idx[j - 1] + 1;
+        }
+    }
+}
+
+fn char_permutations(s: &str, k: i64) -> Result<Vec<String>, String> {
+    if k < 0 {
+        return Err("iter.permutations: the count cannot be negative".to_string());
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let k = k as usize;
+    if k > chars.len() {
+        return Ok(vec![]);
+    }
+    fn rec(chars: &[char], k: usize, used: &mut [bool], cur: &mut Vec<char>, out: &mut Vec<String>) -> Result<(), String> {
+        if cur.len() == k {
+            out.push(cur.iter().collect());
+            if out.len() > 1_000_000 {
+                return Err("iter.permutations: too many results".to_string());
+            }
+            return Ok(());
+        }
+        for i in 0..chars.len() {
+            if !used[i] {
+                used[i] = true;
+                cur.push(chars[i]);
+                rec(chars, k, used, cur, out)?;
+                cur.pop();
+                used[i] = false;
+            }
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    let mut used = vec![false; chars.len()];
+    let mut cur = Vec::new();
+    rec(&chars, k, &mut used, &mut cur, &mut out)?;
+    Ok(out)
+}
+
+fn char_product(a: &str, b: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for x in a.chars() {
+        for y in b.chars() {
+            out.push(format!("{}{}", x, y));
+        }
+    }
+    out
 }
 
 /// Tallies the items, returning a dictionary from each distinct value to its count.
@@ -2564,6 +2725,84 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         ChartLine => chart_write(&args[0], None, ChartKind::Line, text(&args[1]))?,
         ChartBars => chart_write(&args[0], None, ChartKind::Bars, text(&args[1]))?,
         ChartScatter => chart_write(&args[0], Some(&args[1]), ChartKind::Scatter, text(&args[2]))?,
+
+        // module "table"
+        TableHeaders => {
+            let lines = csv_lines(text(&args[0]));
+            let header = lines.first().ok_or("table: the CSV is empty")?;
+            list(csv_fields(header).into_iter().map(string).collect())
+        }
+        TableRows => Value::Int(csv_lines(text(&args[0])).len().saturating_sub(1) as i64),
+        TableColumn => {
+            let (lines, idx) = table_col_index(text(&args[0]), text(&args[1]))?;
+            list(lines.iter().skip(1).map(|l| string(csv_fields(l).get(idx).cloned().unwrap_or_default())).collect())
+        }
+        TableNumbers => {
+            let (lines, idx) = table_col_index(text(&args[0]), text(&args[1]))?;
+            let mut out = Vec::new();
+            for l in lines.iter().skip(1) {
+                out.push(Value::Real(table_cell_number(&csv_fields(l), idx)?));
+            }
+            list(out)
+        }
+        TableMean | TableSum => {
+            let (lines, idx) = table_col_index(text(&args[0]), text(&args[1]))?;
+            let (mut sum, mut count) = (0.0, 0usize);
+            for l in lines.iter().skip(1) {
+                sum += table_cell_number(&csv_fields(l), idx)?;
+                count += 1;
+            }
+            if b == TableMean {
+                if count == 0 {
+                    return Err("table.mean: the column has no values".to_string());
+                }
+                Value::Real(sum / count as f64)
+            } else {
+                Value::Real(sum)
+            }
+        }
+
+        // module "iter"
+        IterCombinations => list(char_combinations(text(&args[0]), int(&args[1]))?.into_iter().map(string).collect()),
+        IterPermutations => list(char_permutations(text(&args[0]), int(&args[1]))?.into_iter().map(string).collect()),
+        IterProduct => list(char_product(text(&args[0]), text(&args[1])).into_iter().map(string).collect()),
+
+        // module "pick" (random over lists)
+        PickShuffle => {
+            let mut items = seq(&args[0]).borrow_mut();
+            let n = items.len();
+            for i in (1..n).rev() {
+                let j = (rng_u64() % (i as u64 + 1)) as usize;
+                items.swap(i, j);
+            }
+            Value::Null
+        }
+        PickChoice => {
+            let items = seq(&args[0]).borrow();
+            if items.is_empty() {
+                return Err("pick.choice: the list is empty".to_string());
+            }
+            items[(rng_u64() % items.len() as u64) as usize].clone()
+        }
+        PickSample => {
+            let k = int(&args[1]);
+            let items = seq(&args[0]).borrow();
+            if k < 0 || k as usize > items.len() {
+                return Err(format!("pick.sample: cannot take {} from a list of {}", k, items.len()));
+            }
+            let mut pool: Vec<Value> = items.clone();
+            let n = pool.len();
+            for i in 0..k as usize {
+                let j = i + (rng_u64() % (n - i) as u64) as usize;
+                pool.swap(i, j);
+            }
+            pool.truncate(k as usize);
+            new_list(pool)
+        }
+
+        // module "clock" (timestamp arithmetic)
+        ClockAdd => Value::Int(int(&args[0]).checked_add(int(&args[1])).ok_or(OVERFLOW)?),
+        ClockDiff => Value::Int(int(&args[0]).checked_sub(int(&args[1])).ok_or(OVERFLOW)?),
         HashSha256 => {
             use sha2::{Digest, Sha256};
             string(hex(Sha256::digest(text(&args[0]).as_bytes())))

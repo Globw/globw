@@ -647,6 +647,10 @@ Most of these are plain functions whose errors (a bad number, a missing file, a 
 - **Randomness & ids:** `dice`, `coin`, `pick`, `token`, `password`, `nanoid`, `otp`, `lorem`, `randcolor`.
 - **Collections:** `counter` — `counter.items(list)`, `counter.chars(s)`, `counter.words(s)` tally into a dictionary (like Python's `Counter`).
 - **Charts:** `chart` — `chart.line(list, path)`, `chart.bars(list, path)`, `chart.scatter(xs, ys, path)` write an SVG plot to a file (like matplotlib's `savefig`). Paths use `/` (a Globw string cannot hold a lone `\`).
+- **Tables (CSV, light pandas):** `table` — `table.headers(csv)`, `table.column(csv, name)`, `table.numbers(csv, name)`, `table.rows(csv)`, `table.mean(csv, name)`, `table.sum(csv, name)`. The first CSV line is the header.
+- **Iterators (like itertools, over a string's characters):** `iter` — `iter.combinations(s, k)`, `iter.permutations(s, k)`, `iter.product(a, b)` return a `list of string`.
+- **Random over lists:** `pick.shuffle(list)` (in place), `pick.choice(list)` (one element), `pick.sample(list, k)` (a new list of k distinct elements).
+- **Timestamp maths:** `clock.add(stamp, seconds)`, `clock.diff(a, b)`.
 
 **The array engine (`nungw`).** For heavy number crunching, `nungw of float` is a
 first-class type: a one-dimensional array of floats kept in contiguous memory and

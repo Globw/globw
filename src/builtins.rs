@@ -487,6 +487,24 @@ pub enum Builtin {
     ChartLine,
     ChartBars,
     ChartScatter,
+    // module "table" (CSV columns and aggregates, like a light pandas)
+    TableHeaders,
+    TableColumn,
+    TableNumbers,
+    TableRows,
+    TableMean,
+    TableSum,
+    // module "iter" (combinatorics over a string's characters)
+    IterCombinations,
+    IterPermutations,
+    IterProduct,
+    // module "pick" (random choices over lists)
+    PickShuffle,
+    PickChoice,
+    PickSample,
+    // module "clock" (timestamp arithmetic)
+    ClockAdd,
+    ClockDiff,
 }
 
 use Builtin::*;
@@ -1070,6 +1088,20 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (ChartLine, "chart.line", Sig::Flexible { function: false }),
     (ChartBars, "chart.bars", Sig::Flexible { function: false }),
     (ChartScatter, "chart.scatter", Sig::Flexible { function: false }),
+    (TableHeaders, "table.headers", Sig::Flexible { function: true }),
+    (TableColumn, "table.column", Sig::Flexible { function: true }),
+    (TableNumbers, "table.numbers", Sig::Flexible { function: true }),
+    (TableRows, "table.rows", Sig::Fixed(&[S], Some(Int))),
+    (TableMean, "table.mean", Sig::Fixed(&[S, S], Some(Real))),
+    (TableSum, "table.sum", Sig::Fixed(&[S, S], Some(Real))),
+    (IterCombinations, "iter.combinations", Sig::Flexible { function: true }),
+    (IterPermutations, "iter.permutations", Sig::Flexible { function: true }),
+    (IterProduct, "iter.product", Sig::Flexible { function: true }),
+    (PickShuffle, "pick.shuffle", Sig::Flexible { function: false }),
+    (PickChoice, "pick.choice", Sig::Flexible { function: true }),
+    (PickSample, "pick.sample", Sig::Flexible { function: true }),
+    (ClockAdd, "clock.add", Sig::Fixed(&[I, I], Some(Int))),
+    (ClockDiff, "clock.diff", Sig::Fixed(&[I, I], Some(Int))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1105,6 +1137,8 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "counter",
     // plotting
     "chart",
+    // tables and iterators
+    "table", "iter",
 ];
 
 pub fn is_builtin_module(name: &str) -> bool {

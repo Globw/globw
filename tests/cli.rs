@@ -223,6 +223,17 @@ fn builtin_module_text_regex_extras() {
 }
 
 #[test]
+fn builtin_modules_table_iter_clock() {
+    let dir = std::env::temp_dir().join("globw_table_iter_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import table\nimport iter\nimport clock\n\
+               output(table.mean(\"x\\n2\\n4\\n6\", \"x\"), \" \", iter.combinations(\"abc\", 2), \" \", clock.add(100, 50))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "4.0 ['ab', 'ac', 'bc'] 150\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_module_chart_svg() {
     let dir = std::env::temp_dir().join("globw_chart_test");
     std::fs::create_dir_all(&dir).unwrap();
