@@ -213,6 +213,16 @@ fn builtin_modules_counter_and_data() {
 }
 
 #[test]
+fn builtin_module_text_regex_extras() {
+    let dir = std::env::temp_dir().join("globw_text_extras_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import text\noutput(text.count(\"a1b2c3\", \"[0-9]\"), \" \", text.group(\"2026-10\", \"([0-9]+)-([0-9]+)\", 2))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "3 10\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_module_nungw_matmul() {
     let dir = std::env::temp_dir().join("globw_nungw_matmul_test");
     std::fs::create_dir_all(&dir).unwrap();

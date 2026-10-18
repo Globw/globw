@@ -479,6 +479,10 @@ pub enum Builtin {
     // module "data" (more JSON)
     DataPretty,
     DataType,
+    // module "text" (more regex)
+    TextSplit,
+    TextCount,
+    TextGroup,
 }
 
 use Builtin::*;
@@ -1056,6 +1060,9 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (WebDownload, "web.download", Sig::Fixed(&[S, S], None)),
     (DataPretty, "data.pretty", Sig::Fixed(&[S], Some(Str))),
     (DataType, "data.type", Sig::Fixed(&[S, S], Some(Str))),
+    (TextSplit, "text.split", Sig::Flexible { function: true }),
+    (TextCount, "text.count", Sig::Fixed(&[S, S], Some(Int))),
+    (TextGroup, "text.group", Sig::Fixed(&[S, S, I], Some(Str))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).

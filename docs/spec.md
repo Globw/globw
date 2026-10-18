@@ -554,6 +554,9 @@ import encode        ' base64
 | `text` | `text.find(s, pattern)` | `string` | the first match, or `""` if there is none |
 | `text` | `text.all(s, pattern)` | `list of string` | every match, in order |
 | `text` | `text.replace_all(s, pattern, with)` | `string` | `s` with every match replaced by `with` |
+| `text` | `text.split(s, pattern)` | `list of string` | `s` split on every match of `pattern` |
+| `text` | `text.count(s, pattern)` | `int` | how many matches of `pattern` are in `s` |
+| `text` | `text.group(s, pattern, n)` | `string` | the n-th capture group of the first match (0 = the whole match), `""` if none |
 | `hash` | `hash.sha256(s)` | `string` | the SHA-256 digest of `s`, as lowercase hexadecimal |
 | `hash` | `hash.sha512(s)` | `string` | the SHA-512 digest of `s`, as lowercase hexadecimal |
 | `web` | `web.get(url)` | `string` | fetches `url` over HTTP(S) and returns the reply body as text |

@@ -360,6 +360,15 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), crate::tir::dict_of(Str, Type::Base(Int)))
         }
+        TextSplit => {
+            arity(2)?;
+            for (index, t) in a.iter().enumerate() {
+                if *t != Type::Base(Str) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Str) });
+                }
+            }
+            ok(none(2), Type::List(Some(Str)))
+        }
         GridMatmul => {
             arity(5)?;
             for (index, t) in [(0usize, a[0]), (3, a[3])] {
@@ -2423,6 +2432,21 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         TextFind => string(pattern(&args[1])?.find(text(&args[0])).map_or("", |m| m.as_str())),
         TextReplaceAll => string(pattern(&args[1])?.replace_all(text(&args[0]), text(&args[2])).into_owned()),
         TextAll => list(pattern(&args[1])?.find_iter(text(&args[0])).map(|m| string(m.as_str())).collect()),
+        TextSplit => list(pattern(&args[1])?.split(text(&args[0])).map(string).collect()),
+        TextCount => Value::Int(pattern(&args[1])?.find_iter(text(&args[0])).count() as i64),
+        TextGroup => {
+            let n = int(&args[2]);
+            let re = pattern(&args[1])?;
+            let g = if n < 0 {
+                ""
+            } else {
+                match re.captures(text(&args[0])) {
+                    Some(c) => c.get(n as usize).map_or("", |m| m.as_str()),
+                    None => "",
+                }
+            };
+            string(g)
+        }
         HashSha256 => {
             use sha2::{Digest, Sha256};
             string(hex(Sha256::digest(text(&args[0]).as_bytes())))
