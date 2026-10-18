@@ -755,6 +755,409 @@ fn char_product(a: &str, b: &str) -> Vec<String> {
     out
 }
 
+// ---- batch G1 helpers ----
+
+fn beaufort(kmh: f64) -> i64 {
+    const T: [f64; 12] = [1.0, 6.0, 12.0, 20.0, 29.0, 39.0, 50.0, 62.0, 75.0, 89.0, 103.0, 118.0];
+    T.iter().filter(|&&t| kmh >= t).count() as i64
+}
+
+fn erf(x: f64) -> f64 {
+    // Abramowitz & Stegun 7.1.26
+    let t = 1.0 / (1.0 + 0.327_591_1 * x.abs());
+    let y = 1.0
+        - (((((1.061_405_429 * t - 1.453_152_027) * t) + 1.421_413_741) * t - 0.284_496_736) * t + 0.254_829_592)
+            * t
+            * (-x * x).exp();
+    if x < 0.0 {
+        -y
+    } else {
+        y
+    }
+}
+
+fn gamma(x: f64) -> f64 {
+    // Lanczos approximation (g = 7)
+    const G: [f64; 9] = [
+        0.999_999_999_999_809_9, 676.520_368_121_885_1, -1259.139_216_722_402_8, 771.323_428_777_653_1,
+        -176.615_029_162_140_6, 12.507_343_278_686_905, -0.138_571_095_265_720_12, 9.984_369_578_019_572e-6,
+        1.505_632_735_149_311_6e-7,
+    ];
+    if x < 0.5 {
+        std::f64::consts::PI / ((std::f64::consts::PI * x).sin() * gamma(1.0 - x))
+    } else {
+        let x = x - 1.0;
+        let mut a = G[0];
+        let t = x + 7.5;
+        for (i, &g) in G.iter().enumerate().skip(1) {
+            a += g / (x + i as f64);
+        }
+        std::f64::consts::TAU.sqrt() * t.powf(x + 0.5) * (-t).exp() * a
+    }
+}
+
+fn rotate_str(s: &str, n: i64) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    if len == 0 {
+        return String::new();
+    }
+    let shift = n.rem_euclid(len as i64) as usize;
+    chars[shift..].iter().chain(&chars[..shift]).collect()
+}
+
+fn sentence_case(s: &str) -> String {
+    let lower = s.to_lowercase();
+    let mut ch = lower.chars();
+    match ch.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + ch.as_str(),
+        None => String::new(),
+    }
+}
+
+fn dedup_chars(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev = None;
+    for c in s.chars() {
+        if Some(c) != prev {
+            out.push(c);
+            prev = Some(c);
+        }
+    }
+    out
+}
+
+fn hamming(a: &str, b: &str) -> Result<i64, String> {
+    let (ac, bc): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if ac.len() != bc.len() {
+        return Err("hamming.distance: the strings must have the same length".to_string());
+    }
+    Ok(ac.iter().zip(&bc).filter(|(x, y)| x != y).count() as i64)
+}
+
+fn levenshtein(a: &str, b: &str) -> i64 {
+    let ac: Vec<char> = a.chars().collect();
+    let bc: Vec<char> = b.chars().collect();
+    let (m, n) = (ac.len(), bc.len());
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut cur = vec![0usize; n + 1];
+    for i in 1..=m {
+        cur[0] = i;
+        for j in 1..=n {
+            let cost = usize::from(ac[i - 1] != bc[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[n] as i64
+}
+
+fn soundex(s: &str) -> String {
+    let code = |c: char| match c.to_ascii_uppercase() {
+        'B' | 'F' | 'P' | 'V' => '1',
+        'C' | 'G' | 'J' | 'K' | 'Q' | 'S' | 'X' | 'Z' => '2',
+        'D' | 'T' => '3',
+        'L' => '4',
+        'M' | 'N' => '5',
+        'R' => '6',
+        _ => '0',
+    };
+    let letters: Vec<char> = s.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    if letters.is_empty() {
+        return "0000".to_string();
+    }
+    let first = letters[0].to_ascii_uppercase();
+    let mut out = String::from(first);
+    let mut prev = code(first);
+    for &c in &letters[1..] {
+        let d = code(c);
+        if d != '0' && d != prev {
+            out.push(d);
+            if out.len() == 4 {
+                break;
+            }
+        }
+        if !matches!(c.to_ascii_uppercase(), 'H' | 'W') {
+            prev = d;
+        }
+    }
+    while out.len() < 4 {
+        out.push('0');
+    }
+    out
+}
+
+fn syllables(s: &str) -> i64 {
+    let mut total = 0;
+    for w in s.split_whitespace() {
+        let mut count = 0;
+        let mut prev_vowel = false;
+        for c in w.chars() {
+            let v = "aeiouyAEIOUY".contains(c);
+            if v && !prev_vowel {
+                count += 1;
+            }
+            prev_vowel = v;
+        }
+        total += count.max(1);
+    }
+    total
+}
+
+// ---- batch G3 helpers ----
+
+fn abbreviate_number(n: f64) -> String {
+    let abs = n.abs();
+    let (v, suffix) = if abs >= 1e12 {
+        (n / 1e12, "T")
+    } else if abs >= 1e9 {
+        (n / 1e9, "B")
+    } else if abs >= 1e6 {
+        (n / 1e6, "M")
+    } else if abs >= 1e3 {
+        (n / 1e3, "k")
+    } else {
+        (n, "")
+    };
+    if suffix.is_empty() {
+        format_real(n)
+    } else {
+        format!("{:.1}{}", v, suffix)
+    }
+}
+
+fn gray_decode(g: i64) -> i64 {
+    let mut n = g;
+    let mut m = g >> 1;
+    while m != 0 {
+        n ^= m;
+        m >>= 1;
+    }
+    n
+}
+
+fn ean_check(s: &str) -> Result<i64, String> {
+    let digits: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
+    if digits.len() != 12 {
+        return Err("ean.check_digit: it needs exactly 12 digits".to_string());
+    }
+    let sum: u32 = digits.iter().enumerate().map(|(i, &d)| if i % 2 == 0 { d } else { d * 3 }).sum();
+    Ok(i64::from((10 - (sum % 10)) % 10))
+}
+
+fn cardtype(number: &str) -> String {
+    let d: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
+    let two = d.get(..2).and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
+    (if d.starts_with('4') {
+        "Visa"
+    } else if (51..=55).contains(&two) {
+        "Mastercard"
+    } else if d.starts_with("34") || d.starts_with("37") {
+        "American Express"
+    } else if d.starts_with("6011") || d.starts_with("65") {
+        "Discover"
+    } else {
+        "Unknown"
+    })
+    .to_string()
+}
+
+fn happy_is(n: i64) -> bool {
+    if n < 1 {
+        return false;
+    }
+    let mut n = n;
+    let mut seen = std::collections::HashSet::new();
+    while n != 1 && seen.insert(n) {
+        let mut s = 0;
+        let mut m = n;
+        while m > 0 {
+            let d = m % 10;
+            s += d * d;
+            m /= 10;
+        }
+        n = s;
+    }
+    n == 1
+}
+
+fn lucas(n: i64) -> Result<i64, String> {
+    if n < 0 {
+        return Err("lucas.number: the position cannot be negative".to_string());
+    }
+    let (mut a, mut b) = (2i64, 1i64);
+    for _ in 0..n {
+        let t = a.checked_add(b).ok_or(OVERFLOW)?;
+        a = b;
+        b = t;
+    }
+    Ok(a)
+}
+
+fn tribonacci(n: i64) -> Result<i64, String> {
+    if n < 0 {
+        return Err("tribonacci.number: the position cannot be negative".to_string());
+    }
+    let mut v = [0i64, 1, 1];
+    if (n as usize) < 3 {
+        return Ok(v[n as usize]);
+    }
+    for _ in 3..=n {
+        let t = v[0].checked_add(v[1]).and_then(|x| x.checked_add(v[2])).ok_or(OVERFLOW)?;
+        v = [v[1], v[2], t];
+    }
+    Ok(v[2])
+}
+
+fn padovan(n: i64) -> Result<i64, String> {
+    if n < 0 {
+        return Err("padovan.number: the position cannot be negative".to_string());
+    }
+    let mut v = [1i64, 1, 1];
+    if (n as usize) < 3 {
+        return Ok(1);
+    }
+    for _ in 3..=n {
+        let t = v[0].checked_add(v[1]).ok_or(OVERFLOW)?;
+        v = [v[1], v[2], t];
+    }
+    Ok(v[2])
+}
+
+fn primorial(n: i64) -> Result<i64, String> {
+    if n < 0 {
+        return Err("primorial.of: the count cannot be negative".to_string());
+    }
+    let mut prod = 1i64;
+    let mut count = 0;
+    let mut c = 1;
+    while count < n {
+        c += 1;
+        if is_prime(c) {
+            prod = prod.checked_mul(c).ok_or(OVERFLOW)?;
+            count += 1;
+        }
+    }
+    Ok(prod)
+}
+
+fn primecount(n: i64) -> i64 {
+    (2..n).filter(|&k| is_prime(k)).count() as i64
+}
+
+fn prevprime(n: i64) -> Result<i64, String> {
+    let mut c = n - 1;
+    while c >= 2 {
+        if is_prime(c) {
+            return Ok(c);
+        }
+        c -= 1;
+    }
+    Err("prevprime.before: there is no prime below this".to_string())
+}
+
+fn lcm2(a: i64, b: i64) -> Result<i64, String> {
+    let g = gcd(a, b);
+    if g == 0 {
+        return Ok(0);
+    }
+    (a / g).checked_mul(b).map(i64::abs).ok_or_else(|| OVERFLOW.to_string())
+}
+
+fn lcm3(a: i64, b: i64, c: i64) -> Result<i64, String> {
+    lcm2(lcm2(a, b)?, c)
+}
+
+fn a1z26_encode(s: &str) -> String {
+    s.split_whitespace()
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_ascii_alphabetic())
+                .map(|c| (c.to_ascii_lowercase() as u8 - b'a' + 1).to_string())
+                .collect::<Vec<_>>()
+                .join("-")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn a1z26_decode(s: &str) -> Result<String, String> {
+    let mut words = Vec::new();
+    for w in s.split_whitespace() {
+        let mut word = String::new();
+        for tok in w.split('-').filter(|t| !t.is_empty()) {
+            let n: u8 = tok.parse().map_err(|_| format!("a1z26.decode: \"{}\" is not a number", tok))?;
+            if !(1..=26).contains(&n) {
+                return Err("a1z26.decode: the numbers must be 1 to 26".to_string());
+            }
+            word.push((b'a' + n - 1) as char);
+        }
+        words.push(word);
+    }
+    Ok(words.join(" "))
+}
+
+fn revbits(n: i64, width: i64) -> Result<i64, String> {
+    if !(1..=63).contains(&width) {
+        return Err("revbits.of: the width must be from 1 to 63".to_string());
+    }
+    let n = n as u64;
+    let mut r = 0i64;
+    for i in 0..width {
+        r |= (((n >> i) & 1) as i64) << (width - 1 - i);
+    }
+    Ok(r)
+}
+
+fn parse_hexcolor(s: &str) -> Result<(u8, u8, u8), String> {
+    let t = s.trim();
+    let h = t.strip_prefix('#').unwrap_or(t);
+    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("not a #rrggbb color: \"{}\"", s));
+    }
+    let n = u32::from_str_radix(h, 16).unwrap();
+    Ok(((n >> 16) as u8, (n >> 8) as u8, n as u8))
+}
+
+fn lum_perceived(s: &str) -> Result<f64, String> {
+    let (r, g, b) = parse_hexcolor(s)?;
+    Ok(0.2126 * r as f64 / 255.0 + 0.7152 * g as f64 / 255.0 + 0.0722 * b as f64 / 255.0)
+}
+
+fn rel_lum(s: &str) -> Result<f64, String> {
+    let (r, g, b) = parse_hexcolor(s)?;
+    let lin = |c: u8| {
+        let v = c as f64 / 255.0;
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    Ok(0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b))
+}
+
+fn collatz_peak(n: i64) -> Result<i64, String> {
+    if n < 1 {
+        return Err("collatzmax.peak: the number must be positive".to_string());
+    }
+    let mut m = n as i128;
+    let mut peak = m;
+    let mut steps = 0;
+    while m != 1 {
+        m = if m % 2 == 0 { m / 2 } else { 3 * m + 1 };
+        peak = peak.max(m);
+        steps += 1;
+        if steps > 10_000_000 {
+            return Err("collatzmax.peak: too many steps".to_string());
+        }
+    }
+    if peak > i64::MAX as i128 {
+        return Err(OVERFLOW.to_string());
+    }
+    Ok(peak as i64)
+}
+
 /// Tallies the items, returning a dictionary from each distinct value to its count.
 fn count_into(items: impl Iterator<Item = String>) -> Value {
     let mut d = Dict::default();
@@ -2803,6 +3206,589 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         // module "clock" (timestamp arithmetic)
         ClockAdd => Value::Int(int(&args[0]).checked_add(int(&args[1])).ok_or(OVERFLOW)?),
         ClockDiff => Value::Int(int(&args[0]).checked_sub(int(&args[1])).ok_or(OVERFLOW)?),
+
+        // ======== batch G1 ========
+        AccelGToMps2 => Value::Real(real(&args[0]) * 9.806_65),
+        AccelMps2ToG => Value::Real(real(&args[0]) / 9.806_65),
+        LuxFcToLux => Value::Real(real(&args[0]) * 10.763_910),
+        LuxLuxToFc => Value::Real(real(&args[0]) / 10.763_910),
+        RadGrayToRad => Value::Real(real(&args[0]) * 100.0),
+        RadRadToGray => Value::Real(real(&args[0]) / 100.0),
+        RadSvToRem => Value::Real(real(&args[0]) * 100.0),
+        RadRemToSv => Value::Real(real(&args[0]) / 100.0),
+        TurnToDeg => Value::Real(real(&args[0]) * 360.0),
+        TurnFromDeg => Value::Real(real(&args[0]) / 360.0),
+        TurnToRad => Value::Real(real(&args[0]) * std::f64::consts::TAU),
+        TurnFromRad => Value::Real(real(&args[0]) / std::f64::consts::TAU),
+        FlowLpmToM3h => Value::Real(real(&args[0]) * 0.06),
+        FlowM3hToLpm => Value::Real(real(&args[0]) / 0.06),
+        TypoPtToMm => Value::Real(real(&args[0]) * 0.352_777_778),
+        TypoMmToPt => Value::Real(real(&args[0]) / 0.352_777_778),
+        TypoPtToInch => Value::Real(real(&args[0]) / 72.0),
+        TypoInchToPt => Value::Real(real(&args[0]) * 72.0),
+        OvenCToGas => Value::Real((real(&args[0]) - 121.0) / 14.0),
+        OvenGasToC => Value::Real(real(&args[0]) * 14.0 + 121.0),
+        GlucMgdlToMmol => Value::Real(real(&args[0]) / 18.0182),
+        GlucMmolToMgdl => Value::Real(real(&args[0]) * 18.0182),
+        ScreenPpi => {
+            let d = real(&args[2]);
+            if d == 0.0 {
+                return Err("screen.ppi: the diagonal is zero".to_string());
+            }
+            Value::Real(real(&args[0]).hypot(real(&args[1])) / d)
+        }
+        AspectRatio => {
+            let h = real(&args[1]);
+            if h == 0.0 {
+                return Err("aspect.ratio: the height is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / h)
+        }
+        BeaufortFromKmh => Value::Int(beaufort(real(&args[0]))),
+        QuakeEnergy => Value::Real(10f64.powf(1.5 * real(&args[0]) + 4.8)),
+        WrapvInto => {
+            let (x, lo, hi) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(if (hi - lo).abs() < 1e-12 { lo } else { lo + (x - lo).rem_euclid(hi - lo) })
+        }
+        SmoothstepOf => {
+            let (e0, e1, x) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            let t = if e1 == e0 { 0.0 } else { ((x - e0) / (e1 - e0)).clamp(0.0, 1.0) };
+            Value::Real(t * t * (3.0 - 2.0 * t))
+        }
+        StepAt => Value::Real(if real(&args[1]) >= real(&args[0]) { 1.0 } else { 0.0 }),
+        SincOf => {
+            let x = real(&args[0]);
+            Value::Real(if x == 0.0 { 1.0 } else { x.sin() / x })
+        }
+        SigmoidOf => Value::Real(1.0 / (1.0 + (-real(&args[0])).exp())),
+        ReluOf => Value::Real(real(&args[0]).max(0.0)),
+        SoftsignOf => {
+            let x = real(&args[0]);
+            Value::Real(x / (1.0 + x.abs()))
+        }
+        GaussPdf => {
+            let (x, m, s) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            if s == 0.0 {
+                return Err("gauss.pdf: the deviation is zero".to_string());
+            }
+            let z = (x - m) / s;
+            Value::Real((-0.5 * z * z).exp() / (s * std::f64::consts::TAU.sqrt()))
+        }
+        ErfOf => Value::Real(erf(real(&args[0]))),
+        GammafOf => Value::Real(gamma(real(&args[0]))),
+        HarmonicNumber => {
+            let n = int(&args[0]);
+            if n < 0 {
+                return Err("harmonic.number: n cannot be negative".to_string());
+            }
+            Value::Real((1..=n).map(|k| 1.0 / k as f64).sum())
+        }
+        GeoseriesSum => {
+            let (a, r, n) = (real(&args[0]), real(&args[1]), int(&args[2]));
+            if n < 0 {
+                return Err("geoseries.sum: n cannot be negative".to_string());
+            }
+            Value::Real(if (r - 1.0).abs() < 1e-12 { a * n as f64 } else { a * (1.0 - r.powi(n as i32)) / (1.0 - r) })
+        }
+        ArithseriesSum => {
+            let (a, d, n) = (real(&args[0]), real(&args[1]), int(&args[2]));
+            if n < 0 {
+                return Err("arithseries.sum: n cannot be negative".to_string());
+            }
+            let nf = n as f64;
+            Value::Real(nf / 2.0 * (2.0 * a + (nf - 1.0) * d))
+        }
+        ModuloWrap => {
+            let n = int(&args[1]);
+            if n == 0 {
+                return Err("modulo.wrap: the modulus is zero".to_string());
+            }
+            Value::Int(int(&args[0]).rem_euclid(n))
+        }
+        ModuloFloordiv => {
+            let n = int(&args[1]);
+            if n == 0 {
+                return Err("modulo.floordiv: division by zero".to_string());
+            }
+            Value::Int(int(&args[0]).div_euclid(n))
+        }
+        Hypot3Of => {
+            let (x, y, z) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real((x * x + y * y + z * z).sqrt())
+        }
+        ClampfBetween => Value::Real(real(&args[0]).max(real(&args[1])).min(real(&args[2]))),
+        FracPart => Value::Real(real(&args[0]).fract()),
+        FracWhole => Value::Real(real(&args[0]).trunc()),
+        ReciprocalOf => {
+            let x = real(&args[0]);
+            if x == 0.0 {
+                return Err("reciprocal.of: the number is zero".to_string());
+            }
+            Value::Real(1.0 / x)
+        }
+        PreciseLog1p => Value::Real(real(&args[0]).ln_1p()),
+        PreciseExpm1 => Value::Real(real(&args[0]).exp_m1()),
+        RotstrLeft => string(rotate_str(text(&args[0]), int(&args[1]))),
+        RotstrRight => string(rotate_str(text(&args[0]), -int(&args[1]))),
+        ZfillOf => string(pad(text(&args[0]), int(&args[1]), "0", true)),
+        NospacesOf => string(text(&args[0]).chars().filter(|c| !c.is_whitespace()).collect::<String>()),
+        DigitsonlyOf => string(text(&args[0]).chars().filter(|c| c.is_ascii_digit()).collect::<String>()),
+        LettersonlyOf => string(text(&args[0]).chars().filter(|c| c.is_alphabetic()).collect::<String>()),
+        DisemvowelOf => string(text(&args[0]).chars().filter(|c| !"aeiouAEIOU".contains(*c)).collect::<String>()),
+        ScreamingOf => string(case_join(text(&args[0]), '_').to_uppercase()),
+        DotcaseOf => string(case_join(text(&args[0]), '.')),
+        PathcaseOf => string(case_join(text(&args[0]), '/')),
+        SentencecaseOf => string(sentence_case(text(&args[0]))),
+        DedupChars => string(dedup_chars(text(&args[0]))),
+        ExpandtabsOf => string(text(&args[0]).replace('\t', &" ".repeat(int(&args[1]).max(0) as usize))),
+        Rot5Digits => string(
+            text(&args[0]).chars().map(|c| if c.is_ascii_digit() { (b'0' + ((c as u8 - b'0') + 5) % 10) as char } else { c }).collect::<String>(),
+        ),
+        HammingDistance => Value::Int(hamming(text(&args[0]), text(&args[1]))?),
+        LevenshteinDistance => Value::Int(levenshtein(text(&args[0]), text(&args[1]))),
+        SoundexOf => string(soundex(text(&args[0]))),
+        SyllablesCount => Value::Int(syllables(text(&args[0]))),
+        AvgwordAverage => {
+            let ws: Vec<&str> = text(&args[0]).split_whitespace().collect();
+            if ws.is_empty() {
+                Value::Real(0.0)
+            } else {
+                Value::Real(ws.iter().map(|w| w.chars().count()).sum::<usize>() as f64 / ws.len() as f64)
+            }
+        }
+        ReadtimeMinutes => Value::Real(text(&args[0]).split_whitespace().count() as f64 / 200.0),
+
+        // ======== batch G2 ========
+        KinVfinal => Value::Real(real(&args[0]) + real(&args[1]) * real(&args[2])),
+        KinDistance => {
+            let (v0, a, t) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(v0 * t + 0.5 * a * t * t)
+        }
+        ProjRange => Value::Real(real(&args[0]).powi(2) * (2.0 * real(&args[1]).to_radians()).sin() / 9.80665),
+        ProjMaxHeight => {
+            Value::Real(real(&args[0]).powi(2) * real(&args[1]).to_radians().sin().powi(2) / (2.0 * 9.80665))
+        }
+        ProjFlightTime => Value::Real(2.0 * real(&args[0]) * real(&args[1]).to_radians().sin() / 9.80665),
+        PendPeriod => Value::Real(std::f64::consts::TAU * (real(&args[0]) / 9.80665).sqrt()),
+        SpringPeriod => {
+            let k = real(&args[1]);
+            if k <= 0.0 {
+                return Err("spring.period: the stiffness must be positive".to_string());
+            }
+            Value::Real(std::f64::consts::TAU * (real(&args[0]) / k).sqrt())
+        }
+        SpringForce => Value::Real(real(&args[0]) * real(&args[1])),
+        LensFocal => {
+            let s = 1.0 / real(&args[0]) + 1.0 / real(&args[1]);
+            if s == 0.0 {
+                return Err("lens.focal: these distances have no focus".to_string());
+            }
+            Value::Real(1.0 / s)
+        }
+        LensDiopter => {
+            let f = real(&args[0]);
+            if f == 0.0 {
+                return Err("lens.diopter: the focal length is zero".to_string());
+            }
+            Value::Real(1.0 / f)
+        }
+        ResSeries | CapParallel => Value::Real(real(&args[0]) + real(&args[1])),
+        ResParallel | CapSeries => {
+            let (a, b2) = (real(&args[0]), real(&args[1]));
+            if a + b2 == 0.0 {
+                return Err("the two values sum to zero".to_string());
+            }
+            Value::Real(a * b2 / (a + b2))
+        }
+        BuoyForce => Value::Real(real(&args[0]) * real(&args[1]) * 9.80665),
+        SpecGravity => Value::Real(real(&args[0]) / 1000.0),
+        ThermoEnergy => Value::Real(real(&args[0]) * real(&args[1]) * real(&args[2])),
+        EfficiencyPercent => {
+            let i = real(&args[1]);
+            if i == 0.0 {
+                return Err("efficiency.percent: the input is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / i * 100.0)
+        }
+        WorkJoules | MomentOf | ImpulseOf => Value::Real(real(&args[0]) * real(&args[1])),
+        DopplerObserved => {
+            let (f, vs, vsound) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            if vsound - vs == 0.0 {
+                return Err("doppler.observed: the source travels at the speed of sound".to_string());
+            }
+            Value::Real(f * vsound / (vsound - vs))
+        }
+        EscapeVelocity => {
+            let r = real(&args[1]);
+            if r <= 0.0 {
+                return Err("escape.velocity: the radius must be positive".to_string());
+            }
+            Value::Real((2.0 * 6.674e-11 * real(&args[0]) / r).sqrt())
+        }
+        OrbitPeriod => {
+            let m = real(&args[1]);
+            if m <= 0.0 {
+                return Err("orbit.period: the mass must be positive".to_string());
+            }
+            Value::Real(std::f64::consts::TAU * (real(&args[0]).powi(3) / (6.674e-11 * m)).sqrt())
+        }
+        RedshiftZ => {
+            let rest = real(&args[1]);
+            if rest == 0.0 {
+                return Err("redshift.z: the rest wavelength is zero".to_string());
+            }
+            Value::Real((real(&args[0]) - rest) / rest)
+        }
+        LorentzFactor => {
+            let b2 = real(&args[0]) / 299_792_458.0;
+            if b2.abs() >= 1.0 {
+                return Err("lorentz.factor: the speed must be below the speed of light".to_string());
+            }
+            Value::Real(1.0 / (1.0 - b2 * b2).sqrt())
+        }
+        HalflifeRemaining => {
+            let hl = real(&args[2]);
+            if hl == 0.0 {
+                return Err("halflife.remaining: the half-life is zero".to_string());
+            }
+            Value::Real(real(&args[0]) * 0.5f64.powf(real(&args[1]) / hl))
+        }
+        DecayAmount => Value::Real(real(&args[0]) * (-real(&args[1]) * real(&args[2])).exp()),
+        GrowthAmount => Value::Real(real(&args[0]) * (real(&args[1]) * real(&args[2])).exp()),
+        Rule72Years => {
+            let r = real(&args[0]);
+            if r == 0.0 {
+                return Err("rule72.years: the rate is zero".to_string());
+            }
+            Value::Real(72.0 / r)
+        }
+        AnnuityPv => {
+            let (pmt, rate, n) = (real(&args[0]), real(&args[1]), int(&args[2]));
+            if n < 0 {
+                return Err("annuity.present_value: the periods cannot be negative".to_string());
+            }
+            let r = rate / 100.0;
+            Value::Real(if r == 0.0 { pmt * n as f64 } else { pmt * (1.0 - (1.0 + r).powi(-(n as i32))) / r })
+        }
+        BreakevenUnits => {
+            let (fixed, price, var) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            if price - var == 0.0 {
+                return Err("breakeven.units: the price equals the variable cost".to_string());
+            }
+            Value::Real(fixed / (price - var))
+        }
+        ProfitAmount => Value::Real(real(&args[0]) - real(&args[1])),
+        ProfitMargin => {
+            let rev = real(&args[0]);
+            if rev == 0.0 {
+                return Err("profit.margin: the revenue is zero".to_string());
+            }
+            Value::Real((rev - real(&args[1])) / rev * 100.0)
+        }
+        CommissionOf => Value::Real(real(&args[0]) * real(&args[1]) / 100.0),
+        WageWeekly => Value::Real(real(&args[0]) * real(&args[1])),
+        WageOvertime => {
+            let (hr, hours) = (real(&args[0]), real(&args[1]));
+            Value::Real(hours.min(40.0) * hr + (hours - 40.0).max(0.0) * hr * 1.5)
+        }
+        InflationAdjust => Value::Real(real(&args[0]) * (1.0 + real(&args[1]) / 100.0).powf(real(&args[2]))),
+        IdealweightForHeight => Value::Real(50.0 + 0.9 * (real(&args[0]) - 152.0)),
+        TdeeFromBmr => Value::Real(real(&args[0]) * real(&args[1])),
+        WaterDaily => Value::Real(real(&args[0]) * 35.0),
+        DosageByWeight => Value::Real(real(&args[0]) * real(&args[1])),
+        GforceTurn => {
+            let r = real(&args[1]);
+            if r <= 0.0 {
+                return Err("gforce.turn: the radius must be positive".to_string());
+            }
+            Value::Real(real(&args[0]).powi(2) / (r * 9.80665))
+        }
+        GearRatio => {
+            let d = real(&args[1]);
+            if d == 0.0 {
+                return Err("gear.ratio: the driver has zero teeth".to_string());
+            }
+            Value::Real(real(&args[0]) / d)
+        }
+        AutonomyDistance | EmissionsFromKm => Value::Real(real(&args[0]) * real(&args[1])),
+        SolarWatts => Value::Real(real(&args[0]) * real(&args[1]) * real(&args[2]) / 100.0),
+        BatteryRuntime => {
+            let d = real(&args[1]);
+            if d == 0.0 {
+                return Err("battery.runtime: the current draw is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / d)
+        }
+        LedResistor => {
+            let c = real(&args[2]);
+            if c == 0.0 {
+                return Err("led.resistor: the current is zero".to_string());
+            }
+            Value::Real((real(&args[0]) - real(&args[1])) / (c / 1000.0))
+        }
+        FreefallVelocity => Value::Real(9.80665 * real(&args[0])),
+        FreefallDistance => {
+            let t = real(&args[0]);
+            Value::Real(0.5 * 9.80665 * t * t)
+        }
+        TetraVolume => {
+            let e = real(&args[0]);
+            Value::Real(e * e * e / (6.0 * 2f64.sqrt()))
+        }
+        TetraSurface => {
+            let e = real(&args[0]);
+            Value::Real(3f64.sqrt() * e * e)
+        }
+        OctaVolume => {
+            let e = real(&args[0]);
+            Value::Real(2f64.sqrt() / 3.0 * e * e * e)
+        }
+        ParallelogramArea => Value::Real(real(&args[0]) * real(&args[1])),
+        RhombusArea => Value::Real(real(&args[0]) * real(&args[1]) / 2.0),
+        SectorArea => Value::Real(std::f64::consts::PI * real(&args[0]).powi(2) * real(&args[1]) / 360.0),
+        SectorArc => Value::Real(std::f64::consts::TAU * real(&args[0]) * real(&args[1]) / 360.0),
+        EllipsoidVolume => {
+            Value::Real(4.0 / 3.0 * std::f64::consts::PI * real(&args[0]) * real(&args[1]) * real(&args[2]))
+        }
+        NgonPerimeter => {
+            let n = int(&args[0]);
+            if n < 3 {
+                return Err("ngon.perimeter: a polygon needs at least 3 sides".to_string());
+            }
+            Value::Real(n as f64 * real(&args[1]))
+        }
+        NgonApothem => {
+            let n = int(&args[0]);
+            if n < 3 {
+                return Err("ngon.apothem: a polygon needs at least 3 sides".to_string());
+            }
+            Value::Real(real(&args[1]) / (2.0 * (std::f64::consts::PI / n as f64).tan()))
+        }
+        FrustumVolume => {
+            let (r1, r2, h) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(std::f64::consts::PI * h * (r1 * r1 + r1 * r2 + r2 * r2) / 3.0)
+        }
+        InclinePctToDeg => Value::Real((real(&args[0]) / 100.0).atan().to_degrees()),
+        InclineDegToPct => Value::Real(real(&args[0]).to_radians().tan() * 100.0),
+
+        // ======== batch G3 ========
+        ApproxEqual => Value::Bool((real(&args[0]) - real(&args[1])).abs() <= real(&args[2])),
+        ProportionSolve => {
+            let a = real(&args[0]);
+            if a == 0.0 {
+                return Err("proportion.solve: the first term is zero".to_string());
+            }
+            Value::Real(real(&args[1]) * real(&args[2]) / a)
+        }
+        MeansOf2 => Value::Real((real(&args[0]) + real(&args[1])) / 2.0),
+        MeansGeometric2 => {
+            let (a, b2) = (real(&args[0]), real(&args[1]));
+            if a < 0.0 || b2 < 0.0 {
+                return Err("means.geometric2: the values must be non-negative".to_string());
+            }
+            Value::Real((a * b2).sqrt())
+        }
+        MeansHarmonic2 => {
+            let (a, b2) = (real(&args[0]), real(&args[1]));
+            if a + b2 == 0.0 {
+                return Err("means.harmonic2: the values sum to zero".to_string());
+            }
+            Value::Real(2.0 * a * b2 / (a + b2))
+        }
+        BankersRound => Value::Int(real(&args[0]).round_ties_even() as i64),
+        PluralOf => {
+            let (w, n) = (text(&args[0]), int(&args[1]));
+            string(if n == 1 { w.to_string() } else { format!("{}s", w) })
+        }
+        AbbreviateNumber => string(abbreviate_number(real(&args[0]))),
+        GpaFromPercent => {
+            let p = real(&args[0]);
+            Value::Real(if p >= 90.0 { 4.0 } else if p >= 80.0 { 3.0 } else if p >= 70.0 { 2.0 } else if p >= 60.0 { 1.0 } else { 0.0 })
+        }
+        CurveGrade => {
+            let m = real(&args[1]);
+            if m == 0.0 {
+                return Err("curve.grade: the maximum is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / m * 100.0)
+        }
+        ZscoreOf => {
+            let s = real(&args[2]);
+            if s == 0.0 {
+                return Err("zscore.of: the deviation is zero".to_string());
+            }
+            Value::Real((real(&args[0]) - real(&args[1])) / s)
+        }
+        MinmaxnormOf => {
+            let (x, lo, hi) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            if hi == lo {
+                return Err("minmaxnorm.of: the range is empty".to_string());
+            }
+            Value::Real((x - lo) / (hi - lo))
+        }
+        Clamp01Of => Value::Real(real(&args[0]).clamp(0.0, 1.0)),
+        CerpOf => {
+            let (a, b2, t) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            let f = (1.0 - (t * std::f64::consts::PI).cos()) / 2.0;
+            Value::Real(a * (1.0 - f) + b2 * f)
+        }
+        NibbleHigh => Value::Int((int(&args[0]) >> 4) & 0xF),
+        NibbleLow => Value::Int(int(&args[0]) & 0xF),
+        ByteopsHigh => Value::Int((int(&args[0]) >> 8) & 0xFF),
+        ByteopsLow => Value::Int(int(&args[0]) & 0xFF),
+        EndianSwap16 => {
+            let n = int(&args[0]) & 0xFFFF;
+            Value::Int(((n & 0xFF) << 8) | ((n >> 8) & 0xFF))
+        }
+        EndianSwap32 => Value::Int((int(&args[0]) as u32).swap_bytes() as i64),
+        Nextpow2Of => {
+            let n = int(&args[0]);
+            Value::Int(if n < 1 { 1 } else { (n as u64).next_power_of_two() as i64 })
+        }
+        Ispow2Of => {
+            let n = int(&args[0]);
+            Value::Bool(n > 0 && (n & (n - 1)) == 0)
+        }
+        AlignUp => {
+            let a = int(&args[1]);
+            if a <= 0 {
+                return Err("align.up: the alignment must be positive".to_string());
+            }
+            Value::Int((int(&args[0]) + a - 1).div_euclid(a) * a)
+        }
+        AlignDown => {
+            let a = int(&args[1]);
+            if a <= 0 {
+                return Err("align.down: the alignment must be positive".to_string());
+            }
+            Value::Int(int(&args[0]).div_euclid(a) * a)
+        }
+        GraycodeEncode => {
+            let n = int(&args[0]);
+            Value::Int(n ^ (n >> 1))
+        }
+        GraycodeDecode => Value::Int(gray_decode(int(&args[0]))),
+        EanCheckDigit => Value::Int(ean_check(text(&args[0]))?),
+        CardtypeOf => string(cardtype(text(&args[0]))),
+        HumidexOf => {
+            let (t, dp) = (real(&args[0]), real(&args[1]));
+            let e = 6.11 * (5417.7530 * (1.0 / 273.16 - 1.0 / (dp + 273.15))).exp();
+            Value::Real(t + 0.5555 * (e - 10.0))
+        }
+        PhFromConcentration => {
+            let h = real(&args[0]);
+            if h <= 0.0 {
+                return Err("ph.from_concentration: the concentration must be positive".to_string());
+            }
+            Value::Real(-h.log10())
+        }
+        PhConcentration => Value::Real(10f64.powf(-real(&args[0]))),
+        SoundAdd => {
+            let (d1, d2) = (real(&args[0]), real(&args[1]));
+            Value::Real(10.0 * (10f64.powf(d1 / 10.0) + 10f64.powf(d2 / 10.0)).log10())
+        }
+        NoteFrequency => Value::Real(440.0 * 2f64.powf(real(&args[0]) / 12.0)),
+        NoteCents => {
+            let (f1, f2) = (real(&args[0]), real(&args[1]));
+            if f1 <= 0.0 || f2 <= 0.0 {
+                return Err("note.cents: the frequencies must be positive".to_string());
+            }
+            Value::Real(1200.0 * (f2 / f1).log2())
+        }
+        ProbAnd => Value::Real(real(&args[0]) * real(&args[1])),
+        ProbOr => {
+            let (a, b2) = (real(&args[0]), real(&args[1]));
+            Value::Real(a + b2 - a * b2)
+        }
+        ProbInvert => Value::Real(1.0 - real(&args[0])),
+        OddsToProb => {
+            let o = real(&args[0]);
+            Value::Real(o / (1.0 + o))
+        }
+        OddsFromProb => {
+            let p = real(&args[0]);
+            if p >= 1.0 {
+                return Err("odds.from_prob: the probability must be below 1".to_string());
+            }
+            Value::Real(p / (1.0 - p))
+        }
+        CollatzmaxPeak => Value::Int(collatz_peak(int(&args[0]))?),
+        HappyIs => Value::Bool(happy_is(int(&args[0]))),
+        AliquotIsAbundant => {
+            let n = int(&args[0]);
+            Value::Bool(n >= 1 && (divisor_sum(n)? - n) > n)
+        }
+        AliquotIsDeficient => {
+            let n = int(&args[0]);
+            Value::Bool(n >= 1 && (divisor_sum(n)? - n) < n)
+        }
+        AliquotIsPerfect => {
+            let n = int(&args[0]);
+            Value::Bool(n >= 1 && (divisor_sum(n)? - n) == n)
+        }
+        PolygonalNumber => {
+            let (s, n) = (int(&args[0]), int(&args[1]));
+            if s < 3 {
+                return Err("polygonal.number: a polygon needs at least 3 sides".to_string());
+            }
+            Value::Int(((s - 2) * n * n - (s - 4) * n) / 2)
+        }
+        PronicNumber => {
+            let n = int(&args[0]);
+            Value::Int(n.checked_mul(n + 1).ok_or(OVERFLOW)?)
+        }
+        PentagonalNumber => {
+            let n = int(&args[0]);
+            Value::Int(n * (3 * n - 1) / 2)
+        }
+        HexagonalNumber => {
+            let n = int(&args[0]);
+            Value::Int(n * (2 * n - 1))
+        }
+        StarNumber => {
+            let n = int(&args[0]);
+            Value::Int(6 * n * (n - 1) + 1)
+        }
+        LucasNumber => Value::Int(lucas(int(&args[0]))?),
+        TribonacciNumber => Value::Int(tribonacci(int(&args[0]))?),
+        PadovanNumber => Value::Int(padovan(int(&args[0]))?),
+        PrimorialOf => Value::Int(primorial(int(&args[0]))?),
+        PrimecountBelow => Value::Int(primecount(int(&args[0]))),
+        PrevprimeBefore => Value::Int(prevprime(int(&args[0]))?),
+        CoprimeAre => Value::Bool(gcd(int(&args[0]), int(&args[1])) == 1),
+        AmicableAre => {
+            let (a, b2) = (int(&args[0]), int(&args[1]));
+            if a < 1 || b2 < 1 || a == b2 {
+                Value::Bool(false)
+            } else {
+                Value::Bool((divisor_sum(a)? - a) == b2 && (divisor_sum(b2)? - b2) == a)
+            }
+        }
+        MultiGcd3 => Value::Int(gcd(gcd(int(&args[0]), int(&args[1])), int(&args[2]))),
+        MultiLcm3 => Value::Int(lcm3(int(&args[0]), int(&args[1]), int(&args[2]))?),
+        A1z26Encode => string(a1z26_encode(text(&args[0]))),
+        A1z26Decode => string(a1z26_decode(text(&args[0]))?),
+        RevbitsOf => Value::Int(revbits(int(&args[0]), int(&args[1]))?),
+        LuminanceOf => Value::Real(lum_perceived(text(&args[0]))?),
+        ContrastRatio => {
+            let (l1, l2) = (rel_lum(text(&args[0]))?, rel_lum(text(&args[1]))?);
+            let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+            Value::Real((hi + 0.05) / (lo + 0.05))
+        }
+        SplitbillPerPerson => {
+            let p = int(&args[1]);
+            if p <= 0 {
+                return Err("splitbill.per_person: there must be at least one person".to_string());
+            }
+            Value::Real(real(&args[0]) / p as f64)
+        }
+        ElapsedPercent => {
+            let t = real(&args[1]);
+            if t == 0.0 {
+                return Err("elapsed.percent: the total is zero".to_string());
+            }
+            Value::Real(real(&args[0]) / t * 100.0)
+        }
         HashSha256 => {
             use sha2::{Digest, Sha256};
             string(hex(Sha256::digest(text(&args[0]).as_bytes())))

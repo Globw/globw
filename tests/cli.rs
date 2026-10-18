@@ -223,6 +223,17 @@ fn builtin_module_text_regex_extras() {
 }
 
 #[test]
+fn builtin_modules_batch_g() {
+    let dir = std::env::temp_dir().join("globw_batch_g_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import lucas\nimport soundex\nimport contrast\nimport primorial\n\
+               output(lucas.number(10), \" \", soundex.of(\"Robert\"), \" \", round_to(contrast.ratio(\"#000000\", \"#ffffff\"), 1), \" \", primorial.of(5))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "123 R163 21.0 2310\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_modules_table_iter_clock() {
     let dir = std::env::temp_dir().join("globw_table_iter_test");
     std::fs::create_dir_all(&dir).unwrap();
