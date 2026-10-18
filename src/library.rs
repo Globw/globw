@@ -265,7 +265,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             arity(1)?;
             match collection(a[0]) {
                 Some(e) if numeric(e) => ok(none(1), Type::Grid),
-                _ => other("grid.of works with an array or list of numbers"),
+                _ => other("nungw.of works with an array or list of numbers"),
             }
         }
         GridSize => {
@@ -486,7 +486,7 @@ fn to_json_value(v: &Value) -> Result<Json, String> {
         Value::Floats(g) => Json::Array(
             g.borrow()
                 .iter()
-                .map(|&x| serde_json::Number::from_f64(x).map(Json::Number).ok_or_else(|| "a grid value has no JSON form".to_string()))
+                .map(|&x| serde_json::Number::from_f64(x).map(Json::Number).ok_or_else(|| "a nungw value has no JSON form".to_string()))
                 .collect::<Result<_, _>>()?,
         ),
         Value::Set(d) => Json::Array(d.borrow().keys().map(|k| to_json_value(&k.value())).collect::<Result<_, _>>()?),
@@ -1905,7 +1905,7 @@ fn quadratic_root(a: f64, b: f64, c: f64, plus: bool) -> Result<f64, String> {
 fn floats(v: &Value) -> &Rc<RefCell<Vec<f64>>> {
     match v {
         Value::Floats(g) => g,
-        other => panic!("internal error: expected a grid, found {:?}", other),
+        other => panic!("internal error: expected a nungw, found {:?}", other),
     }
 }
 
@@ -1920,7 +1920,7 @@ fn grid_map(v: &Value, f: impl Fn(f64) -> f64 + Sync + Send) -> Value {
 fn grid_zip(a: &Value, b: &Value, f: impl Fn(f64, f64) -> f64 + Sync + Send) -> Result<Value, String> {
     let (va, vb) = (floats(a).borrow(), floats(b).borrow());
     if va.len() != vb.len() {
-        return Err(format!("grid: the sizes differ ({} and {})", va.len(), vb.len()));
+        return Err(format!("nungw: the sizes differ ({} and {})", va.len(), vb.len()));
     }
     Ok(grid_val(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| f(x, y)).collect()))
 }
@@ -1951,11 +1951,11 @@ fn parse_program(src: &str) -> Result<Vec<Micro>, String> {
             "ab" => Ok(Micro::Abs),
             _ => {
                 if let Some(k) = t.strip_prefix('l') {
-                    k.parse().map(Micro::Leaf).map_err(|_| "grid: bad kernel".to_string())
+                    k.parse().map(Micro::Leaf).map_err(|_| "nungw: bad kernel".to_string())
                 } else if let Some(k) = t.strip_prefix('s') {
-                    k.parse().map(Micro::Scalar).map_err(|_| "grid: bad kernel".to_string())
+                    k.parse().map(Micro::Scalar).map_err(|_| "nungw: bad kernel".to_string())
                 } else {
-                    Err(format!("grid: bad kernel token \"{}\"", t))
+                    Err(format!("nungw: bad kernel token \"{}\"", t))
                 }
             }
         })
@@ -2010,7 +2010,7 @@ fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
     let scalars: Vec<f64> = rest.iter().filter(|v| !matches!(v, Value::Floats(_))).map(real).collect();
     let n = leaves.first().map_or(0, |l| l.len());
     if leaves.iter().any(|l| l.len() != n) {
-        return Err("grid: the grids in an expression must have the same size".to_string());
+        return Err("nungw: the arrays in an expression must have the same size".to_string());
     }
     Ok(grid_val((0..n).into_par_iter().map(|i| run_program(&program, &leaves, &scalars, i)).collect()))
 }
@@ -3287,7 +3287,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             let i = int(&args[1]);
             let g = floats(&args[0]).borrow();
             if i < 1 || i as usize > g.len() {
-                return Err(format!("grid.get: there is no element number {}", i));
+                return Err(format!("nungw.get: there is no element number {}", i));
             }
             Value::Real(g[i as usize - 1])
         }
@@ -3295,7 +3295,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             let (i, val) = (int(&args[1]), real(&args[2]));
             let mut g = floats(&args[0]).borrow_mut();
             if i < 1 || i as usize > g.len() {
-                return Err(format!("grid.set: there is no element number {}", i));
+                return Err(format!("nungw.set: there is no element number {}", i));
             }
             g[i as usize - 1] = val;
             Value::Null
@@ -3337,7 +3337,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         GridMean => {
             let g = floats(&args[0]).borrow();
             if g.is_empty() {
-                return Err("grid.mean: the grid is empty".to_string());
+                return Err("nungw.mean: the nungw is empty".to_string());
             }
             Value::Real(g.par_iter().sum::<f64>() / g.len() as f64)
         }
@@ -3346,7 +3346,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         GridDot => {
             let (va, vb) = (floats(&args[0]).borrow(), floats(&args[1]).borrow());
             if va.len() != vb.len() {
-                return Err(format!("grid.dot: the sizes differ ({} and {})", va.len(), vb.len()));
+                return Err(format!("nungw.dot: the sizes differ ({} and {})", va.len(), vb.len()));
             }
             Value::Real(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| x * y).sum())
         }

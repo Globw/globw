@@ -376,15 +376,15 @@ impl Parser {
         if self.is_name("tuple") {
             return Ok((Shape::Scalar, BaseType::Int, self.tuple_type_spec()?));
         }
-        if self.is_name("grid") {
+        if self.is_name("nungw") {
             self.advance();
             if !self.is_name("of") {
-                return self.fail("expected \"of\", like grid of float");
+                return self.fail("expected \"of\", like nungw of float");
             }
             self.advance();
             let p = self.pos();
             if self.base_type()? != BaseType::Real {
-                return Err(Error::new(p, "a grid holds floats: write grid of float"));
+                return Err(Error::new(p, "a nungw holds floats: write nungw of float"));
             }
             return Ok((Shape::Scalar, BaseType::Int, Type::Grid));
         }

@@ -266,10 +266,10 @@ fn repr_at(v: &Value, depth: usize) -> String {
         Value::Floats(g) => {
             let g = g.borrow();
             if g.len() <= 8 {
-                format!("grid[{}]", g.iter().map(|x| format_real(*x)).collect::<Vec<_>>().join(", "))
+                format!("nungw[{}]", g.iter().map(|x| format_real(*x)).collect::<Vec<_>>().join(", "))
             } else {
                 let head = g.iter().take(6).map(|x| format_real(*x)).collect::<Vec<_>>().join(", ");
-                format!("grid[{}, ... {} floats]", head, g.len())
+                format!("nungw[{}, ... {} floats]", head, g.len())
             }
         }
     }

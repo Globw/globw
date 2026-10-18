@@ -331,7 +331,7 @@ impl Type {
             Type::None => "none",
             Type::Set(_) => "a set",
             Type::Tuple(_) => "a tuple",
-            Type::Grid => "a grid",
+            Type::Grid => "a nungw",
         }
     }
 
@@ -370,7 +370,7 @@ impl Type {
             Type::Array(_) => "arrays".to_string(),
             Type::Matrix(_) => "matrices".to_string(),
             Type::Object(id) => format!("{} objects", class_name(id)),
-            Type::Grid => "grids".to_string(),
+            Type::Grid => "nungws".to_string(),
             _ => "values".to_string(),
         }
     }

@@ -1,0 +1,12 @@
+' The nungw engine: a first-class "nungw of float" worked on in parallel.
+import nungw
+variables:
+    a, b, c as nungw of float
+a = nungw.of([1.0, 2.0, 3.0, 4.0])
+b = nungw.of([10.0, 20.0, 30.0, 40.0])
+c = a * 2.0 + b                      ' operators work element-wise (fused)
+output(nungw.to_list(c))
+output(a[1], " ", a[4])              ' indexing is 1-based
+output(nungw.sum(a), " ", nungw.dot(a, b), " ", nungw.norm(a))
+c = nungw.sqrt(a) * 10.0
+output(nungw.to_list(c))

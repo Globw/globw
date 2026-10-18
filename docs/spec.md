@@ -638,44 +638,45 @@ Most of these are plain functions whose errors (a bad number, a missing file, a 
 - **Hashes & checks:** `fnv`, `djb2`, `sdbm`, `adler`, `ipv4`, `mac`, `hexcolor`, `weburl`, `grade`, `logic`, `yesno`, `scientific`, `fraction`.
 - **Randomness & ids:** `dice`, `coin`, `pick`, `token`, `password`, `nanoid`, `otp`, `lorem`, `randcolor`.
 
-**The array engine (`grid`).** For heavy number crunching, `grid of float` is a
+**The array engine (`nungw`).** For heavy number crunching, `nungw of float` is a
 first-class type: a one-dimensional array of floats kept in contiguous memory and
-worked on across every CPU core. `import grid` to use it. The usual operators
-work element-wise, and `g[i]` reads an element (1-based).
+worked on across every CPU core. `import nungw` to use it. The usual operators
+work element-wise, and `g[i]` reads an element (1-based). (The name is Globw's own
+take on the idea a tool like NumPy covers.)
 
 ```
-import grid
+import nungw
 variables:
-    a, c as grid of float
-a = grid.range(10000000)             ' 0, 1, 2, ... as a fast float array
-c = grid.sqrt(a) * 1.5 - a / 3.0     ' operators work element-wise
-output(c[1], " ", grid.sum(c))       ' index (1-based) and a reduction
+    a, c as nungw of float
+a = nungw.range(10000000)            ' 0, 1, 2, ... as a fast float array
+c = nungw.sqrt(a) * 1.5 - a / 3.0    ' operators work element-wise (fused)
+output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 ```
 
-- **Operators:** `a + b`, `a - b`, `a * b`, `a / b` between two grids, and between a
-  grid and a number (`a * 2.0`, `100.0 - a`), all element-wise, giving a new grid.
-- **Indexing:** `g[i]` reads the i-th float (1-based). `grid.set(g, i, v)` writes one.
+- **Operators:** `a + b`, `a - b`, `a * b`, `a / b` between two nungws, and between a
+  nungw and a number (`a * 2.0`, `100.0 - a`), all element-wise, giving a new nungw.
+- **Indexing:** `g[i]` reads the i-th float (1-based). `nungw.set(g, i, v)` writes one.
 
 | Function | Purpose |
 |---|---|
-| `grid.range(n)`, `grid.zeros(n)`, `grid.fill(n, v)`, `grid.of(list)` | build a grid |
-| `grid.size(g)`, `grid.get(g, i)`, `grid.set(g, i, v)`, `grid.to_list(g)` | inspect, read, change, read back |
-| `grid.sqrt/square/abs(g)` | element-wise, giving a new grid (same as the operators) |
-| `grid.sum/mean/max/min(g)`, `grid.dot(a, b)`, `grid.sum_squares(g)`, `grid.norm(g)` | reductions to a single number |
+| `nungw.range(n)`, `nungw.zeros(n)`, `nungw.fill(n, v)`, `nungw.of(list)` | build one |
+| `nungw.size(g)`, `nungw.get(g, i)`, `nungw.set(g, i, v)`, `nungw.to_list(g)` | inspect, read, change, read back |
+| `nungw.sqrt/square/abs(g)` | element-wise, giving a new array (same as the operators) |
+| `nungw.sum/mean/max/min(g)`, `nungw.dot(a, b)`, `nungw.sum_squares(g)`, `nungw.norm(g)` | reductions to a single number |
 
-Grids are values: a temporary made by an operator frees itself when it is no
+A nungw is a value: a temporary made by an operator frees itself when it is no
 longer used, so loops do not leak. The reductions `sum_squares`, `norm` and `dot`
 are **fused** — one pass over memory, no temporary array.
 
-**Fusion.** An element-wise expression assigned to a grid, like
-`c = grid.sqrt(a) * 1.5 - a / 3.0`, is compiled into **one** kernel that runs in a
-single parallel pass with no temporary grids — not one pass per operator.
+**Fusion.** An element-wise expression assigned to a nungw, like
+`c = nungw.sqrt(a) * 1.5 - a / 3.0`, is compiled into **one** kernel that runs in a
+single parallel pass with no temporary arrays — not one pass per operator.
 
-**Speed.** On a 10-million element grid, against NumPy (16 cores):
-- `grid.sum_squares(a)` runs in ~0.36 ms, vs NumPy `np.sum(a**2)` ~14 ms and `np.einsum` ~2 ms.
-- the fused expression `grid.sqrt(a) * 1.5 - a / 3.0` runs in ~13 ms, vs ~41 ms for the same NumPy expression (~3x).
+**Speed.** On a 10-million element array, against NumPy (16 cores):
+- `nungw.sum_squares(a)` runs in ~0.36 ms, vs NumPy `np.sum(a**2)` ~14 ms and `np.einsum` ~2 ms.
+- the fused expression `nungw.sqrt(a) * 1.5 - a / 3.0` runs in ~13 ms, vs ~41 ms for the same NumPy expression (~3x).
 
-Globw wins because grids are contiguous unboxed floats worked on across every
+Globw wins because the arrays are contiguous unboxed floats worked on across every
 core, while NumPy's element-wise operations are single-threaded (and build
 temporaries). The fused expression is still interpreted per element; compiling
 each kernel to machine code (a JIT) would take it close to the memory-bandwidth

@@ -424,7 +424,7 @@ impl<'p> Checker<'p> {
         if self.var(p).full_type() == Type::Grid {
             self.check_assigned(p, name, pos);
             if idx.len() != 1 {
-                self.report(Error::new(pos, format!("a grid needs exactly 1 index, like {}[i]", name)));
+                self.report(Error::new(pos, format!("a nungw needs exactly 1 index, like {}[i]", name)));
                 return unknown(pos);
             }
             let g = TExpr { kind: TExprKind::Load(p), ty: Type::Grid, pos };
@@ -584,7 +584,7 @@ impl<'p> Checker<'p> {
                 Mul => grid(Builtin::GridMul, vec![a, b]),
                 Div => grid(Builtin::GridDiv, vec![a, b]),
                 _ => {
-                    self.report(Error::new(pos, format!("cannot use {} between two grids", symbol(op))));
+                    self.report(Error::new(pos, format!("cannot use {} between two nungws", symbol(op))));
                     unknown(pos)
                 }
             };
@@ -592,7 +592,7 @@ impl<'p> Checker<'p> {
         // one side is a grid, the other a number
         let (g, scalar, grid_left) = if a.ty == Type::Grid { (a, b, true) } else { (b, a, false) };
         if scalar.ty.base().map_or(true, |t| !matches!(t, BaseType::Int | BaseType::Real)) {
-            self.report(Error::new(pos, format!("cannot use {} between a grid and {}", symbol(op), scalar.ty.name())));
+            self.report(Error::new(pos, format!("cannot use {} between a nungw and {}", symbol(op), scalar.ty.name())));
             return unknown(pos);
         }
         let s = convert(scalar, Some(BaseType::Real));
@@ -604,7 +604,7 @@ impl<'p> Checker<'p> {
             (Div, true) => grid(Builtin::GridDivScalar, vec![g, s]),
             (Div, false) => grid(Builtin::GridScalarDiv, vec![g, s]),
             _ => {
-                self.report(Error::new(pos, format!("cannot use {} between a grid and a number", symbol(op))));
+                self.report(Error::new(pos, format!("cannot use {} between a nungw and a number", symbol(op))));
                 unknown(pos)
             }
         }
