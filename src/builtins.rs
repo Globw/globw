@@ -667,6 +667,11 @@ pub enum Builtin {
     DbValue,
     DbQuery,
     DbClose,
+    // module "serve" (HTTP server)
+    ServeStart,
+    ServeWait,
+    ServeReply,
+    ServeStop,
 }
 
 use Builtin::*;
@@ -1475,6 +1480,12 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (DbValue, "db.value", Sig::Fixed(&[I, S], Some(Str))),
     (DbQuery, "db.query", Sig::Fixed(&[I, S], Some(Str))),
     (DbClose, "db.close", Sig::Fixed(&[I], None)),
+
+    // module "serve" (HTTP server)
+    (ServeStart, "serve.start", Sig::Fixed(&[I], Some(Int))),
+    (ServeWait, "serve.wait", Sig::Fixed(&[I], Some(Str))),
+    (ServeReply, "serve.reply", Sig::Fixed(&[I, I, S], None)),
+    (ServeStop, "serve.stop", Sig::Fixed(&[I], None)),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1532,8 +1543,8 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "humidex", "ph", "sound", "note", "prob", "odds", "collatzmax", "happy", "aliquot", "polygonal", "pronic",
     "pentagonal", "hexagonal", "star", "lucas", "tribonacci", "padovan", "primorial", "primecount", "prevprime",
     "coprime", "amicable", "multi", "a1z26", "revbits", "luminance", "contrast", "splitbill", "elapsed",
-    // databases
-    "db",
+    // databases and servers
+    "db", "serve",
 ];
 
 pub fn is_builtin_module(name: &str) -> bool {

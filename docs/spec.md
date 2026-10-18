@@ -734,6 +734,33 @@ db.close(c)
 - `db.close(c)` closes the connection.
 - SQL errors, a bad query or a closed handle become catchable run-time errors. (The SQL is sent as written; build it carefully.)
 
+**Web server (`serve`).** `import serve` runs an HTTP server. It is synchronous:
+the program takes one request at a time and answers it, so there are no callbacks.
+
+```
+import serve
+import data
+variables:
+    s as int
+    req, path as string
+s = serve.start(8080)                 ' listen on 127.0.0.1:8080
+while(true)
+    req = serve.wait(s)               ' blocks until a request arrives
+    path = data.text(req, "path")
+    if(path == "/hello")
+        serve.reply(s, 200, "<h1>Hello from Globw!</h1>")
+    else
+        serve.reply(s, 404, "not found")
+    end if
+end loop
+```
+
+- `serve.start(port)` starts listening on `127.0.0.1:port` and returns a server handle.
+- `serve.wait(s)` blocks until a request arrives and returns it as **JSON** — `{"method":…, "path":…, "body":…}` — read with the `data` module.
+- `serve.reply(s, status, body)` answers the current request (HTML by default).
+- `serve.stop(s)` stops the server.
+- One request is "current" between `wait` and `reply`; reply before the next `wait`.
+
 ### 6.13 Classes
 
 A class groups data (fields) and the operations on it (methods). Objects are made with `new`.

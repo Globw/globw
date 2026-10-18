@@ -1143,6 +1143,17 @@ thread_local! {
     static DBS: RefCell<Vec<Option<rusqlite::Connection>>> = const { RefCell::new(Vec::new()) };
 }
 
+// ---- the "serve" module (HTTP server) ----
+
+struct ServerState {
+    server: tiny_http::Server,
+    pending: Option<tiny_http::Request>,
+}
+
+thread_local! {
+    static SERVERS: RefCell<Vec<Option<ServerState>>> = const { RefCell::new(Vec::new()) };
+}
+
 fn db_with<T>(h: i64, f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>) -> Result<T, String> {
     DBS.with(|d| {
         let d = d.borrow();
@@ -3866,6 +3877,71 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             if let Ok(i) = usize::try_from(int(&args[0])) {
                 DBS.with(|d| {
                     if let Some(slot) = d.borrow_mut().get_mut(i) {
+                        *slot = None;
+                    }
+                });
+            }
+            Value::Null
+        }
+
+        // module "serve" (HTTP server)
+        ServeStart => {
+            let port = int(&args[0]);
+            if !(1..=65535).contains(&port) {
+                return Err("serve.start: the port must be between 1 and 65535".to_string());
+            }
+            let server = tiny_http::Server::http(("127.0.0.1", port as u16)).map_err(|e| format!("serve.start: {}", e))?;
+            Value::Int(SERVERS.with(|s| {
+                let mut s = s.borrow_mut();
+                s.push(Some(ServerState { server, pending: None }));
+                (s.len() - 1) as i64
+            }))
+        }
+        ServeWait => {
+            let json = SERVERS.with(|s| {
+                let mut s = s.borrow_mut();
+                let st = usize::try_from(int(&args[0]))
+                    .ok()
+                    .and_then(|i| s.get_mut(i))
+                    .and_then(|o| o.as_mut())
+                    .ok_or("serve.wait: this is not a running server")?;
+                let mut req = st.server.recv().map_err(|e| format!("serve.wait: {}", e))?;
+                let method = req.method().as_str().to_string();
+                let path = req.url().to_string();
+                let mut body = String::new();
+                let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+                st.pending = Some(req);
+                let mut m = serde_json::Map::new();
+                m.insert("method".to_string(), Json::String(method));
+                m.insert("path".to_string(), Json::String(path));
+                m.insert("body".to_string(), Json::String(body));
+                Ok::<String, String>(serde_json::to_string(&Json::Object(m)).unwrap_or_default())
+            })?;
+            string(json)
+        }
+        ServeReply => {
+            SERVERS.with(|s| {
+                let mut s = s.borrow_mut();
+                let st = usize::try_from(int(&args[0]))
+                    .ok()
+                    .and_then(|i| s.get_mut(i))
+                    .and_then(|o| o.as_mut())
+                    .ok_or("serve.reply: this is not a running server")?;
+                let req = st.pending.take().ok_or("serve.reply: there is no request to reply to (call serve.wait first)")?;
+                let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
+                    .expect("valid header");
+                let resp = tiny_http::Response::from_string(text(&args[2]))
+                    .with_status_code(int(&args[1]) as u16)
+                    .with_header(header);
+                req.respond(resp).map_err(|e| format!("serve.reply: {}", e))?;
+                Ok::<(), String>(())
+            })?;
+            Value::Null
+        }
+        ServeStop => {
+            if let Ok(i) = usize::try_from(int(&args[0])) {
+                SERVERS.with(|s| {
+                    if let Some(slot) = s.borrow_mut().get_mut(i) {
                         *slot = None;
                     }
                 });
