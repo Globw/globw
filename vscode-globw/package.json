@@ -2,7 +2,7 @@
   "name": "globw",
   "displayName": "Globw",
   "description": "Syntax colors, run button and live errors for the Globw language (.gw)",
-  "version": "1.28.0",
+  "version": "1.29.0",
   "icon": "images/icon.png",
   "publisher": "local",
   "engines": {

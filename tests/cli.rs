@@ -223,6 +223,16 @@ fn builtin_module_text_regex_extras() {
 }
 
 #[test]
+fn builtin_module_proc_background() {
+    let dir = std::env::temp_dir().join("globw_proc_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import proc\nvariables:\n    h as int\nh = proc.start(\"echo globw\")\noutput(trim(proc.wait(h)))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "globw\n"), "{}", stderr);
+}
+
+#[test]
 fn builtin_module_db_sqlite() {
     let dir = std::env::temp_dir().join("globw_db_test");
     std::fs::create_dir_all(&dir).unwrap();

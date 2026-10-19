@@ -761,6 +761,28 @@ end loop
 - `serve.stop(s)` stops the server.
 - One request is "current" between `wait` and `reply`; reply before the next `wait`.
 
+**Background processes (`proc`).** `import proc` runs other programs at the same
+time — concurrency at the level of the operating system (Globw's own code stays
+single-threaded, so this does not share memory; it runs separate programs in
+parallel and collects their output).
+
+```
+import proc
+variables:
+    a, b as int
+a = proc.start("curl -s https://example.com")   ' both start at once
+b = proc.start("curl -s https://example.org")
+output(proc.wait(a))                              ' then collect each result
+output(proc.wait(b))
+```
+
+- `proc.start(command)` starts a command in the background and returns a handle; it returns immediately.
+- `proc.done(h)` is `true` once the command has finished (a non-blocking check).
+- `proc.wait(h)` blocks until it finishes and returns its output; a non-zero exit is a catchable error carrying the error output.
+- `proc.kill(h)` stops it.
+
+Three 2-second commands started together finish in about 2 seconds, not 6 — they really run at the same time.
+
 ### 6.13 Classes
 
 A class groups data (fields) and the operations on it (methods). Objects are made with `new`.

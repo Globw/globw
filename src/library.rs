@@ -1154,6 +1154,12 @@ thread_local! {
     static SERVERS: RefCell<Vec<Option<ServerState>>> = const { RefCell::new(Vec::new()) };
 }
 
+// ---- the "proc" module (background processes) ----
+
+thread_local! {
+    static PROCS: RefCell<Vec<Option<std::process::Child>>> = const { RefCell::new(Vec::new()) };
+}
+
 fn db_with<T>(h: i64, f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>) -> Result<T, String> {
     DBS.with(|d| {
         let d = d.borrow();
@@ -3943,6 +3949,64 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 SERVERS.with(|s| {
                     if let Some(slot) = s.borrow_mut().get_mut(i) {
                         *slot = None;
+                    }
+                });
+            }
+            Value::Null
+        }
+
+        // module "proc" (background processes)
+        ProcStart => {
+            let cmd = text(&args[0]);
+            let mut c = if cfg!(windows) {
+                let mut c = std::process::Command::new("cmd");
+                c.arg("/C").arg(cmd);
+                c
+            } else {
+                let mut c = std::process::Command::new("sh");
+                c.arg("-c").arg(cmd);
+                c
+            };
+            c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+            let child = c.spawn().map_err(|e| format!("proc.start: cannot start the command ({})", e))?;
+            Value::Int(PROCS.with(|p| {
+                let mut p = p.borrow_mut();
+                p.push(Some(child));
+                (p.len() - 1) as i64
+            }))
+        }
+        ProcDone => PROCS.with(|p| {
+            let mut p = p.borrow_mut();
+            match usize::try_from(int(&args[0])).ok().and_then(|i| p.get_mut(i)) {
+                Some(Some(child)) => Ok(Value::Bool(child.try_wait().map_err(|e| format!("proc.done: {}", e))?.is_some())),
+                Some(None) => Ok(Value::Bool(true)),
+                None => Err("proc.done: this is not a running process".to_string()),
+            }
+        })?,
+        ProcWait => {
+            let child = PROCS.with(|p| {
+                let mut p = p.borrow_mut();
+                match usize::try_from(int(&args[0])).ok().and_then(|i| p.get_mut(i)) {
+                    Some(slot @ Some(_)) => Ok(slot.take().expect("some")),
+                    Some(None) => Err("proc.wait: this process was already waited for".to_string()),
+                    None => Err("proc.wait: this is not a running process".to_string()),
+                }
+            })?;
+            let out = child.wait_with_output().map_err(|e| format!("proc.wait: {}", e))?;
+            if !out.status.success() {
+                let code = out.status.code().map_or_else(|| "stopped by a signal".to_string(), |n| format!("exit code {}", n));
+                return Err(format!("proc.wait: the command failed ({}): {}", code, String::from_utf8_lossy(&out.stderr).trim()));
+            }
+            string(String::from_utf8_lossy(&out.stdout).into_owned())
+        }
+        ProcKill => {
+            if let Ok(i) = usize::try_from(int(&args[0])) {
+                PROCS.with(|p| {
+                    if let Some(slot) = p.borrow_mut().get_mut(i) {
+                        if let Some(mut child) = slot.take() {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
                     }
                 });
             }
