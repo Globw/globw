@@ -783,6 +783,36 @@ output(proc.wait(b))
 
 Three 2-second commands started together finish in about 2 seconds, not 6 — they really run at the same time.
 
+**GUI widgets (`gtq`, inspired by Qt).** `import gtq` adds buttons, checkboxes and
+sliders to the graphics window. It is **immediate mode**: inside the usual
+`while(open()) … show() end loop`, you draw each widget every frame and it tells
+you what the user did.
+
+```
+import gtq
+variables:
+    on as bool
+    vol as float
+window(400, 250, "My app")
+while(open())
+    clear("#1e293b")
+    gtq.panel(20, 18, 360, 52, "#334155")
+    gtq.label(34, 36, "A little GUI", "#e2e8f0")
+    if(gtq.button(34, 95, 150, 38, "Click me"))
+        output("clicked")
+    end if
+    on = gtq.checkbox(210, 104, "On", on)      ' returns the new state
+    vol = gtq.slider(34, 185, 330, vol, 0, 100) ' returns the new value
+    show()
+end loop
+```
+
+- `gtq.panel(x, y, w, h, color)` draws a filled rectangle (a background).
+- `gtq.label(x, y, text, color)` draws text.
+- `gtq.button(x, y, w, h, label)` draws a button and returns `true` on the frame it is clicked.
+- `gtq.checkbox(x, y, label, checked)` draws a checkbox and returns its new checked state (give it back the value each frame).
+- `gtq.slider(x, y, w, value, min, max)` draws a slider and returns its new value while dragged.
+
 ### 6.13 Classes
 
 A class groups data (fields) and the operations on it (methods). Objects are made with `new`.

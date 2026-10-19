@@ -677,6 +677,12 @@ pub enum Builtin {
     ProcDone,
     ProcWait,
     ProcKill,
+    // module "gtq" (immediate-mode GUI widgets, inspired by Qt)
+    GtqPanel,
+    GtqLabel,
+    GtqButton,
+    GtqCheckbox,
+    GtqSlider,
 }
 
 use Builtin::*;
@@ -1497,6 +1503,13 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (ProcDone, "proc.done", Sig::Fixed(&[I], Some(Bool))),
     (ProcWait, "proc.wait", Sig::Fixed(&[I], Some(Str))),
     (ProcKill, "proc.kill", Sig::Fixed(&[I], None)),
+
+    // module "gtq" (immediate-mode GUI)
+    (GtqPanel, "gtq.panel", Sig::Fixed(&[R, R, R, R, S], None)),
+    (GtqLabel, "gtq.label", Sig::Fixed(&[R, R, S, S], None)),
+    (GtqButton, "gtq.button", Sig::Fixed(&[R, R, R, R, S], Some(Bool))),
+    (GtqCheckbox, "gtq.checkbox", Sig::Fixed(&[R, R, S, Bool], Some(Bool))),
+    (GtqSlider, "gtq.slider", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1554,8 +1567,8 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "humidex", "ph", "sound", "note", "prob", "odds", "collatzmax", "happy", "aliquot", "polygonal", "pronic",
     "pentagonal", "hexagonal", "star", "lucas", "tribonacci", "padovan", "primorial", "primecount", "prevprime",
     "coprime", "amicable", "multi", "a1z26", "revbits", "luminance", "contrast", "splitbill", "elapsed",
-    // databases, servers, processes
-    "db", "serve", "proc",
+    // databases, servers, processes, GUI
+    "db", "serve", "proc", "gtq",
 ];
 
 pub fn is_builtin_module(name: &str) -> bool {
@@ -1663,12 +1676,14 @@ pub struct Env {
     fonts: Fonts,
     start: Instant,
     rng: u64,
+    /// the mouse button state at the previous frame, for `gtq` click detection
+    prev_down: bool,
 }
 
 impl Default for Env {
     fn default() -> Env {
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0x9E37_79B9, |d| d.as_nanos() as u64);
-        Env { graphics: None, fonts: Fonts::default(), start: Instant::now(), rng: seed | 1 }
+        Env { graphics: None, fonts: Fonts::default(), start: Instant::now(), rng: seed | 1, prev_down: false }
     }
 }
 
@@ -1730,6 +1745,7 @@ impl Env {
             }
             Open => Value::Bool(self.graphics.as_ref().is_some_and(|g| g.is_open())),
             Show => {
+                self.prev_down = self.graphics.as_ref().is_some_and(Graphics::click);
                 self.window()?.show();
                 Value::Null
             }
@@ -1816,6 +1832,95 @@ impl Env {
                 let g = self.window()?;
                 g.scene.triangle(&mut g.canvas, p(0), p(3), p(6), c, true);
                 Value::Null
+            }
+            GtqPanel => {
+                let c = parse_color(text(&args[4]))?;
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                self.window()?.canvas.rect(x, y, w, h, c);
+                Value::Null
+            }
+            GtqLabel => {
+                let c = parse_color(text(&args[3]))?;
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                self.fonts.draw(&mut g.canvas, x, y, text(&args[2]), c)?;
+                Value::Null
+            }
+            GtqButton => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let label = text(&args[4]).to_string();
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let pressed = hover && down && !self.prev_down;
+                let bg = parse_color(if hover {
+                    if down {
+                        "#2d3748"
+                    } else {
+                        "#4a5568"
+                    }
+                } else {
+                    "#374151"
+                })?;
+                let white = parse_color("#ffffff")?;
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                let tx = (x + (w - tw) / 2.0).max(x + 2.0);
+                self.fonts.draw(&mut g.canvas, tx, y + h / 2.0 - 6.0, &label, white)?;
+                Value::Bool(pressed)
+            }
+            GtqCheckbox => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let checked = matches!(&args[3], Value::Bool(true));
+                let box_sz = 16.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + box_sz && my >= y && my <= y + box_sz, g.click())
+                };
+                let new_checked = if hover && down && !self.prev_down { !checked } else { checked };
+                let border = parse_color("#888888")?;
+                let fill = parse_color("#374151")?;
+                let mark = parse_color("#22c55e")?;
+                let white = parse_color("#dddddd")?;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, box_sz, box_sz, fill);
+                g.canvas.line(x, y, x + box_sz, y, border);
+                g.canvas.line(x, y + box_sz, x + box_sz, y + box_sz, border);
+                g.canvas.line(x, y, x, y + box_sz, border);
+                g.canvas.line(x + box_sz, y, x + box_sz, y + box_sz, border);
+                if new_checked {
+                    g.canvas.rect(x + 4.0, y + 4.0, box_sz - 8.0, box_sz - 8.0, mark);
+                }
+                self.fonts.draw(&mut g.canvas, x + box_sz + 8.0, y + 2.0, &label, white)?;
+                Value::Bool(new_checked)
+            }
+            GtqSlider => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let (val, lo, hi) = (real(&args[3]), real(&args[4]), real(&args[5]));
+                let (hover, down, mxf) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (my >= y - 8.0 && my <= y + 8.0 && mx >= x && mx <= x + w, g.click(), mx)
+                };
+                let mut v = val;
+                if hover && down && hi > lo && w > 0.0 {
+                    v = lo + ((mxf - x) / w).clamp(0.0, 1.0) * (hi - lo);
+                }
+                let track = parse_color("#374151")?;
+                let knob = parse_color("#60a5fa")?;
+                let t = if hi > lo { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y - 2.0, w, 4.0, track);
+                g.canvas.circle(x + t * w, y, 8.0, knob);
+                Value::Real(v)
             }
             _ => library::call(b, args)?,
         })
