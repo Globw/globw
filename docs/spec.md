@@ -812,6 +812,18 @@ end loop
 - `gtq.button(x, y, w, h, label)` draws a button and returns `true` on the frame it is clicked.
 - `gtq.checkbox(x, y, label, checked)` draws a checkbox and returns its new checked state (give it back the value each frame).
 - `gtq.slider(x, y, w, value, min, max)` draws a slider and returns its new value while dragged.
+- `gtq.radio(x, y, label, selected)` — a radio button; returns `true` on the frame it is clicked (give it `selected` to draw the filled state).
+- `gtq.toggle(x, y, label, on)` — a switch; returns its new on/off state.
+- `gtq.progress(x, y, w, value, max)` — a progress bar.
+- `gtq.separator(x, y, w)` — a horizontal divider line.
+- `gtq.groupbox(x, y, w, h, title)` — a titled frame.
+- `gtq.spinbox(x, y, value, step, min, max)` — a number field with − / + buttons; returns the new value.
+- `gtq.selector(x, y, w, "a,b,c", index)` — a combo that cycles through the comma-separated options on click; returns the new index.
+- `gtq.textbox(x, y, w, h, current)` — a text field; clicking it opens a dialog to edit; returns the new text.
+- `gtq.vslider(x, y, h, value, min, max)` — a vertical slider.
+- `gtq.hovered(x, y, w, h)` / `gtq.clicked(x, y, w, h)` — generic hit tests for a region (true on hover / on the click frame).
+
+(`gtq` covers the common Qt Widgets. Qt's other areas are served by other modules: SQL by `db`, networking by `web`/`serve`, processes by `proc`, charts by `chart` — and Globw does not replicate Qt's full class library.)
 
 ### 6.13 Classes
 

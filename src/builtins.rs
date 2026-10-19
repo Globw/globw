@@ -683,6 +683,17 @@ pub enum Builtin {
     GtqButton,
     GtqCheckbox,
     GtqSlider,
+    GtqRadio,
+    GtqToggle,
+    GtqProgress,
+    GtqSeparator,
+    GtqGroupbox,
+    GtqSpinbox,
+    GtqSelector,
+    GtqTextbox,
+    GtqVslider,
+    GtqHovered,
+    GtqClicked,
 }
 
 use Builtin::*;
@@ -1510,6 +1521,17 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqButton, "gtq.button", Sig::Fixed(&[R, R, R, R, S], Some(Bool))),
     (GtqCheckbox, "gtq.checkbox", Sig::Fixed(&[R, R, S, Bool], Some(Bool))),
     (GtqSlider, "gtq.slider", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
+    (GtqRadio, "gtq.radio", Sig::Fixed(&[R, R, S, Bool], Some(Bool))),
+    (GtqToggle, "gtq.toggle", Sig::Fixed(&[R, R, S, Bool], Some(Bool))),
+    (GtqProgress, "gtq.progress", Sig::Fixed(&[R, R, R, R, R], None)),
+    (GtqSeparator, "gtq.separator", Sig::Fixed(&[R, R, R], None)),
+    (GtqGroupbox, "gtq.groupbox", Sig::Fixed(&[R, R, R, R, S], None)),
+    (GtqSpinbox, "gtq.spinbox", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
+    (GtqSelector, "gtq.selector", Sig::Fixed(&[R, R, R, S, I], Some(Int))),
+    (GtqTextbox, "gtq.textbox", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
+    (GtqVslider, "gtq.vslider", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
+    (GtqHovered, "gtq.hovered", Sig::Fixed(&[R, R, R, R], Some(Bool))),
+    (GtqClicked, "gtq.clicked", Sig::Fixed(&[R, R, R, R], Some(Bool))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1921,6 +1943,193 @@ impl Env {
                 g.canvas.rect(x, y - 2.0, w, 4.0, track);
                 g.canvas.circle(x + t * w, y, 8.0, knob);
                 Value::Real(v)
+            }
+            GtqRadio => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let selected = matches!(&args[3], Value::Bool(true));
+                let r = 8.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    (((mx as f64 - (x + r)).powi(2) + (my as f64 - (y + r)).powi(2)).sqrt() <= r + 2.0, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let (outer, fill, dot, white) =
+                    (parse_color("#888888")?, parse_color("#374151")?, parse_color("#60a5fa")?, parse_color("#dddddd")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.circle(x + r, y + r, r, outer);
+                g.canvas.circle(x + r, y + r, r - 1.5, fill);
+                if selected {
+                    g.canvas.circle(x + r, y + r, r - 4.0, dot);
+                }
+                self.fonts.draw(&mut g.canvas, x + 2.0 * r + 8.0, y + 2.0, &label, white)?;
+                Value::Bool(clicked)
+            }
+            GtqToggle => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let on = matches!(&args[3], Value::Bool(true));
+                let (w, h) = (40.0, 18.0);
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let new_on = if hover && down && !self.prev_down { !on } else { on };
+                let (track, knob, white) =
+                    (parse_color(if new_on { "#22c55e" } else { "#4a5568" })?, parse_color("#f8fafc")?, parse_color("#dddddd")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, track);
+                let kx = if new_on { x + w - h / 2.0 - 2.0 } else { x + h / 2.0 + 2.0 };
+                g.canvas.circle(kx, y + h / 2.0, h / 2.0 - 2.0, knob);
+                self.fonts.draw(&mut g.canvas, x + w + 8.0, y + 1.0, &label, white)?;
+                Value::Bool(new_on)
+            }
+            GtqProgress => {
+                let (x, y, w, val, maxv) =
+                    (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
+                let h = 14.0;
+                let t = if maxv > 0.0 { (val / maxv).clamp(0.0, 1.0) } else { 0.0 };
+                let (bg, fg) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let g = self.window()?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.rect(x, y, w * t, h, fg);
+                Value::Null
+            }
+            GtqSeparator => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let c = parse_color("#475569")?;
+                self.window()?.canvas.line(x, y, x + w, y, c);
+                Value::Null
+            }
+            GtqGroupbox => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let title = text(&args[4]).to_string();
+                let (border, white) = (parse_color("#475569")?, parse_color("#94a3b8")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.line(x, y, x + w, y, border);
+                g.canvas.line(x, y + h, x + w, y + h, border);
+                g.canvas.line(x, y, x, y + h, border);
+                g.canvas.line(x + w, y, x + w, y + h, border);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y - 7.0, &title, white)?;
+                Value::Null
+            }
+            GtqSpinbox => {
+                let (x, y, val, step, minv, maxv) =
+                    (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]), real(&args[5]));
+                let (bw, fw, h) = (22.0, 60.0, 24.0);
+                let (mx, my, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    (a as f64, b as f64, g.click())
+                };
+                let edge = down && !self.prev_down;
+                let over = |bx: f64| mx >= bx && mx <= bx + bw && my >= y && my <= y + h;
+                let mut v = val;
+                if edge && over(x) {
+                    v = (v - step).max(minv);
+                }
+                if edge && over(x + bw + fw) {
+                    v = (v + step).min(maxv);
+                }
+                let (btn, box_c, white) = (parse_color("#4a5568")?, parse_color("#1f2937")?, parse_color("#e2e8f0")?);
+                let txt = crate::vm::format_real(v);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, bw, h, btn);
+                g.canvas.rect(x + bw, y, fw, h, box_c);
+                g.canvas.rect(x + bw + fw, y, bw, h, btn);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 4.0, "-", white)?;
+                self.fonts.draw(&mut g.canvas, x + bw + fw + 7.0, y + 4.0, "+", white)?;
+                self.fonts.draw(&mut g.canvas, x + bw + 8.0, y + 4.0, &txt, white)?;
+                Value::Real(v)
+            }
+            GtqSelector => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let opts: Vec<String> = text(&args[3]).split(',').map(|s| s.trim().to_string()).collect();
+                let n = opts.len().max(1);
+                let idx = int(&args[4]).rem_euclid(n as i64) as usize;
+                let h = 24.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    let (a, b) = (a as f64, b as f64);
+                    (a >= x && a <= x + w && b >= y && b <= y + h, g.click())
+                };
+                let new_idx = if hover && down && !self.prev_down { (idx + 1) % n } else { idx };
+                let (bg, white) = (parse_color(if hover { "#4a5568" } else { "#374151" })?, parse_color("#e2e8f0")?);
+                let shown = opts.get(new_idx).cloned().unwrap_or_default();
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 4.0, &shown, white)?;
+                self.fonts.draw(&mut g.canvas, x + w - 14.0, y + 4.0, ">", white)?;
+                Value::Int(new_idx as i64)
+            }
+            GtqTextbox => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let current = text(&args[4]).to_string();
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    let (a, b) = (a as f64, b as f64);
+                    (a >= x && a <= x + w && b >= y && b <= y + h, g.click())
+                };
+                let mut value = current.clone();
+                if hover && down && !self.prev_down {
+                    if let Ok(s) = dialogs::ask(&format!("New value (was: {})", current)) {
+                        if !s.is_empty() {
+                            value = s;
+                        }
+                    }
+                }
+                let (bg, border, white) =
+                    (parse_color("#1f2937")?, parse_color(if hover { "#60a5fa" } else { "#475569" })?, parse_color("#e2e8f0")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.line(x, y, x + w, y, border);
+                g.canvas.line(x, y + h, x + w, y + h, border);
+                g.canvas.line(x, y, x, y + h, border);
+                g.canvas.line(x + w, y, x + w, y + h, border);
+                self.fonts.draw(&mut g.canvas, x + 6.0, y + h / 2.0 - 6.0, &value, white)?;
+                Value::Str(value.into())
+            }
+            GtqVslider => {
+                let (x, y, h) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let (val, lo, hi) = (real(&args[3]), real(&args[4]), real(&args[5]));
+                let (hover, down, myf) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    let (a, b) = (a as f64, b as f64);
+                    (a >= x - 8.0 && a <= x + 8.0 && b >= y && b <= y + h, g.click(), b)
+                };
+                let mut v = val;
+                if hover && down && hi > lo && h > 0.0 {
+                    v = hi - ((myf - y) / h).clamp(0.0, 1.0) * (hi - lo);
+                }
+                let (track, knob) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let t = if hi > lo { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x - 2.0, y, 4.0, h, track);
+                g.canvas.circle(x, y + (1.0 - t) * h, 8.0, knob);
+                Value::Real(v)
+            }
+            GtqHovered => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                let (mx, my) = g.mouse();
+                let (mx, my) = (mx as f64, my as f64);
+                Value::Bool(mx >= x && mx <= x + w && my >= y && my <= y + h)
+            }
+            GtqClicked => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                Value::Bool(hover && down && !self.prev_down)
             }
             _ => library::call(b, args)?,
         })
