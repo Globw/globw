@@ -2898,9 +2898,404 @@ fn degrees(r: f64) -> f64 {
 }
 
 /// Runs a standard library function; procedures return `Value::Null`.
+fn e_out_bounce(t: f64) -> f64 {
+    let (n1, d1) = (7.5625, 2.75);
+    if t < 1.0 / d1 {
+        n1 * t * t
+    } else if t < 2.0 / d1 {
+        let t = t - 1.5 / d1;
+        n1 * t * t + 0.75
+    } else if t < 2.5 / d1 {
+        let t = t - 2.25 / d1;
+        n1 * t * t + 0.9375
+    } else {
+        let t = t - 2.625 / d1;
+        n1 * t * t + 0.984375
+    }
+}
+
+fn fact_f(n: i64) -> f64 {
+    let mut r = 1.0;
+    for i in 2..=n {
+        r *= i as f64;
+    }
+    r
+}
+
+fn ncr_f(n: i64, k: i64) -> f64 {
+    if k < 0 || k > n {
+        return 0.0;
+    }
+    let k = k.min(n - k);
+    let mut r = 1.0;
+    for i in 0..k {
+        r = r * (n - i) as f64 / (i + 1) as f64;
+    }
+    r
+}
+
+/// Robert Penner easing functions, `t` in 0..1.
+fn easing(b: Builtin, t: f64) -> f64 {
+    use Builtin::*;
+    let pi = std::f64::consts::PI;
+    let tau = std::f64::consts::TAU;
+    match b {
+        EaseInQuad => t * t,
+        EaseOutQuad => 1.0 - (1.0 - t) * (1.0 - t),
+        EaseInOutQuad => {
+            if t < 0.5 {
+                2.0 * t * t
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+            }
+        }
+        EaseInCubic => t * t * t,
+        EaseOutCubic => 1.0 - (1.0 - t).powi(3),
+        EaseInOutCubic => {
+            if t < 0.5 {
+                4.0 * t * t * t
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+            }
+        }
+        EaseInQuart => t.powi(4),
+        EaseOutQuart => 1.0 - (1.0 - t).powi(4),
+        EaseInOutQuart => {
+            if t < 0.5 {
+                8.0 * t.powi(4)
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(4) / 2.0
+            }
+        }
+        EaseInQuint => t.powi(5),
+        EaseOutQuint => 1.0 - (1.0 - t).powi(5),
+        EaseInOutQuint => {
+            if t < 0.5 {
+                16.0 * t.powi(5)
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(5) / 2.0
+            }
+        }
+        EaseInSine => 1.0 - (t * pi / 2.0).cos(),
+        EaseOutSine => (t * pi / 2.0).sin(),
+        EaseInOutSine => -((pi * t).cos() - 1.0) / 2.0,
+        EaseInExpo => {
+            if t == 0.0 {
+                0.0
+            } else {
+                2f64.powf(10.0 * t - 10.0)
+            }
+        }
+        EaseOutExpo => {
+            if t == 1.0 {
+                1.0
+            } else {
+                1.0 - 2f64.powf(-10.0 * t)
+            }
+        }
+        EaseInOutExpo => {
+            if t == 0.0 {
+                0.0
+            } else if t == 1.0 {
+                1.0
+            } else if t < 0.5 {
+                2f64.powf(20.0 * t - 10.0) / 2.0
+            } else {
+                (2.0 - 2f64.powf(-20.0 * t + 10.0)) / 2.0
+            }
+        }
+        EaseInCirc => 1.0 - (1.0 - t * t).sqrt(),
+        EaseOutCirc => (1.0 - (t - 1.0) * (t - 1.0)).sqrt(),
+        EaseInOutCirc => {
+            if t < 0.5 {
+                (1.0 - (1.0 - (2.0 * t).powi(2)).sqrt()) / 2.0
+            } else {
+                ((1.0 - (-2.0 * t + 2.0).powi(2)).sqrt() + 1.0) / 2.0
+            }
+        }
+        EaseInBack => {
+            let c1 = 1.70158;
+            let c3 = c1 + 1.0;
+            c3 * t * t * t - c1 * t * t
+        }
+        EaseOutBack => {
+            let c1 = 1.70158;
+            let c3 = c1 + 1.0;
+            1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2)
+        }
+        EaseInOutBack => {
+            let c1 = 1.70158;
+            let c2 = c1 * 1.525;
+            if t < 0.5 {
+                ((2.0 * t).powi(2) * ((c2 + 1.0) * 2.0 * t - c2)) / 2.0
+            } else {
+                ((2.0 * t - 2.0).powi(2) * ((c2 + 1.0) * (t * 2.0 - 2.0) + c2) + 2.0) / 2.0
+            }
+        }
+        EaseInElastic => {
+            if t == 0.0 {
+                0.0
+            } else if t == 1.0 {
+                1.0
+            } else {
+                let c4 = tau / 3.0;
+                -(2f64.powf(10.0 * t - 10.0)) * ((t * 10.0 - 10.75) * c4).sin()
+            }
+        }
+        EaseOutElastic => {
+            if t == 0.0 {
+                0.0
+            } else if t == 1.0 {
+                1.0
+            } else {
+                let c4 = tau / 3.0;
+                2f64.powf(-10.0 * t) * ((t * 10.0 - 0.75) * c4).sin() + 1.0
+            }
+        }
+        EaseInOutElastic => {
+            if t == 0.0 {
+                0.0
+            } else if t == 1.0 {
+                1.0
+            } else {
+                let c5 = tau / 4.5;
+                if t < 0.5 {
+                    -(2f64.powf(20.0 * t - 10.0) * ((20.0 * t - 11.125) * c5).sin()) / 2.0
+                } else {
+                    (2f64.powf(-20.0 * t + 10.0) * ((20.0 * t - 11.125) * c5).sin()) / 2.0 + 1.0
+                }
+            }
+        }
+        EaseInBounce => 1.0 - e_out_bounce(1.0 - t),
+        EaseOutBounce => e_out_bounce(t),
+        EaseInOutBounce => {
+            if t < 0.5 {
+                (1.0 - e_out_bounce(1.0 - 2.0 * t)) / 2.0
+            } else {
+                (1.0 + e_out_bounce(2.0 * t - 1.0)) / 2.0
+            }
+        }
+        _ => t,
+    }
+}
+
 pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
     use Builtin::*;
     Ok(match b {
+        // ======== batch H1 ========
+        EaseInQuad | EaseOutQuad | EaseInOutQuad | EaseInCubic | EaseOutCubic | EaseInOutCubic
+        | EaseInQuart | EaseOutQuart | EaseInOutQuart | EaseInQuint | EaseOutQuint | EaseInOutQuint
+        | EaseInSine | EaseOutSine | EaseInOutSine | EaseInExpo | EaseOutExpo | EaseInOutExpo
+        | EaseInCirc | EaseOutCirc | EaseInOutCirc | EaseInBack | EaseOutBack | EaseInOutBack
+        | EaseInElastic | EaseOutElastic | EaseInOutElastic | EaseInBounce | EaseOutBounce
+        | EaseInOutBounce => Value::Real(easing(b, real(&args[0]))),
+        TrigHaversin => Value::Real((real(&args[0]).to_radians() / 2.0).sin().powi(2)),
+        TrigVersin => Value::Real(1.0 - real(&args[0]).to_radians().cos()),
+        TrigCoversin => Value::Real(1.0 - real(&args[0]).to_radians().sin()),
+        TrigExsec => Value::Real(1.0 / real(&args[0]).to_radians().cos() - 1.0),
+        TrigExcosec => Value::Real(1.0 / real(&args[0]).to_radians().sin() - 1.0),
+        TrigCrd => Value::Real(2.0 * (real(&args[0]).to_radians() / 2.0).sin()),
+        SpecialStirling => {
+            let n = real(&args[0]);
+            Value::Real((2.0 * std::f64::consts::PI * n).sqrt() * (n / std::f64::consts::E).powf(n))
+        }
+        SpecialLogit => {
+            let p = real(&args[0]);
+            Value::Real((p / (1.0 - p)).ln())
+        }
+        SpecialSoftplus => Value::Real((1.0 + real(&args[0]).exp()).ln()),
+        SpecialGudermann => Value::Real(2.0 * real(&args[0]).exp().atan() - std::f64::consts::FRAC_PI_2),
+        PolarX => Value::Real(real(&args[0]) * real(&args[1]).to_radians().cos()),
+        PolarY => Value::Real(real(&args[0]) * real(&args[1]).to_radians().sin()),
+        PolarR => Value::Real(real(&args[0]).hypot(real(&args[1]))),
+        PolarAngle => Value::Real(real(&args[1]).atan2(real(&args[0])).to_degrees()),
+        TransformRotX => {
+            let (x, y, a) = (real(&args[0]), real(&args[1]), real(&args[2]).to_radians());
+            Value::Real(x * a.cos() - y * a.sin())
+        }
+        TransformRotY => {
+            let (x, y, a) = (real(&args[0]), real(&args[1]), real(&args[2]).to_radians());
+            Value::Real(x * a.sin() + y * a.cos())
+        }
+        Temp2CToRankine => Value::Real((real(&args[0]) + 273.15) * 9.0 / 5.0),
+        Temp2RankineToC => Value::Real(real(&args[0]) * 5.0 / 9.0 - 273.15),
+        Temp2FToRankine => Value::Real(real(&args[0]) + 459.67),
+        Temp2RankineToF => Value::Real(real(&args[0]) - 459.67),
+        Temp2CToReaumur => Value::Real(real(&args[0]) * 4.0 / 5.0),
+        Temp2ReaumurToC => Value::Real(real(&args[0]) * 5.0 / 4.0),
+        StorageBytesToKb | StorageKbToMb | StorageMbToGb | StorageGbToTb | StorageTbToPb => {
+            Value::Real(real(&args[0]) / 1024.0)
+        }
+        StorageBitsToBytes => Value::Real(real(&args[0]) / 8.0),
+        Area2AcresToHa => Value::Real(real(&args[0]) * 0.404686),
+        Area2HaToAcres => Value::Real(real(&args[0]) / 0.404686),
+        Area2SqkmToSqmi => Value::Real(real(&args[0]) * 0.386102),
+        Area2SqmiToSqkm => Value::Real(real(&args[0]) / 0.386102),
+        KitchenTspToTbsp => Value::Real(real(&args[0]) / 3.0),
+        KitchenTbspToCup => Value::Real(real(&args[0]) / 16.0),
+        KitchenCupToFloz => Value::Real(real(&args[0]) * 8.0),
+        KitchenFlozToMl => Value::Real(real(&args[0]) * 29.5735),
+        KitchenMlToFloz => Value::Real(real(&args[0]) / 29.5735),
+        KitchenOzToGrams => Value::Real(real(&args[0]) * 28.3495),
+        KitchenGramsToOz => Value::Real(real(&args[0]) / 28.3495),
+        KitchenLbToOz => Value::Real(real(&args[0]) * 16.0),
+
+        // ======== batch H2 ========
+        ChemMolarity => Value::Real(real(&args[0]) / real(&args[1])),
+        ChemMoles => Value::Real(real(&args[0]) / real(&args[1])),
+        ChemMass => Value::Real(real(&args[0]) * real(&args[1])),
+        ChemDilution => Value::Real(real(&args[0]) * real(&args[1]) / real(&args[2])),
+        ChemPoh => Value::Real(14.0 - real(&args[0])),
+        ChemPercentYield => Value::Real(real(&args[0]) / real(&args[1]) * 100.0),
+        ChemGasPressure => Value::Real(real(&args[0]) * 0.082057 * real(&args[1]) / real(&args[2])),
+        ChemDensity => Value::Real(real(&args[0]) / real(&args[1])),
+        ChemAtoms => Value::Real(real(&args[0]) * 6.02214076e23),
+        ChemMolesFromAtoms => Value::Real(real(&args[0]) / 6.02214076e23),
+        ElecPower => Value::Real(real(&args[0]) * real(&args[1])),
+        ElecEnergy => Value::Real(real(&args[0]) * real(&args[1])),
+        ElecChargeCap => Value::Real(real(&args[0]) * real(&args[1])),
+        ElecInductorEnergy => Value::Real(0.5 * real(&args[0]) * real(&args[1]).powi(2)),
+        ElecRcTime => Value::Real(real(&args[0]) * real(&args[1])),
+        ElecReactanceC => Value::Real(1.0 / (2.0 * std::f64::consts::PI * real(&args[0]) * real(&args[1]))),
+        ElecReactanceL => Value::Real(2.0 * std::f64::consts::PI * real(&args[0]) * real(&args[1])),
+        ElecResonance => Value::Real(1.0 / (2.0 * std::f64::consts::PI * (real(&args[0]) * real(&args[1])).sqrt())),
+        Fin2Cagr => {
+            let (b0, e, y) = (real(&args[0]), real(&args[1]), int(&args[2]) as f64);
+            Value::Real((e / b0).powf(1.0 / y) - 1.0)
+        }
+        Fin2Pv => {
+            let (fv, r, y) = (real(&args[0]), real(&args[1]), int(&args[2]) as i32);
+            Value::Real(fv / (1.0 + r / 100.0).powi(y))
+        }
+        Fin2Fv => {
+            let (pv, r, y) = (real(&args[0]), real(&args[1]), int(&args[2]) as i32);
+            Value::Real(pv * (1.0 + r / 100.0).powi(y))
+        }
+        Fin2EffectiveRate => {
+            let (nom, p) = (real(&args[0]), int(&args[1]) as f64);
+            Value::Real(((1.0 + nom / 100.0 / p).powf(p) - 1.0) * 100.0)
+        }
+        Fin2RealReturn => {
+            let (nom, inf) = (real(&args[0]), real(&args[1]));
+            Value::Real(((1.0 + nom / 100.0) / (1.0 + inf / 100.0) - 1.0) * 100.0)
+        }
+        Fin2DebtRatio => Value::Real(real(&args[0]) / real(&args[1])),
+        Fin2CurrentRatio => Value::Real(real(&args[0]) / real(&args[1])),
+        Fin2Roe => Value::Real(real(&args[0]) / real(&args[1]) * 100.0),
+        Fin2Eps => Value::Real(real(&args[0]) / real(&args[1])),
+        Fin2PeRatio => Value::Real(real(&args[0]) / real(&args[1])),
+        H2Bsa => Value::Real((real(&args[0]) * real(&args[1]) / 3600.0).sqrt()),
+        H2WaistHip => Value::Real(real(&args[0]) / real(&args[1])),
+        H2TargetHr => Value::Real((220.0 - real(&args[0])) * real(&args[1]) / 100.0),
+        H2CaloriesWalk => Value::Real(real(&args[0]) * 0.0563 * real(&args[1])),
+        H2CaloriesRun => Value::Real(real(&args[0]) * 0.12 * real(&args[1])),
+        H2Vo2max => Value::Real(15.3 * (real(&args[0]) / real(&args[1]))),
+        MusicSemitonesBetween => Value::Real(12.0 * (real(&args[1]) / real(&args[0])).log2()),
+        MusicTranspose => Value::Real(real(&args[0]) * 2f64.powf(real(&args[1]) / 12.0)),
+        MusicBpmToHz => Value::Real(real(&args[0]) / 60.0),
+        MusicHzToBpm => Value::Real(real(&args[0]) * 60.0),
+        MusicCentsToRatio => Value::Real(2f64.powf(real(&args[0]) / 1200.0)),
+        MusicRatioToCents => Value::Real(1200.0 * real(&args[0]).log2()),
+        SpaceGravForce => {
+            let (m1, m2, r) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(6.674e-11 * m1 * m2 / (r * r))
+        }
+        SpaceSchwarzschild => Value::Real(2.0 * 6.674e-11 * real(&args[0]) / 299792458.0_f64.powi(2)),
+        SpaceOrbitalVel => Value::Real((6.674e-11 * real(&args[0]) / real(&args[1])).sqrt()),
+        SpaceSurfaceGravity => {
+            let (m, r) = (real(&args[0]), real(&args[1]));
+            Value::Real(6.674e-11 * m / (r * r))
+        }
+        OpticsMagnification => Value::Real(-real(&args[0]) / real(&args[1])),
+        OpticsFocalRadius => Value::Real(real(&args[0]) / 2.0),
+        OpticsLensPower => Value::Real(1.0 / real(&args[0])),
+        OpticsSnell => {
+            let (n1, a1, n2) = (real(&args[0]), real(&args[1]).to_radians(), real(&args[2]));
+            Value::Real((n1 * a1.sin() / n2).asin().to_degrees())
+        }
+        Prob2Binomial => {
+            let (n, k, p) = (int(&args[0]), int(&args[1]), real(&args[2]));
+            Value::Real(ncr_f(n, k) * p.powi(k as i32) * (1.0 - p).powi((n - k) as i32))
+        }
+        Prob2Poisson => {
+            let (k, l) = (int(&args[0]), real(&args[1]));
+            Value::Real((-l).exp() * l.powi(k as i32) / fact_f(k))
+        }
+        Prob2NormalCdf => Value::Real(0.5 * (1.0 + erf(real(&args[0]) / std::f64::consts::SQRT_2))),
+        Prob2NormalPdf => {
+            let x = real(&args[0]);
+            Value::Real((-x * x / 2.0).exp() / (2.0 * std::f64::consts::PI).sqrt())
+        }
+        RpgDamage => Value::Real((real(&args[0]) - real(&args[1])).max(1.0)),
+        RpgXpForLevel => {
+            let l = int(&args[0]);
+            Value::Int(l * l * 100)
+        }
+        RpgLevelFromXp => {
+            let xp = int(&args[0]);
+            Value::Int((xp as f64 / 100.0).sqrt().floor() as i64 + 1)
+        }
+        RpgCrit => Value::Real(real(&args[0]) * real(&args[1])),
+        RpgHitChance => Value::Real((real(&args[0]) - real(&args[1])).clamp(0.0, 100.0)),
+        Phys2EnergyMass => Value::Real(real(&args[0]) * 299792458.0_f64.powi(2)),
+        Phys2PhotonEnergy => Value::Real(6.62607015e-34 * real(&args[0])),
+        Phys2DeBroglie => Value::Real(6.62607015e-34 / real(&args[0])),
+        Phys2Coulomb => {
+            let (q1, q2, r) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(8.9875517873681764e9 * q1 * q2 / (r * r))
+        }
+        Stats2Cv => Value::Real(real(&args[1]) / real(&args[0]) * 100.0),
+        Stats2Se => Value::Real(real(&args[0]) / (int(&args[1]) as f64).sqrt()),
+        Stats2Margin => Value::Real(real(&args[2]) * real(&args[0]) / (int(&args[1]) as f64).sqrt()),
+        MapMercatorY => {
+            let lat = real(&args[0]).to_radians();
+            Value::Real((std::f64::consts::FRAC_PI_4 + lat / 2.0).tan().ln())
+        }
+        MapTileX => {
+            let (lon, z) = (real(&args[0]), int(&args[1]));
+            let n = 2f64.powi(z as i32);
+            Value::Int(((lon + 180.0) / 360.0 * n).floor() as i64)
+        }
+        MapTileY => {
+            let (lat, z) = (real(&args[0]).to_radians(), int(&args[1]));
+            let n = 2f64.powi(z as i32);
+            Value::Int(((1.0 - (lat.tan() + 1.0 / lat.cos()).ln() / std::f64::consts::PI) / 2.0 * n).floor() as i64)
+        }
+        Date2DayOfYear => {
+            let (y, m, d) = (int(&args[0]), int(&args[1]), int(&args[2]));
+            let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+            let days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            let mut total = d;
+            for i in 0..(m.clamp(1, 12) - 1) as usize {
+                total += days[i];
+            }
+            Value::Int(total)
+        }
+        Date2Zeller => {
+            let (mut y, mut m, d) = (int(&args[0]), int(&args[1]), int(&args[2]));
+            if m < 3 {
+                m += 12;
+                y -= 1;
+            }
+            let (k, j) = (y % 100, y / 100);
+            Value::Int((d + 13 * (m + 1) / 5 + k + k / 4 + j / 4 + 5 * j).rem_euclid(7))
+        }
+        Date2DaysInYear => {
+            let y = int(&args[0]);
+            let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+            Value::Int(if leap { 366 } else { 365 })
+        }
+        Wave2Angular => Value::Real(2.0 * std::f64::consts::PI * real(&args[0])),
+        Wave2Period => Value::Real(1.0 / real(&args[0])),
+        Wave2Frequency => Value::Real(1.0 / real(&args[0])),
+        LightSpeed => Value::Real(299792.458),
+        LightTimeToTravel => Value::Real(real(&args[0]) / 299792.458),
+        LightDistanceLy => Value::Real(real(&args[0]) / 9.4607304725808e12),
+        LightYearsToKm => Value::Real(real(&args[0]) * 9.4607304725808e12),
+        Sound2Speed => Value::Real(343.0),
+        Sound2DistFromDelay => Value::Real(real(&args[0]) * 343.0),
+        Sound2TimeForDist => Value::Real(real(&args[0]) / 343.0),
+
         // conversions
         ToInt => match &args[0] {
             Value::Str(s) => {

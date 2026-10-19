@@ -825,6 +825,36 @@ end loop
 
 (`gtq` covers the common Qt Widgets. Qt's other areas are served by other modules: SQL by `db`, networking by `web`/`serve`, processes by `proc`, charts by `chart` — and Globw does not replicate Qt's full class library.)
 
+**More built-in functions (batch H, 150 functions).**
+
+- `ease` — Robert Penner easing curves for animation, `t` in 0..1:
+  `in_quad`/`out_quad`/`in_out_quad` and the same `in`/`out`/`in_out` trio for
+  `cubic`, `quart`, `quint`, `sine`, `expo`, `circ`, `back`, `elastic`, `bounce` (30).
+- `trig2` — `haversin`, `versin`, `coversin`, `exsec`, `excosec`, `chord` (angle in degrees).
+- `special` — `stirling(n)`, `logit(p)`, `softplus(x)`, `gudermannian(x)`.
+- `polar` — `to_x(r,angle)`, `to_y(r,angle)`, `to_r(x,y)`, `to_angle(x,y)` (degrees).
+- `transform` — `rotate_x(x,y,deg)`, `rotate_y(x,y,deg)` (rotate a point about the origin).
+- `temp2` — Rankine and Réaumur conversions (`c_to_rankine`, `rankine_to_c`, `f_to_rankine`, `rankine_to_f`, `c_to_reaumur`, `reaumur_to_c`).
+- `storage` — binary size steps: `bytes_to_kb`, `kb_to_mb`, `mb_to_gb`, `gb_to_tb`, `tb_to_pb`, `bits_to_bytes`.
+- `area2` — `acres_to_hectares`, `hectares_to_acres`, `sqkm_to_sqmi`, `sqmi_to_sqkm`.
+- `kitchen` — `tsp_to_tbsp`, `tbsp_to_cup`, `cup_to_floz`, `floz_to_ml`, `ml_to_floz`, `oz_to_grams`, `grams_to_oz`, `lb_to_oz`.
+- `chem` — `molarity`, `moles`, `mass`, `dilution`, `poh`, `percent_yield`, `gas_pressure`, `density`, `atoms`, `moles_from_atoms`.
+- `elec` — `power`, `energy`, `capacitor_charge`, `inductor_energy`, `rc_time`, `reactance_c`, `reactance_l`, `resonance`.
+- `finance2` — `cagr`, `pv`, `fv`, `effective_rate`, `real_return`, `debt_ratio`, `current_ratio`, `roe`, `eps`, `pe_ratio`.
+- `health2` — `bsa`, `waist_hip`, `target_hr`, `calories_walking`, `calories_running`, `vo2max`.
+- `music` — `semitones_between`, `transpose`, `bpm_to_hz`, `hz_to_bpm`, `cents_to_ratio`, `ratio_to_cents`.
+- `space` — `gravity_force`, `schwarzschild`, `orbital_velocity`, `surface_gravity`.
+- `optics` — `magnification`, `focal_from_radius`, `power`, `snell`.
+- `prob2` — `binomial_pmf`, `poisson_pmf`, `normal_cdf`, `normal_pdf`.
+- `rpg` — `damage`, `xp_for_level`, `level_from_xp`, `crit`, `hit_chance`.
+- `physics2` — `energy_mass`, `photon_energy`, `de_broglie`, `coulomb`.
+- `stats2` — `coefficient_variation`, `standard_error`, `margin_error`.
+- `map` — `mercator_y`, `tile_x`, `tile_y` (web-map tile coordinates).
+- `date2` — `day_of_year`, `weekday_num` (Zeller, 0 = Saturday), `days_in_year`.
+- `wave2` — `angular`, `period`, `frequency`.
+- `light` — `speed`, `time_to_travel`, `distance_in_lightyears`, `years_to_km`.
+- `sound2` — `speed`, `distance_from_delay`, `time_for_distance`.
+
 ### 6.13 Classes
 
 A class groups data (fields) and the operations on it (methods). Objects are made with `new`.
