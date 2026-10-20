@@ -153,32 +153,42 @@ impl Canvas {
                 buf[j * rw + i] = self.pixels[(y0 as usize + j) * self.w + (x0 as usize + i)];
             }
         }
-        // separable box blur (frost)
+        // separable box blur (frost), O(1) per pixel via prefix sums over each
+        // row then each column, so the cost does not grow with the blur radius
         if blur > 0 {
             let r = blur as usize;
-            let avg = |src: &[u32], idxs: &mut dyn Iterator<Item = usize>| -> u32 {
-                let (mut sr, mut sg, mut sb, mut n) = (0u32, 0u32, 0u32, 0u32);
-                for k in idxs {
-                    let p = src[k];
-                    sr += (p >> 16) & 0xFF;
-                    sg += (p >> 8) & 0xFF;
-                    sb += p & 0xFF;
-                    n += 1;
-                }
-                n = n.max(1);
-                ((sr / n) << 16) | ((sg / n) << 8) | (sb / n)
-            };
-            let mut tmp = buf.clone();
+            let mut tmp = vec![0u32; rw * rh];
+            let (mut pr, mut pg, mut pb) = (vec![0u32; rw + 1], vec![0u32; rw + 1], vec![0u32; rw + 1]);
             for j in 0..rh {
+                let base = j * rw;
+                for i in 0..rw {
+                    let p = buf[base + i];
+                    pr[i + 1] = pr[i] + ((p >> 16) & 0xFF);
+                    pg[i + 1] = pg[i] + ((p >> 8) & 0xFF);
+                    pb[i + 1] = pb[i] + (p & 0xFF);
+                }
                 for i in 0..rw {
                     let (lo, hi) = (i.saturating_sub(r), (i + r).min(rw - 1));
-                    tmp[j * rw + i] = avg(&buf, &mut (lo..=hi).map(|k| j * rw + k));
+                    let n = (hi - lo + 1) as u32;
+                    tmp[base + i] = (((pr[hi + 1] - pr[lo]) / n) << 16)
+                        | (((pg[hi + 1] - pg[lo]) / n) << 8)
+                        | ((pb[hi + 1] - pb[lo]) / n);
                 }
             }
-            for j in 0..rh {
-                for i in 0..rw {
+            let (mut qr, mut qg, mut qb) = (vec![0u32; rh + 1], vec![0u32; rh + 1], vec![0u32; rh + 1]);
+            for i in 0..rw {
+                for j in 0..rh {
+                    let p = tmp[j * rw + i];
+                    qr[j + 1] = qr[j] + ((p >> 16) & 0xFF);
+                    qg[j + 1] = qg[j] + ((p >> 8) & 0xFF);
+                    qb[j + 1] = qb[j] + (p & 0xFF);
+                }
+                for j in 0..rh {
                     let (lo, hi) = (j.saturating_sub(r), (j + r).min(rh - 1));
-                    buf[j * rw + i] = avg(&tmp, &mut (lo..=hi).map(|k| k * rw + i));
+                    let n = (hi - lo + 1) as u32;
+                    buf[j * rw + i] = (((qr[hi + 1] - qr[lo]) / n) << 16)
+                        | (((qg[hi + 1] - qg[lo]) / n) << 8)
+                        | ((qb[hi + 1] - qb[lo]) / n);
                 }
             }
         }
