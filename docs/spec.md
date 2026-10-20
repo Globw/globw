@@ -879,6 +879,15 @@ case, so `straße` → `STRASSE`), `unicode.reverse`, `unicode.trim`, and the
 single-character tests `unicode.is_letter`, `unicode.is_digit`, `unicode.is_space`,
 `unicode.is_upper`.
 
+**1000 built-in modules.** A large family of single-purpose modules covers unit
+conversions and named constants. Each conversion module has `module.si(x)` (to the
+quantity's SI base) and `module.inv(x)` (back) — e.g. `furlong.si(1)` = 201.168 m,
+`carat.inv(0.4)` = 2000 carats — across length, mass, volume, area, time, speed,
+pressure, energy, power, force, data, angle, frequency, charge, density, flow, torque,
+acceleration, radioactivity and more, including historical and regional units. Each
+constant module has `module.value()` — e.g. `phi.value()`, `speedoflight_const.value()`,
+`avogadro_const.value()`.
+
 **Constant folding.** A sub-expression made only of number literals and `+`, `-`, `*`
 is computed once at compile time, so `(5 + 2) * (5 - 4)` becomes the literal `7` and
 costs nothing at run time — even inside a loop. Integer overflow is still reported at

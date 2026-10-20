@@ -60,6 +60,21 @@ fn modules_and_lazy_imports() {
 }
 
 #[test]
+fn unit_conversion_modules_work() {
+    let dir = std::env::temp_dir().join("globw_units_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("u.gw");
+    std::fs::write(
+        &prog,
+        "import furlong\nimport carat\nimport phi\noutput(furlong.si(1.0))\noutput(carat.inv(0.4))\noutput(phi.value())\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "201.168\n2000.0\n1.618033988749895\n");
+}
+
+#[test]
 fn constant_expressions_are_folded() {
     // (5+2)*(5-4) is computed at compile time, so the loop body does no arithmetic
     let dir = std::env::temp_dir().join("globw_fold_test");
