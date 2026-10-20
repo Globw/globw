@@ -825,6 +825,34 @@ end loop
 
 (`gtq` covers the common Qt Widgets. Qt's other areas are served by other modules: SQL by `db`, networking by `web`/`serve`, processes by `proc`, charts by `chart` — and Globw does not replicate Qt's full class library.)
 
+**`gtq` batch G — 150 more GUI functions.** Four families:
+
+- *Colour helpers* (pure, return a `"#rrggbb"` string or a number): `lighten`,
+  `darken`, `mix`, `grayscale`, `invert`, `complement`, `tint`, `shade`,
+  `contrast_color`, `from_rgb`, `from_hsl`, `hue_shift`, `saturate`, `desaturate`,
+  `with_red`/`with_green`/`with_blue`, `brighten`, `dim`, `mute`,
+  `red_of`/`green_of`/`blue_of`, `luminance_of`, `is_dark` (25).
+- *Layout helpers* (pure, return a coordinate): `row_x`, `col_y`, `grid_x`,
+  `grid_y`, `center_x`, `center_y`, `right_x`, `bottom_y`, `fit_w`, `fit_h`,
+  `aspect_w`, `aspect_h`, `lerp_pos`, `remap`, `snap`, `golden`, `pad_in`,
+  `inset_w`, `distribute`, `span_end`, `scale_at`, `wrap_index`, `clamp_pos`,
+  `cell_x`, `cell_y` (25).
+- *Vector icons* `gtq.ic_<name>(x, y, size, color)` — 49 named icons (check, close,
+  plus, minus, arrows, chevrons, menu, gear, home, search, heart, star, user,
+  bell, mail, trash, pencil, save, folder, file, play, pause, stop, next, prev,
+  volume, mute, wifi, battery, lock, unlock, eye, eye_off, calendar, clock, pin,
+  tag, flag, bookmark, download, upload, refresh, …) plus the parameterised
+  `gtq.icon(x, y, size, "name", color)` (50).
+- *More widgets*: display — `card`, `card_header`, `badge`, `chip`, `pill`,
+  `avatar`, `status_dot`, `vdivider`, `tooltip`, `toast`, `gauge`, `meter`,
+  `spinner`, `titlebar`, `statusbar`, `toolbar`, `breadcrumb`, `kbd`,
+  `progress_ring`, `skeleton`, `image_placeholder`, `ribbon`, `note`, `bar`;
+  interactive — `icon_button`, `link`, `switch`, `stepper`, `segmented`, `tabs`,
+  `numberbox`, `list_item`, `menu_item`, `accordion`, `rating`, `color_swatch`,
+  `chip_close`, `fab`, `pagination`, `button_primary`, `button_ghost`, `knob`,
+  `scrollbar_v`, `dropdown`, `checkbox_card`, `toggle_icon`, `text_button`,
+  `slider_mini`, `stepper_f`, `close_button` (50).
+
 **More built-in functions (batch H, 150 functions).**
 
 - `ease` — Robert Penner easing curves for animation, `t` in 0..1:

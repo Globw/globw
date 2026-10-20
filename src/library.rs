@@ -2934,6 +2934,76 @@ fn ncr_f(n: i64, k: i64) -> f64 {
     r
 }
 
+fn hex_rgb(s: &str) -> (f64, f64, f64) {
+    let h = s.trim().trim_start_matches('#');
+    let v = |a: usize, b: usize| u8::from_str_radix(h.get(a..b).unwrap_or("0"), 16).unwrap_or(0) as f64;
+    if h.len() >= 6 {
+        (v(0, 2), v(2, 4), v(4, 6))
+    } else if h.len() == 3 {
+        let d = |c: &str| u8::from_str_radix(&format!("{c}{c}"), 16).unwrap_or(0) as f64;
+        (d(&h[0..1]), d(&h[1..2]), d(&h[2..3]))
+    } else {
+        (0.0, 0.0, 0.0)
+    }
+}
+
+fn rgb_hex(r: f64, g: f64, b: f64) -> String {
+    let c = |x: f64| x.round().clamp(0.0, 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}", c(r), c(g), c(b))
+}
+
+fn rgb_to_hsl(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+    let (r, g, b) = (r / 255.0, g / 255.0, b / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d.abs() < 1e-9 {
+        return (0.0, 0.0, l);
+    }
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let h = if max == r {
+        (g - b) / d + if g < b { 6.0 } else { 0.0 }
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (h * 60.0, s, l)
+}
+
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (f64, f64, f64) {
+    if s <= 0.0 {
+        let v = l * 255.0;
+        return (v, v, v);
+    }
+    let h = h.rem_euclid(360.0) / 360.0;
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let hue = |mut t: f64| {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    (hue(h + 1.0 / 3.0) * 255.0, hue(h) * 255.0, hue(h - 1.0 / 3.0) * 255.0)
+}
+
+fn luminance(r: f64, g: f64, b: f64) -> f64 {
+    (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+}
+
 /// Robert Penner easing functions, `t` in 0..1.
 fn easing(b: Builtin, t: f64) -> f64 {
     use Builtin::*;
@@ -3295,6 +3365,141 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         Sound2Speed => Value::Real(343.0),
         Sound2DistFromDelay => Value::Real(real(&args[0]) * 343.0),
         Sound2TimeForDist => Value::Real(real(&args[0]) / 343.0),
+
+        // ======== gtq batch G: pure colour helpers ========
+        GtqLighten | GtqTint => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let a = real(&args[1]);
+            string(rgb_hex(r + (255.0 - r) * a, g + (255.0 - g) * a, b + (255.0 - b) * a))
+        }
+        GtqDarken | GtqShade => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let a = real(&args[1]);
+            string(rgb_hex(r * (1.0 - a), g * (1.0 - a), b * (1.0 - a)))
+        }
+        GtqMix => {
+            let (r1, g1, b1) = hex_rgb(text(&args[0]));
+            let (r2, g2, b2) = hex_rgb(text(&args[1]));
+            let t = real(&args[2]);
+            string(rgb_hex(r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t))
+        }
+        GtqGrayscale => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let y = 0.299 * r + 0.587 * g + 0.114 * b;
+            string(rgb_hex(y, y, y))
+        }
+        GtqInvert => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            string(rgb_hex(255.0 - r, 255.0 - g, 255.0 - b))
+        }
+        GtqComplement => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let (h, s, l) = rgb_to_hsl(r, g, b);
+            let (r, g, b) = hsl_to_rgb(h + 180.0, s, l);
+            string(rgb_hex(r, g, b))
+        }
+        GtqContrastColor => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            string(if luminance(r, g, b) > 0.5 { "#000000" } else { "#ffffff" }.to_string())
+        }
+        GtqFromRgb => string(rgb_hex(int(&args[0]) as f64, int(&args[1]) as f64, int(&args[2]) as f64)),
+        GtqFromHsl => {
+            let (r, g, b) = hsl_to_rgb(real(&args[0]), real(&args[1]), real(&args[2]));
+            string(rgb_hex(r, g, b))
+        }
+        GtqHueShift => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let (h, s, l) = rgb_to_hsl(r, g, b);
+            let (r, g, b) = hsl_to_rgb(h + real(&args[1]), s, l);
+            string(rgb_hex(r, g, b))
+        }
+        GtqSaturate => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let (h, s, l) = rgb_to_hsl(r, g, b);
+            let (r, g, b) = hsl_to_rgb(h, (s + real(&args[1])).clamp(0.0, 1.0), l);
+            string(rgb_hex(r, g, b))
+        }
+        GtqDesaturate | GtqMute => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let (h, s, l) = rgb_to_hsl(r, g, b);
+            let (r, g, b) = hsl_to_rgb(h, (s - real(&args[1])).clamp(0.0, 1.0), l);
+            string(rgb_hex(r, g, b))
+        }
+        GtqWithRed => {
+            let (_, g, b) = hex_rgb(text(&args[0]));
+            string(rgb_hex(int(&args[1]) as f64, g, b))
+        }
+        GtqWithGreen => {
+            let (r, _, b) = hex_rgb(text(&args[0]));
+            string(rgb_hex(r, int(&args[1]) as f64, b))
+        }
+        GtqWithBlue => {
+            let (r, g, _) = hex_rgb(text(&args[0]));
+            string(rgb_hex(r, g, int(&args[1]) as f64))
+        }
+        GtqBrighten => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let f = 1.0 + real(&args[1]);
+            string(rgb_hex(r * f, g * f, b * f))
+        }
+        GtqDim => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            let f = 1.0 - real(&args[1]);
+            string(rgb_hex(r * f, g * f, b * f))
+        }
+        GtqRedOf => Value::Int(hex_rgb(text(&args[0])).0 as i64),
+        GtqGreenOf => Value::Int(hex_rgb(text(&args[0])).1 as i64),
+        GtqBlueOf => Value::Int(hex_rgb(text(&args[0])).2 as i64),
+        GtqLuminanceOf => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            Value::Real(luminance(r, g, b))
+        }
+        GtqIsDark => {
+            let (r, g, b) = hex_rgb(text(&args[0]));
+            Value::Bool(luminance(r, g, b) < 0.5)
+        }
+
+        // ======== gtq batch G: pure layout helpers ========
+        GtqRowX | GtqColY | GtqGridX | GtqGridY => {
+            Value::Real(real(&args[0]) + int(&args[1]) as f64 * (real(&args[2]) + real(&args[3])))
+        }
+        GtqCenterX | GtqCenterY => Value::Real(real(&args[0]) + (real(&args[1]) - real(&args[2])) / 2.0),
+        GtqRightX | GtqBottomY => {
+            Value::Real(real(&args[0]) + real(&args[1]) - real(&args[2]) - real(&args[3]))
+        }
+        GtqFitW | GtqFitH => {
+            let (w, n, gap) = (real(&args[0]), int(&args[1]) as f64, real(&args[2]));
+            Value::Real((w - (n - 1.0) * gap) / n)
+        }
+        GtqAspectW => Value::Real(real(&args[0]) * real(&args[1])),
+        GtqAspectH => Value::Real(real(&args[0]) / real(&args[1])),
+        GtqLerpPos => Value::Real(real(&args[0]) + (real(&args[1]) - real(&args[0])) * real(&args[2])),
+        GtqRemap => {
+            let (v, a, b, c, d) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
+            Value::Real(c + (v - a) / (b - a) * (d - c))
+        }
+        GtqSnap => {
+            let (v, grid) = (real(&args[0]), real(&args[1]));
+            Value::Real((v / grid).round() * grid)
+        }
+        GtqGolden => Value::Real(real(&args[0]) * 0.618_033_988_749_895),
+        GtqPadIn => Value::Real(real(&args[0]) + real(&args[1])),
+        GtqInsetW => Value::Real(real(&args[0]) - 2.0 * real(&args[1])),
+        GtqDistribute => {
+            let (span, n, i) = (real(&args[0]), int(&args[1]) as f64, int(&args[2]) as f64);
+            Value::Real((i + 0.5) * span / n)
+        }
+        GtqSpanEnd => {
+            let (s, n, iw, gap) = (real(&args[0]), int(&args[1]) as f64, real(&args[2]), real(&args[3]));
+            Value::Real(s + n * (iw + gap) - gap)
+        }
+        GtqScaleAt => {
+            let (v, o, f) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            Value::Real(o + (v - o) * f)
+        }
+        GtqWrapIndex => Value::Int(int(&args[0]).rem_euclid(int(&args[1]).max(1))),
+        GtqClampPos => Value::Real(real(&args[0]).clamp(real(&args[1]), real(&args[2]))),
+        GtqCellX | GtqCellY => Value::Real(real(&args[0]) + int(&args[1]) as f64 * real(&args[2])),
 
         // conversions
         ToInt => match &args[0] {

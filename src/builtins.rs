@@ -727,6 +727,34 @@ pub enum Builtin {
     GtqVslider,
     GtqHovered,
     GtqClicked,
+    // gtq batch G: pure colour helpers
+    GtqLighten, GtqDarken, GtqMix, GtqGrayscale, GtqInvert, GtqComplement, GtqTint, GtqShade,
+    GtqContrastColor, GtqFromRgb, GtqFromHsl, GtqHueShift, GtqSaturate, GtqDesaturate,
+    GtqWithRed, GtqWithGreen, GtqWithBlue, GtqBrighten, GtqDim, GtqMute,
+    GtqRedOf, GtqGreenOf, GtqBlueOf, GtqLuminanceOf, GtqIsDark,
+    // gtq batch G: pure layout helpers
+    GtqRowX, GtqColY, GtqGridX, GtqGridY, GtqCenterX, GtqCenterY, GtqRightX, GtqBottomY,
+    GtqFitW, GtqFitH, GtqAspectW, GtqAspectH, GtqLerpPos, GtqRemap, GtqSnap, GtqGolden,
+    GtqPadIn, GtqInsetW, GtqDistribute, GtqSpanEnd, GtqScaleAt, GtqWrapIndex, GtqClampPos, GtqCellX, GtqCellY,
+    // gtq batch G: vector icons
+    GtqIcon,
+    GtqIcCheck, GtqIcClose, GtqIcPlus, GtqIcMinus, GtqIcUp, GtqIcDown, GtqIcLeft, GtqIcRight,
+    GtqIcChevronUp, GtqIcChevronDown, GtqIcChevronLeft, GtqIcChevronRight,
+    GtqIcMenu, GtqIcKebab, GtqIcGear, GtqIcHome, GtqIcSearch, GtqIcHeart, GtqIcStar, GtqIcUser,
+    GtqIcBell, GtqIcMail, GtqIcTrash, GtqIcPencil, GtqIcSave, GtqIcFolder, GtqIcFile,
+    GtqIcPlay, GtqIcPause, GtqIcStop, GtqIcNext, GtqIcPrev, GtqIcVolume, GtqIcMute,
+    GtqIcWifi, GtqIcBattery, GtqIcLock, GtqIcUnlock, GtqIcEye, GtqIcEyeOff,
+    GtqIcCalendar, GtqIcClock, GtqIcPin, GtqIcTag, GtqIcFlag, GtqIcBookmark,
+    GtqIcDownload, GtqIcUpload, GtqIcRefresh,
+    // gtq batch G: more widgets (display)
+    GtqCard, GtqCardHeader, GtqBadge, GtqChip, GtqPill, GtqAvatar, GtqStatusDot, GtqVdivider,
+    GtqTooltip, GtqToast, GtqGauge, GtqMeter, GtqSpinner, GtqTitlebar, GtqStatusbar, GtqToolbar,
+    GtqBreadcrumb, GtqKbd, GtqProgressRing, GtqSkeleton, GtqImagePlaceholder, GtqRibbon, GtqNote, GtqBar,
+    // gtq batch G: more widgets (interactive)
+    GtqIconButton, GtqLink, GtqSwitch, GtqStepper, GtqSegmented, GtqTabs, GtqNumberbox, GtqListItem,
+    GtqMenuItem, GtqAccordion, GtqRating, GtqColorSwatch, GtqChipClose, GtqFab, GtqPagination,
+    GtqButtonPrimary, GtqButtonGhost, GtqKnob, GtqScrollbarV, GtqDropdown, GtqCheckboxCard,
+    GtqToggleIcon, GtqTextButton, GtqSliderMini, GtqStepperF, GtqCloseButton,
 }
 
 use Builtin::*;
@@ -1719,6 +1747,161 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqVslider, "gtq.vslider", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
     (GtqHovered, "gtq.hovered", Sig::Fixed(&[R, R, R, R], Some(Bool))),
     (GtqClicked, "gtq.clicked", Sig::Fixed(&[R, R, R, R], Some(Bool))),
+    // gtq batch G: pure colour helpers
+    (GtqLighten, "gtq.lighten", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqDarken, "gtq.darken", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqMix, "gtq.mix", Sig::Fixed(&[S, S, R], Some(Str))),
+    (GtqGrayscale, "gtq.grayscale", Sig::Fixed(&[S], Some(Str))),
+    (GtqInvert, "gtq.invert", Sig::Fixed(&[S], Some(Str))),
+    (GtqComplement, "gtq.complement", Sig::Fixed(&[S], Some(Str))),
+    (GtqTint, "gtq.tint", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqShade, "gtq.shade", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqContrastColor, "gtq.contrast_color", Sig::Fixed(&[S], Some(Str))),
+    (GtqFromRgb, "gtq.from_rgb", Sig::Fixed(&[I, I, I], Some(Str))),
+    (GtqFromHsl, "gtq.from_hsl", Sig::Fixed(&[R, R, R], Some(Str))),
+    (GtqHueShift, "gtq.hue_shift", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqSaturate, "gtq.saturate", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqDesaturate, "gtq.desaturate", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqWithRed, "gtq.with_red", Sig::Fixed(&[S, I], Some(Str))),
+    (GtqWithGreen, "gtq.with_green", Sig::Fixed(&[S, I], Some(Str))),
+    (GtqWithBlue, "gtq.with_blue", Sig::Fixed(&[S, I], Some(Str))),
+    (GtqBrighten, "gtq.brighten", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqDim, "gtq.dim", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqMute, "gtq.mute", Sig::Fixed(&[S, R], Some(Str))),
+    (GtqRedOf, "gtq.red_of", Sig::Fixed(&[S], Some(Int))),
+    (GtqGreenOf, "gtq.green_of", Sig::Fixed(&[S], Some(Int))),
+    (GtqBlueOf, "gtq.blue_of", Sig::Fixed(&[S], Some(Int))),
+    (GtqLuminanceOf, "gtq.luminance_of", Sig::Fixed(&[S], Some(Real))),
+    (GtqIsDark, "gtq.is_dark", Sig::Fixed(&[S], Some(Bool))),
+    // gtq batch G: pure layout helpers
+    (GtqRowX, "gtq.row_x", Sig::Fixed(&[R, I, R, R], Some(Real))),
+    (GtqColY, "gtq.col_y", Sig::Fixed(&[R, I, R, R], Some(Real))),
+    (GtqGridX, "gtq.grid_x", Sig::Fixed(&[R, I, R, R], Some(Real))),
+    (GtqGridY, "gtq.grid_y", Sig::Fixed(&[R, I, R, R], Some(Real))),
+    (GtqCenterX, "gtq.center_x", Sig::Fixed(&[R, R, R], Some(Real))),
+    (GtqCenterY, "gtq.center_y", Sig::Fixed(&[R, R, R], Some(Real))),
+    (GtqRightX, "gtq.right_x", Sig::Fixed(&[R, R, R, R], Some(Real))),
+    (GtqBottomY, "gtq.bottom_y", Sig::Fixed(&[R, R, R, R], Some(Real))),
+    (GtqFitW, "gtq.fit_w", Sig::Fixed(&[R, I, R], Some(Real))),
+    (GtqFitH, "gtq.fit_h", Sig::Fixed(&[R, I, R], Some(Real))),
+    (GtqAspectW, "gtq.aspect_w", Sig::Fixed(&[R, R], Some(Real))),
+    (GtqAspectH, "gtq.aspect_h", Sig::Fixed(&[R, R], Some(Real))),
+    (GtqLerpPos, "gtq.lerp_pos", Sig::Fixed(&[R, R, R], Some(Real))),
+    (GtqRemap, "gtq.remap", Sig::Fixed(&[R, R, R, R, R], Some(Real))),
+    (GtqSnap, "gtq.snap", Sig::Fixed(&[R, R], Some(Real))),
+    (GtqGolden, "gtq.golden", Sig::Fixed(&[R], Some(Real))),
+    (GtqPadIn, "gtq.pad_in", Sig::Fixed(&[R, R], Some(Real))),
+    (GtqInsetW, "gtq.inset_w", Sig::Fixed(&[R, R], Some(Real))),
+    (GtqDistribute, "gtq.distribute", Sig::Fixed(&[R, I, I], Some(Real))),
+    (GtqSpanEnd, "gtq.span_end", Sig::Fixed(&[R, I, R, R], Some(Real))),
+    (GtqScaleAt, "gtq.scale_at", Sig::Fixed(&[R, R, R], Some(Real))),
+    (GtqWrapIndex, "gtq.wrap_index", Sig::Fixed(&[I, I], Some(Int))),
+    (GtqClampPos, "gtq.clamp_pos", Sig::Fixed(&[R, R, R], Some(Real))),
+    (GtqCellX, "gtq.cell_x", Sig::Fixed(&[R, I, R], Some(Real))),
+    (GtqCellY, "gtq.cell_y", Sig::Fixed(&[R, I, R], Some(Real))),
+    // gtq batch G: vector icons
+    (GtqIcon, "gtq.icon", Sig::Fixed(&[R, R, R, S, S], None)),
+    (GtqIcCheck, "gtq.ic_check", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcClose, "gtq.ic_close", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcPlus, "gtq.ic_plus", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcMinus, "gtq.ic_minus", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcUp, "gtq.ic_up", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcDown, "gtq.ic_down", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcLeft, "gtq.ic_left", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcRight, "gtq.ic_right", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcChevronUp, "gtq.ic_chevron_up", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcChevronDown, "gtq.ic_chevron_down", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcChevronLeft, "gtq.ic_chevron_left", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcChevronRight, "gtq.ic_chevron_right", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcMenu, "gtq.ic_menu", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcKebab, "gtq.ic_kebab", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcGear, "gtq.ic_gear", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcHome, "gtq.ic_home", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcSearch, "gtq.ic_search", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcHeart, "gtq.ic_heart", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcStar, "gtq.ic_star", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcUser, "gtq.ic_user", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcBell, "gtq.ic_bell", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcMail, "gtq.ic_mail", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcTrash, "gtq.ic_trash", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcPencil, "gtq.ic_pencil", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcSave, "gtq.ic_save", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcFolder, "gtq.ic_folder", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcFile, "gtq.ic_file", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcPlay, "gtq.ic_play", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcPause, "gtq.ic_pause", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcStop, "gtq.ic_stop", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcNext, "gtq.ic_next", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcPrev, "gtq.ic_prev", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcVolume, "gtq.ic_volume", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcMute, "gtq.ic_mute", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcWifi, "gtq.ic_wifi", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcBattery, "gtq.ic_battery", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcLock, "gtq.ic_lock", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcUnlock, "gtq.ic_unlock", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcEye, "gtq.ic_eye", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcEyeOff, "gtq.ic_eye_off", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcCalendar, "gtq.ic_calendar", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcClock, "gtq.ic_clock", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcPin, "gtq.ic_pin", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcTag, "gtq.ic_tag", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcFlag, "gtq.ic_flag", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcBookmark, "gtq.ic_bookmark", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcDownload, "gtq.ic_download", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcUpload, "gtq.ic_upload", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqIcRefresh, "gtq.ic_refresh", Sig::Fixed(&[R, R, R, S], None)),
+    // gtq batch G: more widgets (display)
+    (GtqCard, "gtq.card", Sig::Fixed(&[R, R, R, R, S], None)),
+    (GtqCardHeader, "gtq.card_header", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqBadge, "gtq.badge", Sig::Fixed(&[R, R, S, S], None)),
+    (GtqChip, "gtq.chip", Sig::Fixed(&[R, R, S, S], None)),
+    (GtqPill, "gtq.pill", Sig::Fixed(&[R, R, S, S], None)),
+    (GtqAvatar, "gtq.avatar", Sig::Fixed(&[R, R, R, S, S], None)),
+    (GtqStatusDot, "gtq.status_dot", Sig::Fixed(&[R, R, S], None)),
+    (GtqVdivider, "gtq.vdivider", Sig::Fixed(&[R, R, R], None)),
+    (GtqTooltip, "gtq.tooltip", Sig::Fixed(&[R, R, S], None)),
+    (GtqToast, "gtq.toast", Sig::Fixed(&[R, R, R, S, S], None)),
+    (GtqGauge, "gtq.gauge", Sig::Fixed(&[R, R, R, R, R], None)),
+    (GtqMeter, "gtq.meter", Sig::Fixed(&[R, R, R, R, R, S], None)),
+    (GtqSpinner, "gtq.spinner", Sig::Fixed(&[R, R, R, R], None)),
+    (GtqTitlebar, "gtq.titlebar", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqStatusbar, "gtq.statusbar", Sig::Fixed(&[R, R, R, S], None)),
+    (GtqToolbar, "gtq.toolbar", Sig::Fixed(&[R, R, R, R], None)),
+    (GtqBreadcrumb, "gtq.breadcrumb", Sig::Fixed(&[R, R, S], None)),
+    (GtqKbd, "gtq.kbd", Sig::Fixed(&[R, R, S], None)),
+    (GtqProgressRing, "gtq.progress_ring", Sig::Fixed(&[R, R, R, R, R], None)),
+    (GtqSkeleton, "gtq.skeleton", Sig::Fixed(&[R, R, R, R], None)),
+    (GtqImagePlaceholder, "gtq.image_placeholder", Sig::Fixed(&[R, R, R, R], None)),
+    (GtqRibbon, "gtq.ribbon", Sig::Fixed(&[R, R, S, S], None)),
+    (GtqNote, "gtq.note", Sig::Fixed(&[R, R, R, R, S], None)),
+    (GtqBar, "gtq.bar", Sig::Fixed(&[R, R, R, R, S], None)),
+    // gtq batch G: more widgets (interactive)
+    (GtqIconButton, "gtq.icon_button", Sig::Fixed(&[R, R, R, S], Some(Bool))),
+    (GtqLink, "gtq.link", Sig::Fixed(&[R, R, S], Some(Bool))),
+    (GtqSwitch, "gtq.switch", Sig::Fixed(&[R, R, Bool], Some(Bool))),
+    (GtqStepper, "gtq.stepper", Sig::Fixed(&[R, R, I, I, I], Some(Int))),
+    (GtqSegmented, "gtq.segmented", Sig::Fixed(&[R, R, R, S, I], Some(Int))),
+    (GtqTabs, "gtq.tabs", Sig::Fixed(&[R, R, R, S, I], Some(Int))),
+    (GtqNumberbox, "gtq.numberbox", Sig::Fixed(&[R, R, R, R], Some(Real))),
+    (GtqListItem, "gtq.list_item", Sig::Fixed(&[R, R, R, S, Bool], Some(Bool))),
+    (GtqMenuItem, "gtq.menu_item", Sig::Fixed(&[R, R, R, S], Some(Bool))),
+    (GtqAccordion, "gtq.accordion", Sig::Fixed(&[R, R, R, S, Bool], Some(Bool))),
+    (GtqRating, "gtq.rating", Sig::Fixed(&[R, R, I], Some(Int))),
+    (GtqColorSwatch, "gtq.color_swatch", Sig::Fixed(&[R, R, R, S], Some(Bool))),
+    (GtqChipClose, "gtq.chip_close", Sig::Fixed(&[R, R, S, S], Some(Bool))),
+    (GtqFab, "gtq.fab", Sig::Fixed(&[R, R, R, S], Some(Bool))),
+    (GtqPagination, "gtq.pagination", Sig::Fixed(&[R, R, I, I], Some(Int))),
+    (GtqButtonPrimary, "gtq.button_primary", Sig::Fixed(&[R, R, R, R, S, S], Some(Bool))),
+    (GtqButtonGhost, "gtq.button_ghost", Sig::Fixed(&[R, R, R, R, S], Some(Bool))),
+    (GtqKnob, "gtq.knob", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
+    (GtqScrollbarV, "gtq.scrollbar_v", Sig::Fixed(&[R, R, R, R, R], Some(Real))),
+    (GtqDropdown, "gtq.dropdown", Sig::Fixed(&[R, R, R, S, I], Some(Int))),
+    (GtqCheckboxCard, "gtq.checkbox_card", Sig::Fixed(&[R, R, R, S, Bool], Some(Bool))),
+    (GtqToggleIcon, "gtq.toggle_icon", Sig::Fixed(&[R, R, R, S, Bool], Some(Bool))),
+    (GtqTextButton, "gtq.text_button", Sig::Fixed(&[R, R, S, S], Some(Bool))),
+    (GtqSliderMini, "gtq.slider_mini", Sig::Fixed(&[R, R, R, R], Some(Real))),
+    (GtqStepperF, "gtq.stepper_f", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
+    (GtqCloseButton, "gtq.close_button", Sig::Fixed(&[R, R, R], Some(Bool))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1879,6 +2062,299 @@ fn text(v: &Value) -> &str {
     match v {
         Value::Str(s) => s,
         other => panic!("internal error: expected a string, found {:?}", other),
+    }
+}
+
+/// Draw a named vector icon inside the box (x, y)..(x+s, y+s). Used by the `gtq` icon helpers.
+fn draw_icon(c: &mut crate::canvas::Canvas, name: &str, x: f64, y: f64, s: f64, col: u32) {
+    let l = |c: &mut crate::canvas::Canvas, x1: f64, y1: f64, x2: f64, y2: f64| {
+        c.line(x + x1 * s, y + y1 * s, x + x2 * s, y + y2 * s, col);
+    };
+    let ci = |c: &mut crate::canvas::Canvas, cx: f64, cy: f64, r: f64| {
+        c.circle(x + cx * s, y + cy * s, r * s, col);
+    };
+    let ring = |c: &mut crate::canvas::Canvas, cx: f64, cy: f64, r: f64| {
+        let n = 36;
+        let (ox, oy) = (x + cx * s, y + cy * s);
+        let rr = r * s;
+        let mut prev = (ox + rr, oy);
+        for k in 1..=n {
+            let a = k as f64 / n as f64 * std::f64::consts::TAU;
+            let p = (ox + rr * a.cos(), oy + rr * a.sin());
+            c.line(prev.0, prev.1, p.0, p.1, col);
+            prev = p;
+        }
+    };
+    let rc = |c: &mut crate::canvas::Canvas, x1: f64, y1: f64, x2: f64, y2: f64| {
+        c.rect(x + x1 * s, y + y1 * s, (x2 - x1) * s, (y2 - y1) * s, col);
+    };
+    match name {
+        "check" => {
+            l(c, 0.2, 0.55, 0.42, 0.78);
+            l(c, 0.42, 0.78, 0.82, 0.25);
+        }
+        "close" => {
+            l(c, 0.22, 0.22, 0.78, 0.78);
+            l(c, 0.78, 0.22, 0.22, 0.78);
+        }
+        "plus" => {
+            l(c, 0.5, 0.18, 0.5, 0.82);
+            l(c, 0.18, 0.5, 0.82, 0.5);
+        }
+        "minus" => l(c, 0.18, 0.5, 0.82, 0.5),
+        "up" => {
+            l(c, 0.5, 0.82, 0.5, 0.22);
+            l(c, 0.5, 0.22, 0.3, 0.44);
+            l(c, 0.5, 0.22, 0.7, 0.44);
+        }
+        "down" => {
+            l(c, 0.5, 0.18, 0.5, 0.78);
+            l(c, 0.5, 0.78, 0.3, 0.56);
+            l(c, 0.5, 0.78, 0.7, 0.56);
+        }
+        "left" => {
+            l(c, 0.82, 0.5, 0.22, 0.5);
+            l(c, 0.22, 0.5, 0.44, 0.3);
+            l(c, 0.22, 0.5, 0.44, 0.7);
+        }
+        "right" => {
+            l(c, 0.18, 0.5, 0.78, 0.5);
+            l(c, 0.78, 0.5, 0.56, 0.3);
+            l(c, 0.78, 0.5, 0.56, 0.7);
+        }
+        "chevron_up" => {
+            l(c, 0.25, 0.6, 0.5, 0.35);
+            l(c, 0.5, 0.35, 0.75, 0.6);
+        }
+        "chevron_down" => {
+            l(c, 0.25, 0.4, 0.5, 0.65);
+            l(c, 0.5, 0.65, 0.75, 0.4);
+        }
+        "chevron_left" => {
+            l(c, 0.6, 0.25, 0.35, 0.5);
+            l(c, 0.35, 0.5, 0.6, 0.75);
+        }
+        "chevron_right" => {
+            l(c, 0.4, 0.25, 0.65, 0.5);
+            l(c, 0.65, 0.5, 0.4, 0.75);
+        }
+        "menu" => {
+            l(c, 0.2, 0.3, 0.8, 0.3);
+            l(c, 0.2, 0.5, 0.8, 0.5);
+            l(c, 0.2, 0.7, 0.8, 0.7);
+        }
+        "kebab" => {
+            ci(c, 0.5, 0.25, 0.06);
+            ci(c, 0.5, 0.5, 0.06);
+            ci(c, 0.5, 0.75, 0.06);
+        }
+        "gear" => {
+            ring(c, 0.5, 0.5, 0.3);
+            ring(c, 0.5, 0.5, 0.12);
+            l(c, 0.5, 0.1, 0.5, 0.25);
+            l(c, 0.5, 0.75, 0.5, 0.9);
+            l(c, 0.1, 0.5, 0.25, 0.5);
+            l(c, 0.75, 0.5, 0.9, 0.5);
+        }
+        "home" => {
+            l(c, 0.18, 0.5, 0.5, 0.2);
+            l(c, 0.5, 0.2, 0.82, 0.5);
+            rc(c, 0.3, 0.5, 0.7, 0.8);
+        }
+        "search" => {
+            ring(c, 0.42, 0.42, 0.22);
+            l(c, 0.58, 0.58, 0.82, 0.82);
+        }
+        "heart" => {
+            ci(c, 0.34, 0.38, 0.16);
+            ci(c, 0.66, 0.38, 0.16);
+            l(c, 0.2, 0.46, 0.5, 0.82);
+            l(c, 0.8, 0.46, 0.5, 0.82);
+        }
+        "star" => {
+            let (cx, cy, ro, ri) = (x + 0.5 * s, y + 0.52 * s, 0.4 * s, 0.17 * s);
+            let mut pts = [(0.0, 0.0); 10];
+            for (k, p) in pts.iter_mut().enumerate() {
+                let ang = -std::f64::consts::FRAC_PI_2 + k as f64 * std::f64::consts::PI / 5.0;
+                let r = if k % 2 == 0 { ro } else { ri };
+                *p = (cx + r * ang.cos(), cy + r * ang.sin());
+            }
+            for k in 0..10 {
+                let (a, b) = (pts[k], pts[(k + 1) % 10]);
+                c.line(a.0, a.1, b.0, b.1, col);
+            }
+        }
+        "user" => {
+            ci(c, 0.5, 0.35, 0.16);
+            l(c, 0.25, 0.82, 0.34, 0.62);
+            l(c, 0.34, 0.62, 0.66, 0.62);
+            l(c, 0.66, 0.62, 0.75, 0.82);
+        }
+        "bell" => {
+            ring(c, 0.5, 0.42, 0.22);
+            l(c, 0.28, 0.6, 0.72, 0.6);
+            ci(c, 0.5, 0.72, 0.05);
+        }
+        "mail" => {
+            rc(c, 0.2, 0.3, 0.8, 0.7);
+            l(c, 0.2, 0.3, 0.5, 0.52);
+            l(c, 0.5, 0.52, 0.8, 0.3);
+        }
+        "trash" => {
+            l(c, 0.25, 0.3, 0.75, 0.3);
+            l(c, 0.4, 0.3, 0.42, 0.22);
+            l(c, 0.42, 0.22, 0.58, 0.22);
+            l(c, 0.58, 0.22, 0.6, 0.3);
+            rc(c, 0.3, 0.3, 0.7, 0.8);
+        }
+        "pencil" => {
+            l(c, 0.25, 0.78, 0.68, 0.32);
+            l(c, 0.68, 0.32, 0.78, 0.42);
+            l(c, 0.78, 0.42, 0.35, 0.88);
+            l(c, 0.25, 0.78, 0.22, 0.88);
+        }
+        "save" => {
+            rc(c, 0.22, 0.22, 0.78, 0.78);
+            rc(c, 0.35, 0.22, 0.65, 0.42);
+            rc(c, 0.32, 0.55, 0.68, 0.78);
+        }
+        "folder" => {
+            rc(c, 0.2, 0.35, 0.8, 0.75);
+            l(c, 0.2, 0.35, 0.34, 0.28);
+            l(c, 0.34, 0.28, 0.48, 0.35);
+        }
+        "file" => {
+            rc(c, 0.3, 0.2, 0.7, 0.8);
+            l(c, 0.58, 0.2, 0.58, 0.32);
+            l(c, 0.58, 0.32, 0.7, 0.32);
+        }
+        "play" => {
+            l(c, 0.32, 0.25, 0.32, 0.75);
+            l(c, 0.32, 0.25, 0.78, 0.5);
+            l(c, 0.32, 0.75, 0.78, 0.5);
+        }
+        "pause" => {
+            rc(c, 0.32, 0.25, 0.44, 0.75);
+            rc(c, 0.56, 0.25, 0.68, 0.75);
+        }
+        "stop" => rc(c, 0.3, 0.3, 0.7, 0.7),
+        "next" => {
+            l(c, 0.28, 0.25, 0.28, 0.75);
+            l(c, 0.28, 0.25, 0.62, 0.5);
+            l(c, 0.28, 0.75, 0.62, 0.5);
+            l(c, 0.68, 0.25, 0.68, 0.75);
+        }
+        "prev" => {
+            l(c, 0.72, 0.25, 0.72, 0.75);
+            l(c, 0.72, 0.25, 0.38, 0.5);
+            l(c, 0.72, 0.75, 0.38, 0.5);
+            l(c, 0.32, 0.25, 0.32, 0.75);
+        }
+        "volume" => {
+            rc(c, 0.2, 0.42, 0.35, 0.58);
+            l(c, 0.35, 0.5, 0.55, 0.3);
+            l(c, 0.55, 0.3, 0.55, 0.7);
+            l(c, 0.35, 0.5, 0.55, 0.7);
+            l(c, 0.64, 0.4, 0.72, 0.5);
+            l(c, 0.72, 0.5, 0.64, 0.6);
+        }
+        "mute" => {
+            rc(c, 0.2, 0.42, 0.35, 0.58);
+            l(c, 0.35, 0.5, 0.55, 0.3);
+            l(c, 0.55, 0.3, 0.55, 0.7);
+            l(c, 0.35, 0.5, 0.55, 0.7);
+            l(c, 0.62, 0.4, 0.8, 0.6);
+            l(c, 0.8, 0.4, 0.62, 0.6);
+        }
+        "wifi" => {
+            ci(c, 0.5, 0.78, 0.05);
+            ring(c, 0.5, 0.78, 0.22);
+            ring(c, 0.5, 0.78, 0.38);
+        }
+        "battery" => {
+            rc(c, 0.2, 0.38, 0.75, 0.62);
+            rc(c, 0.75, 0.45, 0.8, 0.55);
+            rc(c, 0.24, 0.42, 0.5, 0.58);
+        }
+        "lock" => {
+            rc(c, 0.3, 0.5, 0.7, 0.8);
+            ring(c, 0.5, 0.42, 0.14);
+            l(c, 0.36, 0.42, 0.36, 0.5);
+            l(c, 0.64, 0.42, 0.64, 0.5);
+        }
+        "unlock" => {
+            rc(c, 0.3, 0.5, 0.7, 0.8);
+            ring(c, 0.38, 0.42, 0.14);
+            l(c, 0.52, 0.4, 0.52, 0.5);
+        }
+        "eye" => {
+            l(c, 0.2, 0.5, 0.5, 0.32);
+            l(c, 0.5, 0.32, 0.8, 0.5);
+            l(c, 0.2, 0.5, 0.5, 0.68);
+            l(c, 0.5, 0.68, 0.8, 0.5);
+            ci(c, 0.5, 0.5, 0.1);
+        }
+        "eye_off" => {
+            l(c, 0.2, 0.5, 0.5, 0.32);
+            l(c, 0.5, 0.32, 0.8, 0.5);
+            l(c, 0.2, 0.5, 0.5, 0.68);
+            l(c, 0.5, 0.68, 0.8, 0.5);
+            ci(c, 0.5, 0.5, 0.1);
+            l(c, 0.2, 0.8, 0.8, 0.2);
+        }
+        "calendar" => {
+            rc(c, 0.2, 0.28, 0.8, 0.78);
+            l(c, 0.2, 0.42, 0.8, 0.42);
+            l(c, 0.35, 0.28, 0.35, 0.2);
+            l(c, 0.65, 0.28, 0.65, 0.2);
+        }
+        "clock" => {
+            ring(c, 0.5, 0.5, 0.3);
+            l(c, 0.5, 0.5, 0.5, 0.3);
+            l(c, 0.5, 0.5, 0.64, 0.5);
+        }
+        "pin" => {
+            ci(c, 0.5, 0.4, 0.18);
+            l(c, 0.36, 0.5, 0.5, 0.82);
+            l(c, 0.64, 0.5, 0.5, 0.82);
+        }
+        "tag" => {
+            l(c, 0.25, 0.3, 0.6, 0.3);
+            l(c, 0.6, 0.3, 0.8, 0.5);
+            l(c, 0.8, 0.5, 0.6, 0.7);
+            l(c, 0.6, 0.7, 0.25, 0.7);
+            l(c, 0.25, 0.7, 0.25, 0.3);
+            ci(c, 0.37, 0.44, 0.05);
+        }
+        "flag" => {
+            l(c, 0.3, 0.2, 0.3, 0.8);
+            rc(c, 0.3, 0.24, 0.66, 0.46);
+        }
+        "bookmark" => {
+            l(c, 0.32, 0.2, 0.32, 0.8);
+            l(c, 0.32, 0.8, 0.5, 0.62);
+            l(c, 0.5, 0.62, 0.68, 0.8);
+            l(c, 0.68, 0.8, 0.68, 0.2);
+            l(c, 0.32, 0.2, 0.68, 0.2);
+        }
+        "download" => {
+            l(c, 0.5, 0.22, 0.5, 0.62);
+            l(c, 0.35, 0.48, 0.5, 0.64);
+            l(c, 0.65, 0.48, 0.5, 0.64);
+            l(c, 0.28, 0.78, 0.72, 0.78);
+        }
+        "upload" => {
+            l(c, 0.5, 0.64, 0.5, 0.24);
+            l(c, 0.35, 0.4, 0.5, 0.24);
+            l(c, 0.65, 0.4, 0.5, 0.24);
+            l(c, 0.28, 0.78, 0.72, 0.78);
+        }
+        "refresh" => {
+            ring(c, 0.5, 0.5, 0.28);
+            l(c, 0.78, 0.5, 0.68, 0.38);
+            l(c, 0.78, 0.5, 0.88, 0.38);
+        }
+        _ => ci(c, 0.5, 0.5, 0.3),
     }
 }
 
@@ -2320,6 +2796,923 @@ impl Env {
                     (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
                 };
                 Value::Bool(hover && down && !self.prev_down)
+            }
+            // ---- gtq batch G: display widgets ----
+            GtqCard => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let bg = parse_color(text(&args[4]))?;
+                self.window()?.canvas.rect(x, y, w, h, bg);
+                Value::Null
+            }
+            GtqCardHeader => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let title = text(&args[3]).to_string();
+                let (bg, line, white) = (parse_color("#1e293b")?, parse_color("#334155")?, parse_color("#e2e8f0")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, 30.0, bg);
+                g.canvas.line(x, y + 30.0, x + w, y + 30.0, line);
+                self.fonts.draw(&mut g.canvas, x + 10.0, y + 9.0, &title, white)?;
+                Value::Null
+            }
+            GtqBadge => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let (bg, white) = (parse_color(text(&args[3]))?, parse_color("#ffffff")?);
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, tw + 16.0, 20.0, bg);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 4.0, &label, white)?;
+                Value::Null
+            }
+            GtqChip => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let (fg, bg) = (parse_color(text(&args[3]))?, parse_color("#1e293b")?);
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let (w, h) = (tw + 18.0, 22.0);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.line(x, y, x + w, y, fg);
+                g.canvas.line(x, y + h, x + w, y + h, fg);
+                g.canvas.line(x, y, x, y + h, fg);
+                g.canvas.line(x + w, y, x + w, y + h, fg);
+                self.fonts.draw(&mut g.canvas, x + 9.0, y + 5.0, &label, fg)?;
+                Value::Null
+            }
+            GtqPill => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let (bg, white) = (parse_color(text(&args[3]))?, parse_color("#ffffff")?);
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let (w, h) = (tw + 20.0, 22.0);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x + h / 2.0, y, w - h, h, bg);
+                g.canvas.circle(x + h / 2.0, y + h / 2.0, h / 2.0, bg);
+                g.canvas.circle(x + w - h / 2.0, y + h / 2.0, h / 2.0, bg);
+                self.fonts.draw(&mut g.canvas, x + 10.0, y + 5.0, &label, white)?;
+                Value::Null
+            }
+            GtqAvatar => {
+                let (x, y, size) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let initial = text(&args[3]).to_string();
+                let (bg, white) = (parse_color(text(&args[4]))?, parse_color("#ffffff")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.circle(x + size / 2.0, y + size / 2.0, size / 2.0, bg);
+                self.fonts.draw(&mut g.canvas, x + size / 2.0 - 4.0, y + size / 2.0 - 6.0, &initial, white)?;
+                Value::Null
+            }
+            GtqStatusDot => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let c = parse_color(text(&args[2]))?;
+                self.window()?.canvas.circle(x + 5.0, y + 5.0, 5.0, c);
+                Value::Null
+            }
+            GtqVdivider => {
+                let (x, y, h) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let c = parse_color("#475569")?;
+                self.window()?.canvas.line(x, y, x, y + h, c);
+                Value::Null
+            }
+            GtqTooltip => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let (bg, white) = (parse_color("#0b1220")?, parse_color("#e2e8f0")?);
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, tw + 16.0, 24.0, bg);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 6.0, &label, white)?;
+                Value::Null
+            }
+            GtqToast => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let label = text(&args[3]).to_string();
+                let (accent, bg, white) =
+                    (parse_color(text(&args[4]))?, parse_color("#1e293b")?, parse_color("#e2e8f0")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, 40.0, bg);
+                g.canvas.rect(x, y, 5.0, 40.0, accent);
+                self.fonts.draw(&mut g.canvas, x + 16.0, y + 14.0, &label, white)?;
+                Value::Null
+            }
+            GtqGauge => {
+                let (x, y, r, val, maxv) =
+                    (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
+                let t = if maxv > 0.0 { (val / maxv).clamp(0.0, 1.0) } else { 0.0 };
+                let (track, fg) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let (cx, cy) = (x + r, y + r);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                let n = 40;
+                for k in 0..n {
+                    let a0 = std::f64::consts::PI + k as f64 / n as f64 * std::f64::consts::PI;
+                    let a1 = std::f64::consts::PI + (k + 1) as f64 / n as f64 * std::f64::consts::PI;
+                    let col = if (k as f64 / n as f64) < t { fg } else { track };
+                    g.canvas.line(cx + r * a0.cos(), cy + r * a0.sin(), cx + r * a1.cos(), cy + r * a1.sin(), col);
+                }
+                Value::Null
+            }
+            GtqMeter => {
+                let (x, y, w, val, maxv) =
+                    (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
+                let fg = parse_color(text(&args[5]))?;
+                let bg = parse_color("#374151")?;
+                let t = if maxv > 0.0 { (val / maxv).clamp(0.0, 1.0) } else { 0.0 };
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, 12.0, bg);
+                g.canvas.rect(x, y, w * t, 12.0, fg);
+                Value::Null
+            }
+            GtqSpinner => {
+                let (x, y, r, phase) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let (track, fg) = (parse_color("#334155")?, parse_color("#60a5fa")?);
+                let (cx, cy) = (x + r, y + r);
+                let start = phase * std::f64::consts::TAU;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                let n = 32;
+                for k in 0..n {
+                    let a0 = k as f64 / n as f64 * std::f64::consts::TAU;
+                    let a1 = (k + 1) as f64 / n as f64 * std::f64::consts::TAU;
+                    let rel = (a0 - start).rem_euclid(std::f64::consts::TAU);
+                    let col = if rel < 0.3 * std::f64::consts::TAU { fg } else { track };
+                    g.canvas.line(cx + r * a0.cos(), cy + r * a0.sin(), cx + r * a1.cos(), cy + r * a1.sin(), col);
+                }
+                Value::Null
+            }
+            GtqTitlebar => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let title = text(&args[3]).to_string();
+                let (bg, white) = (parse_color("#0b1220")?, parse_color("#e2e8f0")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, 34.0, bg);
+                self.fonts.draw(&mut g.canvas, x + 12.0, y + 11.0, &title, white)?;
+                Value::Null
+            }
+            GtqStatusbar => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let txt = text(&args[3]).to_string();
+                let (bg, gray) = (parse_color("#1e293b")?, parse_color("#94a3b8")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, 24.0, bg);
+                self.fonts.draw(&mut g.canvas, x + 10.0, y + 6.0, &txt, gray)?;
+                Value::Null
+            }
+            GtqToolbar => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let (bg, line) = (parse_color("#1e293b")?, parse_color("#334155")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.line(x, y + h, x + w, y + h, line);
+                Value::Null
+            }
+            GtqBreadcrumb => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let txt = text(&args[2]).to_string();
+                let gray = parse_color("#94a3b8")?;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                self.fonts.draw(&mut g.canvas, x, y, &txt, gray)?;
+                Value::Null
+            }
+            GtqKbd => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let (bg, border, white) =
+                    (parse_color("#334155")?, parse_color("#64748b")?, parse_color("#e2e8f0")?);
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let (w, h) = (tw + 14.0, 22.0);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.line(x, y, x + w, y, border);
+                g.canvas.line(x, y + h, x + w, y + h, border);
+                g.canvas.line(x, y, x, y + h, border);
+                g.canvas.line(x + w, y, x + w, y + h, border);
+                self.fonts.draw(&mut g.canvas, x + 7.0, y + 5.0, &label, white)?;
+                Value::Null
+            }
+            GtqProgressRing => {
+                let (x, y, r, val, maxv) =
+                    (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
+                let t = if maxv > 0.0 { (val / maxv).clamp(0.0, 1.0) } else { 0.0 };
+                let (track, fg) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let (cx, cy) = (x + r, y + r);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                let n = 48;
+                for k in 0..n {
+                    let base = -std::f64::consts::FRAC_PI_2;
+                    let a0 = base + k as f64 / n as f64 * std::f64::consts::TAU;
+                    let a1 = base + (k + 1) as f64 / n as f64 * std::f64::consts::TAU;
+                    let col = if (k as f64 / n as f64) < t { fg } else { track };
+                    g.canvas.line(cx + r * a0.cos(), cy + r * a0.sin(), cx + r * a1.cos(), cy + r * a1.sin(), col);
+                }
+                Value::Null
+            }
+            GtqSkeleton => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let c = parse_color("#334155")?;
+                self.window()?.canvas.rect(x, y, w, h, c);
+                Value::Null
+            }
+            GtqImagePlaceholder => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let (bg, line) = (parse_color("#1e293b")?, parse_color("#475569")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.line(x, y, x + w, y, line);
+                g.canvas.line(x, y + h, x + w, y + h, line);
+                g.canvas.line(x, y, x, y + h, line);
+                g.canvas.line(x + w, y, x + w, y + h, line);
+                g.canvas.line(x, y, x + w, y + h, line);
+                g.canvas.line(x + w, y, x, y + h, line);
+                Value::Null
+            }
+            GtqRibbon => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let (bg, white) = (parse_color(text(&args[3]))?, parse_color("#ffffff")?);
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let (w, h) = (tw + 16.0, 22.0);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.line(x + w, y, x + w + 8.0, y + h / 2.0, bg);
+                g.canvas.line(x + w + 8.0, y + h / 2.0, x + w, y + h, bg);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 5.0, &label, white)?;
+                Value::Null
+            }
+            GtqNote => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let (bg, fold) = (parse_color(text(&args[4]))?, parse_color("#1f2937")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.line(x + w - 14.0, y + h, x + w, y + h - 14.0, fold);
+                Value::Null
+            }
+            GtqBar => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let c = parse_color(text(&args[4]))?;
+                self.window()?.canvas.rect(x, y, w, h, c);
+                Value::Null
+            }
+
+            // ---- gtq batch G: interactive widgets ----
+            GtqIconButton => {
+                let (x, y, size) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let icon = text(&args[3]).to_string();
+                let bx = size + 12.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + bx && my >= y && my <= y + bx, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let (bg, fg) = (parse_color(if hover { "#334155" } else { "#1e293b" })?, parse_color("#e2e8f0")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, bx, bx, bg);
+                draw_icon(&mut g.canvas, &icon, x + 6.0, y + 6.0, size, fg);
+                Value::Bool(clicked)
+            }
+            GtqLink => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + tw && my >= y && my <= y + 16.0, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let col = parse_color(if hover { "#93c5fd" } else { "#60a5fa" })?;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                self.fonts.draw(&mut g.canvas, x, y, &label, col)?;
+                g.canvas.line(x, y + 15.0, x + tw, y + 15.0, col);
+                Value::Bool(clicked)
+            }
+            GtqSwitch => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let on = matches!(&args[2], Value::Bool(true));
+                let (w, h) = (40.0, 18.0);
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let new_on = if hover && down && !self.prev_down { !on } else { on };
+                let (track, knob) =
+                    (parse_color(if new_on { "#22c55e" } else { "#4a5568" })?, parse_color("#f8fafc")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, track);
+                let kx = if new_on { x + w - h / 2.0 - 2.0 } else { x + h / 2.0 + 2.0 };
+                g.canvas.circle(kx, y + h / 2.0, h / 2.0 - 2.0, knob);
+                Value::Bool(new_on)
+            }
+            GtqStepper => {
+                let (x, y, val, minv, maxv) =
+                    (real(&args[0]), real(&args[1]), int(&args[2]), int(&args[3]), int(&args[4]));
+                let (bw, fw, h) = (22.0, 44.0, 24.0);
+                let (mx, my, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    (a as f64, b as f64, g.click())
+                };
+                let edge = down && !self.prev_down;
+                let over = |bx: f64| mx >= bx && mx <= bx + bw && my >= y && my <= y + h;
+                let mut v = val;
+                if edge && over(x) {
+                    v = (v - 1).max(minv);
+                }
+                if edge && over(x + bw + fw) {
+                    v = (v + 1).min(maxv);
+                }
+                let (btn, box_c, white) =
+                    (parse_color("#4a5568")?, parse_color("#1f2937")?, parse_color("#e2e8f0")?);
+                let txt = v.to_string();
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, bw, h, btn);
+                g.canvas.rect(x + bw, y, fw, h, box_c);
+                g.canvas.rect(x + bw + fw, y, bw, h, btn);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 4.0, "-", white)?;
+                self.fonts.draw(&mut g.canvas, x + bw + fw + 7.0, y + 4.0, "+", white)?;
+                self.fonts.draw(&mut g.canvas, x + bw + 10.0, y + 4.0, &txt, white)?;
+                Value::Int(v)
+            }
+            GtqSegmented | GtqTabs => {
+                let is_tabs = matches!(b, GtqTabs);
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let opts: Vec<String> = text(&args[3]).split(',').map(|s| s.trim().to_string()).collect();
+                let n = opts.len().max(1);
+                let idx = int(&args[4]).rem_euclid(n as i64) as usize;
+                let h = if is_tabs { 30.0 } else { 28.0 };
+                let seg = w / n as f64;
+                let (mx, my, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    (a as f64, b as f64, g.click())
+                };
+                let edge = down && !self.prev_down;
+                let mut new_idx = idx;
+                if edge && my >= y && my <= y + h && mx >= x && mx <= x + w {
+                    new_idx = (((mx - x) / seg).floor() as usize).min(n - 1);
+                }
+                let widths: Vec<f64> = opts.iter().map(|o| self.fonts.width(o).unwrap_or(0) as f64).collect();
+                let (bg, sel, white, dim, line) = (
+                    parse_color("#1e293b")?,
+                    parse_color("#3b82f6")?,
+                    parse_color("#e2e8f0")?,
+                    parse_color("#94a3b8")?,
+                    parse_color("#334155")?,
+                );
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                if is_tabs {
+                    g.canvas.line(x, y + h, x + w, y + h, line);
+                } else {
+                    g.canvas.rect(x, y, w, h, bg);
+                }
+                for i in 0..n {
+                    let sx = x + i as f64 * seg;
+                    if is_tabs {
+                        if i == new_idx {
+                            g.canvas.rect(sx + 8.0, y + h - 3.0, seg - 16.0, 3.0, sel);
+                        }
+                    } else {
+                        if i == new_idx {
+                            g.canvas.rect(sx, y, seg, h, sel);
+                        }
+                        if i > 0 {
+                            g.canvas.line(sx, y, sx, y + h, line);
+                        }
+                    }
+                }
+                for i in 0..n {
+                    let sx = x + i as f64 * seg;
+                    let col = if is_tabs && i != new_idx { dim } else { white };
+                    self.fonts.draw(&mut g.canvas, sx + (seg - widths[i]) / 2.0, y + 7.0, &opts[i], col)?;
+                }
+                Value::Int(new_idx as i64)
+            }
+            GtqNumberbox => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let cur = real(&args[3]);
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + 26.0, g.click())
+                };
+                let mut v = cur;
+                if hover && down && !self.prev_down {
+                    if let Ok(s) = dialogs::ask(&format!("New number (was {})", crate::vm::format_real(cur))) {
+                        if let Ok(parsed) = s.trim().replace(',', ".").parse::<f64>() {
+                            v = parsed;
+                        }
+                    }
+                }
+                let (bg, border, white) = (
+                    parse_color("#1f2937")?,
+                    parse_color(if hover { "#60a5fa" } else { "#475569" })?,
+                    parse_color("#e2e8f0")?,
+                );
+                let txt = crate::vm::format_real(v);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, 26.0, bg);
+                g.canvas.line(x, y, x + w, y, border);
+                g.canvas.line(x, y + 26.0, x + w, y + 26.0, border);
+                g.canvas.line(x, y, x, y + 26.0, border);
+                g.canvas.line(x + w, y, x + w, y + 26.0, border);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 7.0, &txt, white)?;
+                Value::Real(v)
+            }
+            GtqListItem => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let label = text(&args[3]).to_string();
+                let selected = matches!(&args[4], Value::Bool(true));
+                let h = 30.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let bg = parse_color(if selected {
+                    "#334155"
+                } else if hover {
+                    "#1e293b"
+                } else {
+                    "#0f172a"
+                })?;
+                let white = parse_color("#e2e8f0")?;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                self.fonts.draw(&mut g.canvas, x + 10.0, y + 8.0, &label, white)?;
+                Value::Bool(clicked)
+            }
+            GtqMenuItem => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let label = text(&args[3]).to_string();
+                let h = 28.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let (bg, white) = (parse_color(if hover { "#334155" } else { "#1e293b" })?, parse_color("#e2e8f0")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                self.fonts.draw(&mut g.canvas, x + 10.0, y + 7.0, &label, white)?;
+                Value::Bool(clicked)
+            }
+            GtqAccordion => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let title = text(&args[3]).to_string();
+                let open = matches!(&args[4], Value::Bool(true));
+                let h = 32.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let new_open = if hover && down && !self.prev_down { !open } else { open };
+                let (bg, white) = (parse_color(if hover { "#1e293b" } else { "#172033" })?, parse_color("#e2e8f0")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                draw_icon(&mut g.canvas, if new_open { "chevron_down" } else { "chevron_right" }, x + 8.0, y + 8.0, 16.0, white);
+                self.fonts.draw(&mut g.canvas, x + 32.0, y + 9.0, &title, white)?;
+                Value::Bool(new_open)
+            }
+            GtqRating => {
+                let (x, y, val) = (real(&args[0]), real(&args[1]), int(&args[2]));
+                let size = 22.0;
+                let (mx, my, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    (a as f64, b as f64, g.click())
+                };
+                let mut v = val;
+                if down && !self.prev_down && my >= y && my <= y + size && mx >= x && mx < x + 5.0 * size {
+                    v = (((mx - x) / size).floor() as i64 + 1).clamp(1, 5);
+                }
+                let (on, off) = (parse_color("#fbbf24")?, parse_color("#475569")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                for i in 0..5 {
+                    let col = if (i as i64) < v { on } else { off };
+                    draw_icon(&mut g.canvas, "star", x + i as f64 * size, y, size - 2.0, col);
+                }
+                Value::Int(v)
+            }
+            GtqColorSwatch => {
+                let (x, y, size) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + size && my >= y && my <= y + size, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let c = parse_color(text(&args[3]))?;
+                let border = parse_color(if hover { "#ffffff" } else { "#475569" })?;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, size, size, c);
+                g.canvas.line(x, y, x + size, y, border);
+                g.canvas.line(x, y + size, x + size, y + size, border);
+                g.canvas.line(x, y, x, y + size, border);
+                g.canvas.line(x + size, y, x + size, y + size, border);
+                Value::Bool(clicked)
+            }
+            GtqChipClose => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let bg = parse_color(text(&args[3]))?;
+                let white = parse_color("#ffffff")?;
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let (w, h) = (tw + 34.0, 22.0);
+                let (mxf, myf, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    (a as f64, b as f64, g.click())
+                };
+                let x_clicked =
+                    down && !self.prev_down && mxf >= x + w - 22.0 && mxf <= x + w && myf >= y && myf <= y + h;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                self.fonts.draw(&mut g.canvas, x + 9.0, y + 5.0, &label, white)?;
+                draw_icon(&mut g.canvas, "close", x + w - 20.0, y + 3.0, 16.0, white);
+                Value::Bool(x_clicked)
+            }
+            GtqFab => {
+                let (x, y, r) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let icon = text(&args[3]).to_string();
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (dx, dy) = (mx as f64 - (x + r), my as f64 - (y + r));
+                    ((dx * dx + dy * dy).sqrt() <= r, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let (bg, fg) = (parse_color(if hover { "#2563eb" } else { "#3b82f6" })?, parse_color("#ffffff")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.circle(x + r, y + r, r, bg);
+                draw_icon(&mut g.canvas, &icon, x + r * 0.5, y + r * 0.5, r, fg);
+                Value::Bool(clicked)
+            }
+            GtqPagination => {
+                let (x, y, pages, current) = (real(&args[0]), real(&args[1]), int(&args[2]), int(&args[3]));
+                let cell = 28.0;
+                let (mx, my, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    (a as f64, b as f64, g.click())
+                };
+                let mut cur = current;
+                if down && !self.prev_down && my >= y && my <= y + cell && mx >= x && mx < x + pages as f64 * cell {
+                    cur = (((mx - x) / cell).floor() as i64 + 1).clamp(1, pages.max(1));
+                }
+                let (sel, bg, white) = (parse_color("#3b82f6")?, parse_color("#1e293b")?, parse_color("#e2e8f0")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                for i in 1..=pages {
+                    let sx = x + (i - 1) as f64 * cell;
+                    g.canvas.rect(sx, y, cell - 2.0, cell, if i == cur { sel } else { bg });
+                }
+                for i in 1..=pages {
+                    let sx = x + (i - 1) as f64 * cell;
+                    let s = i.to_string();
+                    let tw = self.fonts.width(&s).unwrap_or(0) as f64;
+                    self.fonts.draw(&mut g.canvas, sx + (cell - tw) / 2.0, y + 8.0, &s, white)?;
+                }
+                Value::Int(cur)
+            }
+            GtqButtonPrimary => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let label = text(&args[4]).to_string();
+                let base = parse_color(text(&args[5]))?;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let pressed = hover && down && !self.prev_down;
+                let white = parse_color("#ffffff")?;
+                let hi = parse_color("#bfdbfe")?;
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, base);
+                if hover {
+                    g.canvas.rect(x, y, w, 2.0, hi);
+                }
+                self.fonts.draw(&mut g.canvas, (x + (w - tw) / 2.0).max(x + 2.0), y + h / 2.0 - 6.0, &label, white)?;
+                Value::Bool(pressed)
+            }
+            GtqButtonGhost => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let label = text(&args[4]).to_string();
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let pressed = hover && down && !self.prev_down;
+                let (border, txtc, hoverbg) =
+                    (parse_color("#60a5fa")?, parse_color("#93c5fd")?, parse_color("#1e293b")?);
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                if hover {
+                    g.canvas.rect(x, y, w, h, hoverbg);
+                }
+                g.canvas.line(x, y, x + w, y, border);
+                g.canvas.line(x, y + h, x + w, y + h, border);
+                g.canvas.line(x, y, x, y + h, border);
+                g.canvas.line(x + w, y, x + w, y + h, border);
+                self.fonts.draw(&mut g.canvas, (x + (w - tw) / 2.0).max(x + 2.0), y + h / 2.0 - 6.0, &label, txtc)?;
+                Value::Bool(pressed)
+            }
+            GtqKnob => {
+                let (x, y, r, val, lo, hi) =
+                    (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]), real(&args[5]));
+                let (cx, cy) = (x + r, y + r);
+                let (hover, down, ang) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (dx, dy) = (mx as f64 - cx, my as f64 - cy);
+                    ((dx * dx + dy * dy).sqrt() <= r + 4.0, g.click(), dy.atan2(dx))
+                };
+                let mut v = val;
+                if hover && down && hi > lo {
+                    let mut d = (ang.to_degrees() - 135.0).rem_euclid(360.0);
+                    if d > 270.0 {
+                        d = if d > 315.0 { 0.0 } else { 270.0 };
+                    }
+                    v = lo + (d / 270.0) * (hi - lo);
+                }
+                let t = if hi > lo { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
+                let (body, fg) = (parse_color("#1e293b")?, parse_color("#60a5fa")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.circle(cx, cy, r, body);
+                let ind = (135.0 + t * 270.0).to_radians();
+                g.canvas.line(cx, cy, cx + r * 0.8 * ind.cos(), cy + r * 0.8 * ind.sin(), fg);
+                Value::Real(v)
+            }
+            GtqScrollbarV => {
+                let (x, y, h, val, maxv) =
+                    (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
+                let w = 10.0;
+                let (hover, down, myf) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click(), my)
+                };
+                let mut v = val;
+                if hover && down && maxv > 0.0 && h > 0.0 {
+                    v = ((myf - y) / h).clamp(0.0, 1.0) * maxv;
+                }
+                let (track, thumb) = (parse_color("#1e293b")?, parse_color("#475569")?);
+                let t = if maxv > 0.0 { (v / maxv).clamp(0.0, 1.0) } else { 0.0 };
+                let thumb_h = (h * 0.2).max(20.0);
+                let ty = y + t * (h - thumb_h);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, track);
+                g.canvas.rect(x, ty, w, thumb_h, thumb);
+                Value::Real(v)
+            }
+            GtqDropdown => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let opts: Vec<String> = text(&args[3]).split(',').map(|s| s.trim().to_string()).collect();
+                let n = opts.len().max(1);
+                let idx = int(&args[4]).rem_euclid(n as i64) as usize;
+                let h = 28.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let new_idx = if hover && down && !self.prev_down { (idx + 1) % n } else { idx };
+                let (bg, white) = (parse_color(if hover { "#334155" } else { "#1e293b" })?, parse_color("#e2e8f0")?);
+                let shown = opts.get(new_idx).cloned().unwrap_or_default();
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 6.0, &shown, white)?;
+                draw_icon(&mut g.canvas, "chevron_down", x + w - 22.0, y + 6.0, 16.0, white);
+                Value::Int(new_idx as i64)
+            }
+            GtqCheckboxCard => {
+                let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let label = text(&args[3]).to_string();
+                let checked = matches!(&args[4], Value::Bool(true));
+                let h = 36.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
+                };
+                let new = if hover && down && !self.prev_down { !checked } else { checked };
+                let bg = parse_color(if new {
+                    "#1e3a5f"
+                } else if hover {
+                    "#1e293b"
+                } else {
+                    "#172033"
+                })?;
+                let (border, white, mark) =
+                    (parse_color(if new { "#3b82f6" } else { "#334155" })?, parse_color("#e2e8f0")?, parse_color("#22c55e")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, w, h, bg);
+                g.canvas.line(x, y, x + w, y, border);
+                g.canvas.line(x, y + h, x + w, y + h, border);
+                g.canvas.line(x, y, x, y + h, border);
+                g.canvas.line(x + w, y, x + w, y + h, border);
+                g.canvas.rect(x + 10.0, y + 11.0, 14.0, 14.0, border);
+                if new {
+                    draw_icon(&mut g.canvas, "check", x + 10.0, y + 11.0, 14.0, mark);
+                }
+                self.fonts.draw(&mut g.canvas, x + 34.0, y + 11.0, &label, white)?;
+                Value::Bool(new)
+            }
+            GtqToggleIcon => {
+                let (x, y, size) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let icon = text(&args[3]).to_string();
+                let on = matches!(&args[4], Value::Bool(true));
+                let bx = size + 12.0;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + bx && my >= y && my <= y + bx, g.click())
+                };
+                let new = if hover && down && !self.prev_down { !on } else { on };
+                let bg = parse_color(if new {
+                    "#3b82f6"
+                } else if hover {
+                    "#334155"
+                } else {
+                    "#1e293b"
+                })?;
+                let fg = parse_color(if new { "#ffffff" } else { "#94a3b8" })?;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, bx, bx, bg);
+                draw_icon(&mut g.canvas, &icon, x + 6.0, y + 6.0, size, fg);
+                Value::Bool(new)
+            }
+            GtqTextButton => {
+                let (x, y) = (real(&args[0]), real(&args[1]));
+                let label = text(&args[2]).to_string();
+                let base = parse_color(text(&args[3]))?;
+                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + tw && my >= y && my <= y + 18.0, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                self.fonts.draw(&mut g.canvas, x, y, &label, base)?;
+                if hover {
+                    g.canvas.line(x, y + 16.0, x + tw, y + 16.0, base);
+                }
+                Value::Bool(clicked)
+            }
+            GtqSliderMini => {
+                let (x, y, w, val) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let (hover, down, mxf) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (my >= y - 6.0 && my <= y + 6.0 && mx >= x && mx <= x + w, g.click(), mx)
+                };
+                let mut v = val;
+                if hover && down && w > 0.0 {
+                    v = ((mxf - x) / w).clamp(0.0, 1.0);
+                }
+                let (track, knob) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y - 2.0, w, 4.0, track);
+                g.canvas.circle(x + v * w, y, 6.0, knob);
+                Value::Real(v)
+            }
+            GtqStepperF => {
+                let (x, y, val, step, minv, maxv) =
+                    (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]), real(&args[5]));
+                let (bw, fw, h) = (22.0, 60.0, 24.0);
+                let (mx, my, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (a, b) = g.mouse();
+                    (a as f64, b as f64, g.click())
+                };
+                let edge = down && !self.prev_down;
+                let over = |bx: f64| mx >= bx && mx <= bx + bw && my >= y && my <= y + h;
+                let mut v = val;
+                if edge && over(x) {
+                    v = (v - step).max(minv);
+                }
+                if edge && over(x + bw + fw) {
+                    v = (v + step).min(maxv);
+                }
+                let (btn, box_c, white) =
+                    (parse_color("#4a5568")?, parse_color("#1f2937")?, parse_color("#e2e8f0")?);
+                let txt = crate::vm::format_real(v);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, bw, h, btn);
+                g.canvas.rect(x + bw, y, fw, h, box_c);
+                g.canvas.rect(x + bw + fw, y, bw, h, btn);
+                self.fonts.draw(&mut g.canvas, x + 8.0, y + 4.0, "-", white)?;
+                self.fonts.draw(&mut g.canvas, x + bw + fw + 7.0, y + 4.0, "+", white)?;
+                self.fonts.draw(&mut g.canvas, x + bw + 8.0, y + 4.0, &txt, white)?;
+                Value::Real(v)
+            }
+            GtqCloseButton => {
+                let (x, y, size) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let (hover, down) = {
+                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
+                    let (mx, my) = g.mouse();
+                    let (mx, my) = (mx as f64, my as f64);
+                    (mx >= x && mx <= x + size && my >= y && my <= y + size, g.click())
+                };
+                let clicked = hover && down && !self.prev_down;
+                let (bg, fg) = (parse_color(if hover { "#ef4444" } else { "#334155" })?, parse_color("#ffffff")?);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                g.canvas.rect(x, y, size, size, bg);
+                draw_icon(&mut g.canvas, "close", x + size * 0.2, y + size * 0.2, size * 0.6, fg);
+                Value::Bool(clicked)
+            }
+
+            GtqIcon => {
+                let (x, y, sz) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let name = text(&args[3]).to_string();
+                let col = parse_color(text(&args[4]))?;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                draw_icon(&mut g.canvas, &name, x, y, sz, col);
+                Value::Null
+            }
+            GtqIcCheck | GtqIcClose | GtqIcPlus | GtqIcMinus | GtqIcUp | GtqIcDown | GtqIcLeft
+            | GtqIcRight | GtqIcChevronUp | GtqIcChevronDown | GtqIcChevronLeft | GtqIcChevronRight
+            | GtqIcMenu | GtqIcKebab | GtqIcGear | GtqIcHome | GtqIcSearch | GtqIcHeart | GtqIcStar
+            | GtqIcUser | GtqIcBell | GtqIcMail | GtqIcTrash | GtqIcPencil | GtqIcSave | GtqIcFolder
+            | GtqIcFile | GtqIcPlay | GtqIcPause | GtqIcStop | GtqIcNext | GtqIcPrev | GtqIcVolume
+            | GtqIcMute | GtqIcWifi | GtqIcBattery | GtqIcLock | GtqIcUnlock | GtqIcEye | GtqIcEyeOff
+            | GtqIcCalendar | GtqIcClock | GtqIcPin | GtqIcTag | GtqIcFlag | GtqIcBookmark
+            | GtqIcDownload | GtqIcUpload | GtqIcRefresh => {
+                let name = match b {
+                    GtqIcCheck => "check",
+                    GtqIcClose => "close",
+                    GtqIcPlus => "plus",
+                    GtqIcMinus => "minus",
+                    GtqIcUp => "up",
+                    GtqIcDown => "down",
+                    GtqIcLeft => "left",
+                    GtqIcRight => "right",
+                    GtqIcChevronUp => "chevron_up",
+                    GtqIcChevronDown => "chevron_down",
+                    GtqIcChevronLeft => "chevron_left",
+                    GtqIcChevronRight => "chevron_right",
+                    GtqIcMenu => "menu",
+                    GtqIcKebab => "kebab",
+                    GtqIcGear => "gear",
+                    GtqIcHome => "home",
+                    GtqIcSearch => "search",
+                    GtqIcHeart => "heart",
+                    GtqIcStar => "star",
+                    GtqIcUser => "user",
+                    GtqIcBell => "bell",
+                    GtqIcMail => "mail",
+                    GtqIcTrash => "trash",
+                    GtqIcPencil => "pencil",
+                    GtqIcSave => "save",
+                    GtqIcFolder => "folder",
+                    GtqIcFile => "file",
+                    GtqIcPlay => "play",
+                    GtqIcPause => "pause",
+                    GtqIcStop => "stop",
+                    GtqIcNext => "next",
+                    GtqIcPrev => "prev",
+                    GtqIcVolume => "volume",
+                    GtqIcMute => "mute",
+                    GtqIcWifi => "wifi",
+                    GtqIcBattery => "battery",
+                    GtqIcLock => "lock",
+                    GtqIcUnlock => "unlock",
+                    GtqIcEye => "eye",
+                    GtqIcEyeOff => "eye_off",
+                    GtqIcCalendar => "calendar",
+                    GtqIcClock => "clock",
+                    GtqIcPin => "pin",
+                    GtqIcTag => "tag",
+                    GtqIcFlag => "flag",
+                    GtqIcBookmark => "bookmark",
+                    GtqIcDownload => "download",
+                    GtqIcUpload => "upload",
+                    _ => "refresh",
+                };
+                let (x, y, sz) = (real(&args[0]), real(&args[1]), real(&args[2]));
+                let col = parse_color(text(&args[3]))?;
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                draw_icon(&mut g.canvas, name, x, y, sz, col);
+                Value::Null
             }
             _ => library::call(b, args)?,
         })
