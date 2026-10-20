@@ -60,6 +60,24 @@ fn modules_and_lazy_imports() {
 }
 
 #[test]
+fn physics_gravity_and_collision() {
+    let dir = std::env::temp_dir().join("globw_sim_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("s.gw");
+    std::fs::write(
+        &prog,
+        "import gwsim\nvariables:\n    a, b as int\ngwsim.reset()\ngwsim.gravity(0.0, 500.0)\n\
+         a = gwsim.body(100.0, 100.0, 10.0, 1.0)\ngwsim.step(0.1)\noutput(gwsim.vy(a))\noutput(gwsim.y(a))\n\
+         gwsim.reset()\ngwsim.bounds(0.0, 0.0, 400.0, 400.0, 0.5)\na = gwsim.body(100.0, 100.0, 20.0, 1.0)\n\
+         b = gwsim.body(130.0, 100.0, 20.0, 1.0)\noutput(gwsim.collide(a, b))\ngwsim.step(0.05)\ngwsim.step(0.05)\noutput(gwsim.collide(a, b))\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "50.0\n105.0\ntrue\nfalse\n");
+}
+
+#[test]
 fn dataframe_csv_aggregates_and_groupby() {
     let dir = std::env::temp_dir().join("globw_frame_test");
     std::fs::create_dir_all(&dir).unwrap();

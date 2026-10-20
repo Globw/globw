@@ -559,6 +559,122 @@ fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
     }
 }
 
+// ---- module "gwsim": a small 2D physics world of circular bodies ----
+#[derive(Clone, Copy)]
+struct Body {
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    r: f64,
+    m: f64,
+    fixed: bool,
+}
+
+struct SimWorld {
+    bodies: Vec<Body>,
+    gx: f64,
+    gy: f64,
+    bx0: f64,
+    by0: f64,
+    bx1: f64,
+    by1: f64,
+    rest: f64,
+}
+
+impl Default for SimWorld {
+    fn default() -> Self {
+        SimWorld { bodies: Vec::new(), gx: 0.0, gy: 0.0, bx0: 0.0, by0: 0.0, bx1: 0.0, by1: 0.0, rest: 0.9 }
+    }
+}
+
+thread_local! {
+    static SIM: RefCell<SimWorld> = RefCell::new(SimWorld::default());
+}
+
+fn sim_body(h: i64) -> Result<usize, String> {
+    SIM.with(|s| {
+        let i = usize::try_from(h).map_err(|_| "gwsim: invalid handle".to_string())?;
+        if i < s.borrow().bodies.len() {
+            Ok(i)
+        } else {
+            Err("gwsim: invalid handle".to_string())
+        }
+    })
+}
+
+fn sim_step(dt: f64) {
+    SIM.with(|s| {
+        let w = &mut *s.borrow_mut();
+        let has_bounds = w.bx1 > w.bx0 && w.by1 > w.by0;
+        for b in w.bodies.iter_mut() {
+            if b.fixed {
+                continue;
+            }
+            b.vx += w.gx * dt;
+            b.vy += w.gy * dt;
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+            if has_bounds {
+                if b.x - b.r < w.bx0 {
+                    b.x = w.bx0 + b.r;
+                    b.vx = -b.vx * w.rest;
+                }
+                if b.x + b.r > w.bx1 {
+                    b.x = w.bx1 - b.r;
+                    b.vx = -b.vx * w.rest;
+                }
+                if b.y - b.r < w.by0 {
+                    b.y = w.by0 + b.r;
+                    b.vy = -b.vy * w.rest;
+                }
+                if b.y + b.r > w.by1 {
+                    b.y = w.by1 - b.r;
+                    b.vy = -b.vy * w.rest;
+                }
+            }
+        }
+        // pairwise circle-circle collisions (impulse based)
+        let n = w.bodies.len();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (mut a, mut c) = (w.bodies[i], w.bodies[j]);
+                if a.fixed && c.fixed {
+                    continue;
+                }
+                let (dx, dy) = (c.x - a.x, c.y - a.y);
+                let dist = dx.hypot(dy);
+                let sum = a.r + c.r;
+                if dist >= sum || dist <= 1e-9 {
+                    continue;
+                }
+                let (nx, ny) = (dx / dist, dy / dist);
+                let invi = if a.fixed { 0.0 } else { 1.0 / a.m };
+                let invj = if c.fixed { 0.0 } else { 1.0 / c.m };
+                let invsum = invi + invj;
+                if invsum == 0.0 {
+                    continue;
+                }
+                let overlap = sum - dist;
+                a.x -= nx * overlap * (invi / invsum);
+                a.y -= ny * overlap * (invi / invsum);
+                c.x += nx * overlap * (invj / invsum);
+                c.y += ny * overlap * (invj / invsum);
+                let vn = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
+                if vn < 0.0 {
+                    let jimp = -(1.0 + w.rest) * vn / invsum;
+                    a.vx -= jimp * invi * nx;
+                    a.vy -= jimp * invi * ny;
+                    c.vx += jimp * invj * nx;
+                    c.vy += jimp * invj * ny;
+                }
+                w.bodies[i] = a;
+                w.bodies[j] = c;
+            }
+        }
+    });
+}
+
 // ---- module "gwframe": a small numeric dataframe (pandas-like) ----
 struct Frame {
     names: Vec<String>,
@@ -3910,6 +4026,106 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             Value::Null
         }
         GradCount => Value::Int(GRAD.with(|g| g.borrow().len() as i64)),
+
+        // ======== module "gwsim": 2D physics ========
+        SimReset => {
+            SIM.with(|s| *s.borrow_mut() = SimWorld::default());
+            Value::Null
+        }
+        SimBody => {
+            let (x, y, r, m) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+            Value::Int(SIM.with(|s| {
+                let mut w = s.borrow_mut();
+                w.bodies.push(Body { x, y, vx: 0.0, vy: 0.0, r, m: m.max(1e-9), fixed: false });
+                (w.bodies.len() - 1) as i64
+            }))
+        }
+        SimFix => {
+            let i = sim_body(int(&args[0]))?;
+            let fixed = matches!(&args[1], Value::Bool(true));
+            SIM.with(|s| s.borrow_mut().bodies[i].fixed = fixed);
+            Value::Null
+        }
+        SimGravity => {
+            let (gx, gy) = (real(&args[0]), real(&args[1]));
+            SIM.with(|s| {
+                let mut w = s.borrow_mut();
+                w.gx = gx;
+                w.gy = gy;
+            });
+            Value::Null
+        }
+        SimBounds => {
+            let (x, y, w, h, rest) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
+            SIM.with(|s| {
+                let world = &mut *s.borrow_mut();
+                world.bx0 = x;
+                world.by0 = y;
+                world.bx1 = x + w;
+                world.by1 = y + h;
+                world.rest = rest;
+            });
+            Value::Null
+        }
+        SimPush => {
+            let i = sim_body(int(&args[0]))?;
+            let (fx, fy) = (real(&args[1]), real(&args[2]));
+            SIM.with(|s| {
+                let mut w = s.borrow_mut();
+                w.bodies[i].vx += fx;
+                w.bodies[i].vy += fy;
+            });
+            Value::Null
+        }
+        SimSetVel => {
+            let i = sim_body(int(&args[0]))?;
+            let (vx, vy) = (real(&args[1]), real(&args[2]));
+            SIM.with(|s| {
+                let mut w = s.borrow_mut();
+                w.bodies[i].vx = vx;
+                w.bodies[i].vy = vy;
+            });
+            Value::Null
+        }
+        SimSetPos => {
+            let i = sim_body(int(&args[0]))?;
+            let (x, y) = (real(&args[1]), real(&args[2]));
+            SIM.with(|s| {
+                let mut w = s.borrow_mut();
+                w.bodies[i].x = x;
+                w.bodies[i].y = y;
+            });
+            Value::Null
+        }
+        SimStep => {
+            sim_step(real(&args[0]));
+            Value::Null
+        }
+        SimX => {
+            let i = sim_body(int(&args[0]))?;
+            Value::Real(SIM.with(|s| s.borrow().bodies[i].x))
+        }
+        SimY => {
+            let i = sim_body(int(&args[0]))?;
+            Value::Real(SIM.with(|s| s.borrow().bodies[i].y))
+        }
+        SimVx => {
+            let i = sim_body(int(&args[0]))?;
+            Value::Real(SIM.with(|s| s.borrow().bodies[i].vx))
+        }
+        SimVy => {
+            let i = sim_body(int(&args[0]))?;
+            Value::Real(SIM.with(|s| s.borrow().bodies[i].vy))
+        }
+        SimCount => Value::Int(SIM.with(|s| s.borrow().bodies.len() as i64)),
+        SimCollide => {
+            let (i, j) = (sim_body(int(&args[0]))?, sim_body(int(&args[1]))?);
+            Value::Bool(SIM.with(|s| {
+                let w = s.borrow();
+                let (a, c) = (w.bodies[i], w.bodies[j]);
+                (a.x - c.x).hypot(a.y - c.y) < a.r + c.r
+            }))
+        }
 
         // ======== module "gwframe": numeric dataframe ========
         FrameNew => Value::Int(frame_push(Frame { names: Vec::new(), cols: Vec::new() })),

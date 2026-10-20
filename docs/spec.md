@@ -887,6 +887,14 @@ handle), then `grad.backward(node)` fills every input's gradient, read with `gra
 is a few lines — e.g. minimising `(x-5)^2` converges `x` to 5. A language with
 differentiable values built in is something Python needs PyTorch/JAX for.
 
+**`gwsim` — 2D physics.** A little world of circular bodies: `gwsim.body(x, y, r, mass)`
+→ handle, `gwsim.fix(h, true)` makes it static, `gwsim.gravity(gx, gy)` and
+`gwsim.bounds(x, y, w, h, restitution)` set the world; `gwsim.push`, `gwsim.set_vel`,
+`gwsim.set_pos` drive a body; `gwsim.step(dt)` integrates everything and resolves
+wall and body-body collisions with impulses; read state with `gwsim.x`/`y`/`vx`/`vy`,
+test contact with `gwsim.collide(a, b)`, count with `gwsim.count`, clear with
+`gwsim.reset`. Draw each body yourself with `circle(gwsim.x(h), gwsim.y(h), r, color)`.
+
 **`gwframe` — numeric dataframe (pandas-like).** Load a numeric CSV with a header into
 a frame: `gwframe.from_csv(path)` → handle. Inspect with `rows`, `cols`, `colname(f, i)`,
 `get(f, row, name)`; aggregate a column with `sum`, `mean`, `min`, `max`, `std`; reshape

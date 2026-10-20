@@ -774,6 +774,9 @@ pub enum Builtin {
     FrameSum, FrameMean, FrameMin, FrameMax, FrameStd,
     FrameFilter, FrameSort, FrameHead, FrameGroupSum, FrameGroupMean,
     FrameToCsv, FrameShow, FrameFree,
+    // module "gwsim" (2D physics)
+    SimReset, SimBody, SimFix, SimGravity, SimBounds, SimPush, SimSetVel, SimSetPos,
+    SimStep, SimX, SimY, SimVx, SimVy, SimCount, SimCollide,
     // ======== batch M: 615 modules to reach 1000 ========
     Mk0001, Mk0002, Mk0003, Mk0004, Mk0005, Mk0006, Mk0007, Mk0008, Mk0009, Mk0010, Mk0011, Mk0012,
     Mk0013, Mk0014, Mk0015, Mk0016, Mk0017, Mk0018, Mk0019, Mk0020, Mk0021, Mk0022, Mk0023, Mk0024,
@@ -2105,6 +2108,22 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (FrameToCsv, "gwframe.to_csv", Sig::Fixed(&[I, S], None)),
     (FrameShow, "gwframe.show", Sig::Fixed(&[I, I], Some(Str))),
     (FrameFree, "gwframe.free", Sig::Fixed(&[I], None)),
+    // module "gwsim" (2D physics)
+    (SimReset, "gwsim.reset", Sig::Fixed(&[], None)),
+    (SimBody, "gwsim.body", Sig::Fixed(&[R, R, R, R], Some(Int))),
+    (SimFix, "gwsim.fix", Sig::Fixed(&[I, Bool], None)),
+    (SimGravity, "gwsim.gravity", Sig::Fixed(&[R, R], None)),
+    (SimBounds, "gwsim.bounds", Sig::Fixed(&[R, R, R, R, R], None)),
+    (SimPush, "gwsim.push", Sig::Fixed(&[I, R, R], None)),
+    (SimSetVel, "gwsim.set_vel", Sig::Fixed(&[I, R, R], None)),
+    (SimSetPos, "gwsim.set_pos", Sig::Fixed(&[I, R, R], None)),
+    (SimStep, "gwsim.step", Sig::Fixed(&[R], None)),
+    (SimX, "gwsim.x", Sig::Fixed(&[I], Some(Real))),
+    (SimY, "gwsim.y", Sig::Fixed(&[I], Some(Real))),
+    (SimVx, "gwsim.vx", Sig::Fixed(&[I], Some(Real))),
+    (SimVy, "gwsim.vy", Sig::Fixed(&[I], Some(Real))),
+    (SimCount, "gwsim.count", Sig::Fixed(&[], Some(Int))),
+    (SimCollide, "gwsim.collide", Sig::Fixed(&[I, I], Some(Bool))),
     // ======== batch M ========
     (Mk0001, "angstrom.si", Sig::Fixed(&[R], Some(Real))),
     (Mk0002, "angstrom.inv", Sig::Fixed(&[R], Some(Real))),
@@ -3317,7 +3336,7 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "ease", "trig2", "special", "polar", "transform", "temp2", "storage", "area2", "kitchen",
     "chem", "elec", "finance2", "health2", "music", "space", "optics", "prob2", "rpg",
     "physics2", "stats2", "map", "date2", "wave2", "light", "sound2",
-    "net", "gwgame", "grad", "gwframe",
+    "net", "gwgame", "grad", "gwframe", "gwsim",
     // batch M
     "methuselah", "yardpersecond", "kilderkin", "footofwater", "poise", "anomalistic_year", "sho", "squarerod", "sidereal_day", "picometre",
     "hectare", "avogadro_const", "zolotnik", "knot", "maund", "therm", "hin", "beaufort_approx", "erg", "cahen",
