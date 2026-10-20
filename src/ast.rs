@@ -111,6 +111,9 @@ pub enum StmtKind {
     /// multiple assignment that unpacks a tuple: `a, b = point`
     Unpack(Vec<(String, Pos)>, Expr),
     Return(Option<Expr>),
+    /// a declaration that produces no runtime code, like `const NAME = value`
+    /// (the value is substituted where the name is used)
+    Nop,
     /// runs the start-up code of a module (procedure `init`) unless the
     /// global flag `flag` says it already ran; added by the module loader
     LoadModule { init: String, flag: String },

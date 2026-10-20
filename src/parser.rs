@@ -14,6 +14,8 @@ pub(crate) struct Parser {
     pub(crate) ops: u32,
     /// anonymous functions (lambdas) lifted to top-level subprograms
     pub(crate) lambdas: Vec<Subprogram>,
+    /// compile-time constants: `const NAME = value` substitutes the value inline
+    pub(crate) consts: std::collections::HashMap<String, ExprKind>,
 }
 
 /// Deeper nesting would overflow the stack of the later phases.
@@ -81,6 +83,7 @@ fn text(t: &Tok) -> &'static str {
         Tok::LtEq => "<=",
         Tok::Gt => ">",
         Tok::GtEq => ">=",
+        Tok::Const => "const",
         Tok::Plus => "+",
         Tok::Minus => "-",
         Tok::Star => "*",
@@ -117,7 +120,7 @@ fn is_constant(e: &Expr) -> bool {
 }
 
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Error> {
-    Parser { t: tokens, i: 0, depth: 0, ops: 0, lambdas: Vec::new() }.program()
+    Parser { t: tokens, i: 0, depth: 0, ops: 0, lambdas: Vec::new(), consts: std::collections::HashMap::new() }.program()
 }
 
 impl Parser {
@@ -823,6 +826,7 @@ impl Parser {
                 self.end_stmt()?;
                 StmtKind::Fail(message)
             }
+            Tok::Const => self.const_stmt()?,
             Tok::Name(name) => self.name_stmt(name, pos)?,
             Tok::Variables | Tok::Global => {
                 return self.fail("variable declarations must come at the start of the program or function")
@@ -968,8 +972,52 @@ impl Parser {
         Ok(StmtKind::Unpack(names, value))
     }
 
+    /// `const NAME = value`: a compile-time constant. The value must be a fixed
+    /// literal (a number, text or true/false); it is substituted wherever the name
+    /// is used, and the name cannot be assigned to.
+    fn const_stmt(&mut self) -> Result<StmtKind, Error> {
+        self.advance(); // const
+        let (name, npos) = match self.tok() {
+            Tok::Name(n) => {
+                let n = n.clone();
+                let p = self.pos();
+                self.advance();
+                (n, p)
+            }
+            _ => return self.fail("expected a name after const"),
+        };
+        if self.consts.contains_key(&name) {
+            return Err(Error::new(npos, format!("the constant \"{}\" is already defined", name)));
+        }
+        if !self.accept(&Tok::Assign) {
+            return self.fail(format!("expected = after the constant name \"{}\"", name));
+        }
+        let value = self.expr()?;
+        self.end_stmt()?;
+        let is_literal = matches!(
+            value.kind,
+            ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_)
+        ) || matches!(&value.kind, ExprKind::Unary(_, inner)
+            if matches!(inner.kind, ExprKind::Int(_) | ExprKind::Real(_)));
+        if !is_literal {
+            return Err(Error::new(value.pos, "a constant must be a fixed value: a number, text, or true/false")
+                .with_hint("the value is substituted where the name is used, so it has to be known in advance"));
+        }
+        self.consts.insert(name, value.kind);
+        Ok(StmtKind::Nop)
+    }
+
     /// A statement starting with a name: an assignment or a call.
     fn name_stmt(&mut self, name: String, pos: Pos) -> Result<StmtKind, Error> {
+        if self.consts.contains_key(&name)
+            && matches!(
+                self.peek_tok(1),
+                Tok::Assign | Tok::PlusEq | Tok::MinusEq | Tok::StarEq | Tok::SlashEq
+            )
+        {
+            return Err(Error::new(pos, format!("\"{}\" is a constant, it cannot be reassigned", name))
+                .with_hint("to have a value that changes, declare it in \"variables:\" instead"));
+        }
         if matches!(self.peek_tok(1), Tok::Comma) {
             return self.unpack_stmt(name, pos);
         }
@@ -1293,6 +1341,8 @@ impl Parser {
                     ExprKind::Call(n, self.args()?)
                 } else if self.is(&Tok::LBracket) {
                     ExprKind::Index(n, self.indices()?)
+                } else if let Some(k) = self.consts.get(&n) {
+                    k.clone()
                 } else {
                     ExprKind::Var(n)
                 }
@@ -1379,7 +1429,8 @@ mod tests {
     }
 
     fn expr_of(src: &str) -> Result<String, Error> {
-        let mut p = Parser { t: tokenize(src).unwrap(), i: 0, depth: 0, ops: 0, lambdas: Vec::new() };
+        let mut p =
+            Parser { t: tokenize(src).unwrap(), i: 0, depth: 0, ops: 0, lambdas: Vec::new(), consts: std::collections::HashMap::new() };
         p.expr().map(|e| sx(&e))
     }
 

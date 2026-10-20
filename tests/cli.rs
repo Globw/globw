@@ -169,6 +169,27 @@ fn unit_conversion_modules_work() {
 }
 
 #[test]
+fn const_declarations() {
+    let dir = std::env::temp_dir().join("globw_const_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("c.gw");
+    std::fs::write(
+        &prog,
+        "variables:\n    r as float\nconst PI = 3.14\nconst MAX = 100\nr = 2.0\noutput(PI * r)\noutput(MAX)\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "6.28\n100\n");
+    // assigning to a constant is rejected
+    let bad = dir.join("b.gw");
+    std::fs::write(&bad, "variables:\n    x as int\nconst K = 1\nx = 0\nK = 2\n").unwrap();
+    let (code, _, stderr) = globw(&[bad.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("\"K\" is a constant"), "{}", stderr);
+}
+
+#[test]
 fn constant_expressions_are_folded() {
     // (5+2)*(5-4) is computed at compile time, so the loop body does no arithmetic
     let dir = std::env::temp_dir().join("globw_fold_test");

@@ -428,7 +428,7 @@ impl Scope<'_> {
                 self.expr(iter);
                 *body = self.block(std::mem::take(body));
             }
-            StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::Break | StmtKind::Continue | StmtKind::Nop => {}
             StmtKind::Call(name, args) => {
                 *name = self.resolve(name, pos, true);
                 args.iter_mut().for_each(|e| self.expr(e));

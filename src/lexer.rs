@@ -45,6 +45,7 @@ pub enum Tok {
     Always,
     EndTry,
     Fail,
+    Const,
     // symbols
     Assign,
     Eq,
@@ -111,6 +112,7 @@ pub fn keyword(word: &str) -> Option<Tok> {
         "catch" => Tok::Catch,
         "always" => Tok::Always,
         "fail" => Tok::Fail,
+        "const" => Tok::Const,
         _ => return None,
     })
 }

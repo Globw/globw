@@ -126,6 +126,7 @@ impl<'p> Checker<'p> {
                     None
                 }
             },
+            StmtKind::Nop => None,
             StmtKind::LoadModule { init, flag } => {
                 let s = self.sub_by_name[init.as_str()];
                 let inst = self.instance(s);
