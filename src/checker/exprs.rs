@@ -18,6 +18,37 @@ fn base(kind: TExprKind, t: BaseType, pos: Pos) -> TExpr {
     TExpr { kind, ty: Type::Base(t), pos }
 }
 
+/// Folds `+`, `-`, `*` between two numeric literals into a single literal at compile
+/// time, so a constant expression like `(5 + 2) * (5 - 4)` costs nothing at run time
+/// (it collapses to `7`). Integer overflow is left to the run time, so the result is
+/// always identical to evaluating the operation normally.
+fn fold_const(op: BinOp, a: &TExpr, b: &TExpr, pos: Pos) -> Option<TExpr> {
+    use BinOp::*;
+    let int = |k: &TExprKind| if let TExprKind::Int(n) = k { Some(*n) } else { None };
+    let real = |k: &TExprKind| match k {
+        TExprKind::Int(n) => Some(*n as f64),
+        TExprKind::Real(r) => Some(*r),
+        _ => None,
+    };
+    if let (Some(x), Some(y)) = (int(&a.kind), int(&b.kind)) {
+        let r = match op {
+            Add => x.checked_add(y),
+            Sub => x.checked_sub(y),
+            Mul => x.checked_mul(y),
+            _ => return None,
+        }?;
+        return Some(base(TExprKind::Int(r), BaseType::Int, pos));
+    }
+    let (x, y) = (real(&a.kind)?, real(&b.kind)?);
+    let r = match op {
+        Add => x + y,
+        Sub => x - y,
+        Mul => x * y,
+        _ => return None,
+    };
+    Some(base(TExprKind::Real(r), BaseType::Real, pos))
+}
+
 // ---- grid expression fusion -------------------------------------------------
 // A tree of element-wise grid builtins (a+b, a*k, sqrt(a), ...) is collapsed
 // into a single `grid.eval` call carrying an RPN program, so the whole
@@ -485,6 +516,10 @@ impl<'p> Checker<'p> {
         // operators on grids become calls to the grid engine
         if a.ty == Type::Grid || b.ty == Type::Grid {
             return self.grid_binary(op, a, b, pos);
+        }
+        // fold a constant sub-expression (5+2)*(5-4) into a literal at compile time
+        if let Some(folded) = fold_const(op, &a, &b, pos) {
+            return folded;
         }
         match op {
             And | Or => {

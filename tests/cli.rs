@@ -60,6 +60,27 @@ fn modules_and_lazy_imports() {
 }
 
 #[test]
+fn constant_expressions_are_folded() {
+    // (5+2)*(5-4) is computed at compile time, so the loop body does no arithmetic
+    let dir = std::env::temp_dir().join("globw_fold_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("fold.gw");
+    std::fs::write(
+        &prog,
+        "variables:\n    x, i as int\nx = 0\nfor(i from 1 to 10)\n    x = (5 + 2) * (5 - 4)\nend loop\noutput(x)\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&["--profile", prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "7\n");
+    assert!(
+        !stderr.contains("MulI") && !stderr.contains("AddIImm") && !stderr.contains("SubIImm"),
+        "the constant expression was not folded:\n{}",
+        stderr
+    );
+}
+
+#[test]
 fn net_url_parsing_and_unicode() {
     let (code, stdout, stderr) = globw(&["examples/net_url.gw"]);
     assert_eq!(code, 0, "{}", stderr);

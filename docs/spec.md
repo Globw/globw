@@ -879,6 +879,14 @@ case, so `straße` → `STRASSE`), `unicode.reverse`, `unicode.trim`, and the
 single-character tests `unicode.is_letter`, `unicode.is_digit`, `unicode.is_space`,
 `unicode.is_upper`.
 
+**Constant folding.** A sub-expression made only of number literals and `+`, `-`, `*`
+is computed once at compile time, so `(5 + 2) * (5 - 4)` becomes the literal `7` and
+costs nothing at run time — even inside a loop. Integer overflow is still reported at
+run time, so the result is always identical to evaluating it. (Independent *cheap*
+operations are not worth spreading over CPU cores — a single core already runs them in
+parallel on its several arithmetic units; real multi-core speed-ups come from heavy
+independent work, which `nungw` arrays do with threads and `proc` does with processes.)
+
 **Where `import` looks for a module.** A module `foo` is loaded from `foo.gw`, searched
 in this order: next to the file that imports it, then the main program's folder, then a
 `libs/` folder there, then every directory listed in the `GLOBW_PATH` environment
