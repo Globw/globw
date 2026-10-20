@@ -193,22 +193,46 @@ impl Canvas {
             }
         }
         let (tr, tg, tb) = ((tint >> 16) & 0xFF, (tint >> 8) & 0xFF, tint & 0xFF);
-        // composite: blurred background + tint + top sheen, inside the rounded mask
+        // signed distance to the rounded-rect edge (negative inside), for the lens
+        // refraction: near the curved border the surface tilts, so the background
+        // is sampled from further out — bending and magnifying it, like real glass.
+        let (cx, cy, hw, hh) = (x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0);
+        let sdf = |fx: f64, fy: f64| -> f64 {
+            let qx = (fx - cx).abs() - (hw - rad);
+            let qy = (fy - cy).abs() - (hh - rad);
+            (qx.max(0.0).hypot(qy.max(0.0))) + qx.max(qy).min(0.0) - rad
+        };
+        let bevel = rad.max(12.0);
+        let mag = bevel * 0.85;
+        // composite: refracted + blurred background + tint + top sheen, inside the mask
         for j in 0..rh {
             let py = y0 + j as i64;
+            let fy = py as f64 + 0.5;
             for i in 0..rw {
                 let px = x0 + i as i64;
                 if !inside(px, py) {
                     continue;
                 }
-                let p = buf[j * rw + i];
+                let fx = px as f64 + 0.5;
+                let e = -sdf(fx, fy); // distance from the edge, inside
+                let (mut si, mut sj) = (i, j);
+                if e < bevel {
+                    let k = 1.0 - (e / bevel).clamp(0.0, 1.0);
+                    let nx = sdf(fx + 1.0, fy) - sdf(fx - 1.0, fy);
+                    let ny = sdf(fx, fy + 1.0) - sdf(fx, fy - 1.0);
+                    let nl = nx.hypot(ny).max(1e-6);
+                    let disp = k * k * mag;
+                    si = (i as f64 + nx / nl * disp).clamp(0.0, (rw - 1) as f64) as usize;
+                    sj = (j as f64 + ny / nl * disp).clamp(0.0, (rh - 1) as f64) as usize;
+                }
+                let p = buf[sj * rw + si];
                 let (mut pr, mut pg, mut pb) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
                 let ta = 60u32; // translucent tint ~0.24
                 pr = (tr * ta + pr * (255 - ta)) / 255;
                 pg = (tg * ta + pg * (255 - ta)) / 255;
                 pb = (tb * ta + pb * (255 - ta)) / 255;
-                let fy = j as f64 / rh as f64;
-                let ga = ((1.0 - fy * 2.0).max(0.0) * 70.0) as u32; // top sheen
+                let fny = j as f64 / rh as f64;
+                let ga = ((1.0 - fny * 2.0).max(0.0) * 70.0) as u32; // top sheen
                 pr = (255 * ga + pr * (255 - ga)) / 255;
                 pg = (255 * ga + pg * (255 - ga)) / 255;
                 pb = (255 * ga + pb * (255 - ga)) / 255;

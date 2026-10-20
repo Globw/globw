@@ -854,9 +854,10 @@ end loop
   `slider_mini`, `stepper_f`, `close_button` (50).
 
 **Liquid glass.** `gtq` can render Apple-style frosted "liquid glass": it blurs
-whatever is already drawn behind the shape, lays a translucent tint on top, and
-adds a top sheen and a lit top-left / shaded bottom-right rim. Draw it *after* the
-content it sits over.
+whatever is already drawn behind the shape, lays a translucent tint on top, adds a
+top sheen and a lit top-left / shaded bottom-right rim, and **refracts the
+background near the curved edge** — bending and magnifying it, like a real lens.
+Draw it *after* the content it sits over.
 
 - `gtq.glass(x, y, w, h, tint, blur)` — a rounded glass panel (`blur` is the blur radius in pixels, e.g. 6).
 - `gtq.glass_round(x, y, w, h, tint, blur, radius)` — same, with an explicit corner radius.
