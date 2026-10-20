@@ -122,6 +122,106 @@ impl Canvas {
         }
     }
 
+    /// Frosted "liquid glass" over a rounded rectangle: blurs the pixels already
+    /// drawn behind it, lays a translucent `tint` on top, then a top sheen and a
+    /// lit top-left / shaded bottom-right rim. `blur` is the blur radius in pixels,
+    /// `radius` the corner radius. Call it after drawing the content behind it.
+    pub fn glass(&mut self, x: f64, y: f64, w: f64, h: f64, tint: u32, blur: i64, radius: f64) {
+        let x0 = (x.round() as i64).max(0);
+        let y0 = (y.round() as i64).max(0);
+        let x1 = ((x + w).round() as i64).min(self.w as i64);
+        let y1 = ((y + h).round() as i64).min(self.h as i64);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let rad = radius.min(w / 2.0).min(h / 2.0).max(0.0);
+        let (rw, rh) = ((x1 - x0) as usize, (y1 - y0) as usize);
+        let inside = |px: i64, py: i64| -> bool {
+            let (fx, fy) = (px as f64 + 0.5, py as f64 + 0.5);
+            if fx < x || fx > x + w || fy < y || fy > y + h {
+                return false;
+            }
+            let cx = (fx).clamp(x + rad, x + w - rad);
+            let cy = (fy).clamp(y + rad, y + h - rad);
+            let (dx, dy) = (fx - cx, fy - cy);
+            dx * dx + dy * dy <= rad * rad + 0.5
+        };
+        // copy the region behind the panel
+        let mut buf = vec![0u32; rw * rh];
+        for j in 0..rh {
+            for i in 0..rw {
+                buf[j * rw + i] = self.pixels[(y0 as usize + j) * self.w + (x0 as usize + i)];
+            }
+        }
+        // separable box blur (frost)
+        if blur > 0 {
+            let r = blur as usize;
+            let avg = |src: &[u32], idxs: &mut dyn Iterator<Item = usize>| -> u32 {
+                let (mut sr, mut sg, mut sb, mut n) = (0u32, 0u32, 0u32, 0u32);
+                for k in idxs {
+                    let p = src[k];
+                    sr += (p >> 16) & 0xFF;
+                    sg += (p >> 8) & 0xFF;
+                    sb += p & 0xFF;
+                    n += 1;
+                }
+                n = n.max(1);
+                ((sr / n) << 16) | ((sg / n) << 8) | (sb / n)
+            };
+            let mut tmp = buf.clone();
+            for j in 0..rh {
+                for i in 0..rw {
+                    let (lo, hi) = (i.saturating_sub(r), (i + r).min(rw - 1));
+                    tmp[j * rw + i] = avg(&buf, &mut (lo..=hi).map(|k| j * rw + k));
+                }
+            }
+            for j in 0..rh {
+                for i in 0..rw {
+                    let (lo, hi) = (j.saturating_sub(r), (j + r).min(rh - 1));
+                    buf[j * rw + i] = avg(&tmp, &mut (lo..=hi).map(|k| k * rw + i));
+                }
+            }
+        }
+        let (tr, tg, tb) = ((tint >> 16) & 0xFF, (tint >> 8) & 0xFF, tint & 0xFF);
+        // composite: blurred background + tint + top sheen, inside the rounded mask
+        for j in 0..rh {
+            let py = y0 + j as i64;
+            for i in 0..rw {
+                let px = x0 + i as i64;
+                if !inside(px, py) {
+                    continue;
+                }
+                let p = buf[j * rw + i];
+                let (mut pr, mut pg, mut pb) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
+                let ta = 60u32; // translucent tint ~0.24
+                pr = (tr * ta + pr * (255 - ta)) / 255;
+                pg = (tg * ta + pg * (255 - ta)) / 255;
+                pb = (tb * ta + pb * (255 - ta)) / 255;
+                let fy = j as f64 / rh as f64;
+                let ga = ((1.0 - fy * 2.0).max(0.0) * 70.0) as u32; // top sheen
+                pr = (255 * ga + pr * (255 - ga)) / 255;
+                pg = (255 * ga + pg * (255 - ga)) / 255;
+                pb = (255 * ga + pb * (255 - ga)) / 255;
+                self.pixels[py as usize * self.w + px as usize] = (pr << 16) | (pg << 8) | pb;
+            }
+        }
+        // rim light: bright top/left edge, soft dark bottom/right edge
+        for j in 0..rh {
+            let py = y0 + j as i64;
+            for i in 0..rw {
+                let px = x0 + i as i64;
+                if !inside(px, py) {
+                    continue;
+                }
+                if !inside(px, py - 1) || !inside(px - 1, py) {
+                    self.blend(px, py, 0xFFFFFF, 150);
+                } else if !inside(px, py + 1) || !inside(px + 1, py) {
+                    self.blend(px, py, 0x000000, 60);
+                }
+            }
+        }
+    }
+
     /// Mixes `c` into the pixel with opacity `alpha` (0..255), for anti-aliased text.
     pub fn blend(&mut self, x: i64, y: i64, c: u32, alpha: u8) {
         if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
