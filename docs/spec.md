@@ -887,6 +887,15 @@ handle), then `grad.backward(node)` fills every input's gradient, read with `gra
 is a few lines — e.g. minimising `(x-5)^2` converges `x` to 5. A language with
 differentiable values built in is something Python needs PyTorch/JAX for.
 
+**`symbol` — symbolic mathematics.** Build an expression tree from `symbol.var("x")`,
+`symbol.const(c)` and the ops `add`, `sub`, `mul`, `div`, `pow`, `neg`, `sin`, `cos`,
+`exp`, `ln` (each returns a node handle); then `symbol.diff(expr, var)` returns the
+symbolic derivative, `symbol.simplify(expr)` folds constants and trivial identities
+(`x+0`, `x*1`, `x*0`, `x^1`, …), `symbol.eval(expr, var, value)` substitutes and
+evaluates, and `symbol.text(expr)` prints it. `symbol.reset()` clears the tape. The
+simplifier is basic — it keeps results correct, not fully canonical — so a derivative may
+read e.g. `(x^3)*(3*(1/x))` rather than `3*x^2`, but evaluates identically.
+
 **`synth` — audio synthesis and DSP.** Make and shape sound buffers: `synth.rate(hz)`
 sets the sample rate; `synth.tone(freq, seconds, wave)` generates `"sine"`, `"square"`,
 `"saw"`, `"triangle"` or `"noise"`; `synth.buffer`/`synth.silence` make empty ones. Shape

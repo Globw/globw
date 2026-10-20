@@ -60,6 +60,23 @@ fn modules_and_lazy_imports() {
 }
 
 #[test]
+fn symbolic_differentiation() {
+    let dir = std::env::temp_dir().join("globw_symbol_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("y.gw");
+    std::fs::write(
+        &prog,
+        "import symbol\nvariables:\n    x, f, df as int\nsymbol.reset()\nx = symbol.var(\"x\")\n\
+         f = symbol.pow(x, symbol.const(3.0))\ndf = symbol.simplify(symbol.diff(f, x))\n\
+         output(symbol.eval(df, x, 2.0))\noutput(symbol.text(symbol.simplify(symbol.diff(symbol.sin(x), x))))\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "12.0\ncos(x)\n");
+}
+
+#[test]
 fn audio_tone_fft_and_wav_roundtrip() {
     let dir = std::env::temp_dir().join("globw_synth_test");
     std::fs::create_dir_all(&dir).unwrap();
