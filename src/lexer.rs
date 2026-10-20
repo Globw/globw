@@ -284,16 +284,30 @@ impl Scanner {
         while self.peek(0).map_or(false, |c| c.is_ascii_digit()) {
             text.push(self.bump());
         }
-        let is_real = self.peek(0) == Some('.') && self.peek(1).map_or(false, |c| c.is_ascii_digit());
-        if is_real {
+        let has_dot = self.peek(0) == Some('.') && self.peek(1).map_or(false, |c| c.is_ascii_digit());
+        if has_dot {
             text.push(self.bump());
             while self.peek(0).map_or(false, |c| c.is_ascii_digit()) {
                 text.push(self.bump());
             }
         }
+        // optional scientific exponent, e.g. 6.022e23 or 1e-10
+        let has_exp = matches!(self.peek(0), Some('e') | Some('E'))
+            && (self.peek(1).map_or(false, |c| c.is_ascii_digit())
+                || (matches!(self.peek(1), Some('+') | Some('-')) && self.peek(2).map_or(false, |c| c.is_ascii_digit())));
+        if has_exp {
+            text.push(self.bump()); // the e / E
+            if matches!(self.peek(0), Some('+') | Some('-')) {
+                text.push(self.bump());
+            }
+            while self.peek(0).map_or(false, |c| c.is_ascii_digit()) {
+                text.push(self.bump());
+            }
+        }
+        let is_real = has_dot || has_exp;
         let pos = Pos::new(line, col, text.chars().count() as u32);
         let tok = if is_real {
-            Tok::Real(text.parse().expect("digits with one dot always parse as f64"))
+            Tok::Real(text.parse().expect("a numeric literal always parses as f64"))
         } else {
             Tok::Int(text.parse().map_err(|_| Error::new(pos, "integer too large"))?)
         };
@@ -439,6 +453,9 @@ mod tests {
     #[test]
     fn numbers() {
         assert_eq!(toks("42 3.5")[..2], [Int(42), Real(3.5)]);
+        assert_eq!(toks("6e2 1.5e-3 1E10 2e+3")[..4], [Real(600.0), Real(0.0015), Real(1e10), Real(2000.0)]);
+        // a bare `e` after a number is not an exponent: 4e is 4 then the name e
+        assert_eq!(toks("4e")[..2], [Int(4), name("e")]);
     }
 
     #[test]

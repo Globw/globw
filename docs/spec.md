@@ -46,7 +46,7 @@ output(double(n))
 - **Declarations**: `variables:`, `as`, `of` and the type names `int`, `float`, `string`, `bool` are written in lowercase, exactly like that.
 - **Built-in procedures and functions** are lowercase too (`input`, `output`, `length`, `window`, `rect`…). All keywords and built-in names are reserved: they cannot name variables or functions.
 - **Identifiers**: letters (accented letters included), digits and `_`. They cannot start with a digit. They are case-sensitive.
-- **Literals**: integers `42`, reals `3.14`, strings `"text"` (escapes `\"`, `\\`, `\n`), booleans `true` / `false`.
+- **Literals**: integers `42`, reals `3.14`, reals in scientific notation `6.022e23`, `1.989e30`, `1e-10` (the `e`/`E` exponent makes it a real), strings `"text"` (escapes `\"`, `\\`, `\n`), booleans `true` / `false`.
 - **Assignment** is `=`; equality is compared with `==`. A single `=` inside a condition is an error that suggests `==`, and `==` used as a statement is an error that suggests `=`.
 - Source files are UTF-8. A BOM and Windows line endings (CRLF) are accepted.
 
