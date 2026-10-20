@@ -3591,6 +3591,64 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         UnicodeIsSpace => Value::Bool(text(&args[0]).chars().next().is_some_and(|c| c.is_whitespace())),
         UnicodeIsUpper => Value::Bool(text(&args[0]).chars().next().is_some_and(|c| c.is_uppercase())),
 
+        // ======== module "gwgame": 2D game toolkit ========
+        GwgAabb => {
+            let (ax, ay, aw, ah) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+            let (bx, by, bw, bh) = (real(&args[4]), real(&args[5]), real(&args[6]), real(&args[7]));
+            Value::Bool(ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by)
+        }
+        GwgHitCircle => {
+            let (ax, ay, ar, bx, by, br) =
+                (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]), real(&args[5]));
+            Value::Bool((ax - bx).hypot(ay - by) <= ar + br)
+        }
+        GwgPointIn => {
+            let (px, py, x, y, w, h) =
+                (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]), real(&args[5]));
+            Value::Bool(px >= x && px <= x + w && py >= y && py <= y + h)
+        }
+        GwgDistance => Value::Real((real(&args[0]) - real(&args[2])).hypot(real(&args[1]) - real(&args[3]))),
+        GwgDirection => {
+            let (dx, dy) = (real(&args[2]) - real(&args[0]), real(&args[3]) - real(&args[1]));
+            Value::Real(dy.atan2(dx).to_degrees())
+        }
+        GwgMoveToward => {
+            let (cur, target, step) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            let d = target - cur;
+            Value::Real(if d.abs() <= step { target } else { cur + d.signum() * step })
+        }
+        GwgWrap => {
+            let (v, lo, hi) = (real(&args[0]), real(&args[1]), real(&args[2]));
+            let span = hi - lo;
+            Value::Real(if span <= 0.0 { lo } else { lo + (v - lo).rem_euclid(span) })
+        }
+        GwgLerp => Value::Real(real(&args[0]) + (real(&args[1]) - real(&args[0])) * real(&args[2])),
+        GwgVx => Value::Real(real(&args[0]) * real(&args[1]).to_radians().cos()),
+        GwgVy => Value::Real(real(&args[0]) * real(&args[1]).to_radians().sin()),
+        GwgOverlap => {
+            let (a0, a1, b0, b1) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+            Value::Real((a1.min(b1) - a0.max(b0)).max(0.0))
+        }
+        GwgSign => Value::Int(real(&args[0]).signum() as i64 * (real(&args[0]) != 0.0) as i64),
+        GwgSnap => {
+            let (v, size) = (real(&args[0]), real(&args[1]));
+            Value::Real(if size == 0.0 { v } else { (v / size).round() * size })
+        }
+        GwgCell => {
+            let (v, size) = (real(&args[0]), real(&args[1]));
+            Value::Int(if size == 0.0 { 0 } else { (v / size).floor() as i64 })
+        }
+        GwgBounce => {
+            let (pos, vel, lo, hi) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+            Value::Real(if (pos <= lo && vel < 0.0) || (pos >= hi && vel > 0.0) { -vel } else { vel })
+        }
+        GwgClampf => Value::Real(real(&args[0]).clamp(real(&args[1]), real(&args[2]))),
+        GwgAngleDiff => {
+            let (a, b) = (real(&args[0]), real(&args[1]));
+            Value::Real((b - a + 180.0).rem_euclid(360.0) - 180.0)
+        }
+        GwgReached => Value::Bool((real(&args[0]) - real(&args[1])).abs() <= real(&args[2])),
+
         // ======== batch M: 615 modules ========
         Mk0001 => Value::Real(real(&args[0]) * 1e-10),
         Mk0002 => Value::Real(real(&args[0]) / 1e-10),

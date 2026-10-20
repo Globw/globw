@@ -879,6 +879,14 @@ case, so `straße` → `STRASSE`), `unicode.reverse`, `unicode.trim`, and the
 single-character tests `unicode.is_letter`, `unicode.is_digit`, `unicode.is_space`,
 `unicode.is_upper`.
 
+**`gwgame` — 2D game toolkit.** Primitives for little games, on top of the graphics
+window: collisions `aabb`, `hit_circle`, `point_in`, `overlap`; input `axis(negKey, posKey)`
+(returns -1/0/1) and `key`; movement `move_toward`, `wrap` (screen wrap), `bounce`
+(reflect a velocity at a wall), `clampf`, `lerp`, `snap`, `cell`; vectors `distance`,
+`direction`, `vx`/`vy` (velocity from speed and angle), `angle_diff`, `reached`, `sign`;
+and drawing `sprite(x,y,w,h,color)` and `tile(x,y,size,color)`. A paddle-and-ball game
+fits in ~25 lines, in one binary with no dependencies.
+
 **1000 built-in modules.** A large family of single-purpose modules covers unit
 conversions and named constants. Each conversion module has `module.si(x)` (to the
 quantity's SI base) and `module.inv(x)` (back) — e.g. `furlong.si(1)` = 201.168 m,
