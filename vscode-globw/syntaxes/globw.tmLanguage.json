@@ -137,7 +137,7 @@
       "patterns": [
         {
           "name": "keyword.operator.assignment.globw",
-          "match": "=(?!=)"
+          "match": "\\+=|-=|\\*=|/=|=(?!=)"
         },
         {
           "name": "keyword.operator.comparison.globw",

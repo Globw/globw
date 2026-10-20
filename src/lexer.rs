@@ -57,6 +57,10 @@ pub enum Tok {
     Minus,
     Star,
     Slash,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
     LParen,
     RParen,
     LBracket,
@@ -393,6 +397,22 @@ impl Scanner {
                 self.bump();
                 (Tok::NotEq, 2)
             }
+            ('+', Some('=')) => {
+                self.bump();
+                (Tok::PlusEq, 2)
+            }
+            ('-', Some('=')) => {
+                self.bump();
+                (Tok::MinusEq, 2)
+            }
+            ('*', Some('=')) => {
+                self.bump();
+                (Tok::StarEq, 2)
+            }
+            ('/', Some('=')) => {
+                self.bump();
+                (Tok::SlashEq, 2)
+            }
             ('<', _) => (Tok::Lt, 1),
             ('>', _) => (Tok::Gt, 1),
             ('=', _) => (Tok::Assign, 1),
@@ -456,6 +476,11 @@ mod tests {
         assert_eq!(toks("6e2 1.5e-3 1E10 2e+3")[..4], [Real(600.0), Real(0.0015), Real(1e10), Real(2000.0)]);
         // a bare `e` after a number is not an exponent: 4e is 4 then the name e
         assert_eq!(toks("4e")[..2], [Int(4), name("e")]);
+    }
+
+    #[test]
+    fn compound_assignment_operators() {
+        assert_eq!(toks("+= -= *= /=")[..4], [PlusEq, MinusEq, StarEq, SlashEq]);
     }
 
     #[test]

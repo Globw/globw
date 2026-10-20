@@ -85,6 +85,10 @@ fn text(t: &Tok) -> &'static str {
         Tok::Minus => "-",
         Tok::Star => "*",
         Tok::Slash => "/",
+        Tok::PlusEq => "+=",
+        Tok::MinusEq => "-=",
+        Tok::StarEq => "*=",
+        Tok::SlashEq => "/=",
         Tok::LParen => "(",
         Tok::RParen => ")",
         Tok::LBracket => "[",
@@ -969,7 +973,10 @@ impl Parser {
         if matches!(self.peek_tok(1), Tok::Comma) {
             return self.unpack_stmt(name, pos);
         }
-        let is_assignment = matches!(self.peek_tok(1), Tok::Assign | Tok::LBracket);
+        let is_assignment = matches!(
+            self.peek_tok(1),
+            Tok::Assign | Tok::LBracket | Tok::PlusEq | Tok::MinusEq | Tok::StarEq | Tok::SlashEq
+        );
         if !is_assignment {
             if let Some(kw) = miscased_statement_keyword(&name) {
                 return Err(Error::new(pos, format!("\"{}\" is not a keyword", name))
@@ -1000,6 +1007,13 @@ impl Parser {
                     return Ok(StmtKind::Eval(e));
                 }
                 ExprKind::Field(..) | ExprKind::Subscript(..) => {
+                    if let Some(op) = self.compound_op() {
+                        self.advance();
+                        let rhs = self.expr()?;
+                        self.end_stmt()?;
+                        let value = Expr { kind: ExprKind::Binary(op, Box::new(e.clone()), Box::new(rhs)), pos };
+                        return Ok(StmtKind::SetMember(e, value));
+                    }
                     if !self.accept(&Tok::Assign) {
                         if self.is(&Tok::Eq) {
                             return Err(Error::new(self.pos(), "== compares two values, it does not assign")
@@ -1013,6 +1027,21 @@ impl Parser {
                 }
                 _ => return self.fail("only a method call or a field assignment can be a statement here"),
             }
+        }
+        if let Some(op) = self.compound_op() {
+            self.advance();
+            let rhs = self.expr()?;
+            self.end_stmt()?;
+            // x += e  becomes  x = x + e  (same for an indexed target)
+            let mut read = Expr { kind: ExprKind::Var(name.clone()), pos };
+            if !indices.is_empty() {
+                read = Expr { kind: ExprKind::Subscript(Box::new(read), indices.clone()), pos };
+            }
+            for group in &rest {
+                read = Expr { kind: ExprKind::Subscript(Box::new(read), group.clone()), pos };
+            }
+            let value = Expr { kind: ExprKind::Binary(op, Box::new(read), Box::new(rhs)), pos };
+            return Ok(StmtKind::Assign(Target { name, indices, rest, pos }, value));
         }
         if !self.accept(&Tok::Assign) {
             if self.is(&Tok::Eq) {
@@ -1104,6 +1133,18 @@ impl Parser {
             Tok::LtEq => BinOp::LtEq,
             Tok::Gt => BinOp::Gt,
             Tok::GtEq => BinOp::GtEq,
+            _ => return None,
+        })
+    }
+
+    /// The operator of a compound assignment (`+=`, `-=`, `*=`, `/=`), if the current
+    /// token is one. Does not consume it.
+    fn compound_op(&mut self) -> Option<BinOp> {
+        Some(match self.tok() {
+            Tok::PlusEq => BinOp::Add,
+            Tok::MinusEq => BinOp::Sub,
+            Tok::StarEq => BinOp::Mul,
+            Tok::SlashEq => BinOp::Div,
             _ => return None,
         })
     }
