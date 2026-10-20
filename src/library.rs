@@ -559,6 +559,111 @@ fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
     }
 }
 
+// ---- module "grad": a tape-based reverse-mode autodiff engine ----
+// Each operation appends a node whose inputs always have smaller indices, so one
+// reverse pass over the tape (high index to low) back-propagates the gradients.
+#[derive(Clone, Copy)]
+struct GNode {
+    value: f64,
+    grad: f64,
+    op: u8, // 0 leaf,1 add,2 sub,3 mul,4 div,5 neg,6 pow,7 exp,8 ln,9 sin,10 cos,11 tanh,12 sigmoid,13 relu
+    a: usize,
+    b: usize,
+    k: f64, // constant parameter (pow exponent)
+}
+
+thread_local! {
+    static GRAD: RefCell<Vec<GNode>> = const { RefCell::new(Vec::new()) };
+}
+
+fn g_push(value: f64, op: u8, a: usize, b: usize, k: f64) -> i64 {
+    GRAD.with(|g| {
+        let mut v = g.borrow_mut();
+        v.push(GNode { value, grad: 0.0, op, a, b, k });
+        (v.len() - 1) as i64
+    })
+}
+
+fn g_val(h: i64) -> Result<f64, String> {
+    GRAD.with(|g| {
+        g.borrow()
+            .get(usize::try_from(h).map_err(|_| "grad: invalid handle".to_string())?)
+            .map(|n| n.value)
+            .ok_or_else(|| "grad: invalid handle".to_string())
+    })
+}
+
+fn g_grad(h: i64) -> Result<f64, String> {
+    GRAD.with(|g| {
+        g.borrow()
+            .get(usize::try_from(h).map_err(|_| "grad: invalid handle".to_string())?)
+            .map(|n| n.grad)
+            .ok_or_else(|| "grad: invalid handle".to_string())
+    })
+}
+
+fn g_backward(target: i64) -> Result<(), String> {
+    GRAD.with(|g| {
+        let mut v = g.borrow_mut();
+        let t = usize::try_from(target).ok().filter(|&t| t < v.len()).ok_or("grad: invalid handle")?;
+        for n in v.iter_mut() {
+            n.grad = 0.0;
+        }
+        v[t].grad = 1.0;
+        for i in (0..=t).rev() {
+            let n = v[i];
+            let gi = n.grad;
+            match n.op {
+                1 => {
+                    v[n.a].grad += gi;
+                    v[n.b].grad += gi;
+                }
+                2 => {
+                    v[n.a].grad += gi;
+                    v[n.b].grad -= gi;
+                }
+                3 => {
+                    let (va, vb) = (v[n.a].value, v[n.b].value);
+                    v[n.a].grad += gi * vb;
+                    v[n.b].grad += gi * va;
+                }
+                4 => {
+                    let (va, vb) = (v[n.a].value, v[n.b].value);
+                    v[n.a].grad += gi / vb;
+                    v[n.b].grad -= gi * va / (vb * vb);
+                }
+                5 => v[n.a].grad -= gi,
+                6 => {
+                    let va = v[n.a].value;
+                    v[n.a].grad += gi * n.k * va.powf(n.k - 1.0);
+                }
+                7 => v[n.a].grad += gi * n.value,
+                8 => {
+                    let va = v[n.a].value;
+                    v[n.a].grad += gi / va;
+                }
+                9 => {
+                    let va = v[n.a].value;
+                    v[n.a].grad += gi * va.cos();
+                }
+                10 => {
+                    let va = v[n.a].value;
+                    v[n.a].grad -= gi * va.sin();
+                }
+                11 => v[n.a].grad += gi * (1.0 - n.value * n.value),
+                12 => v[n.a].grad += gi * n.value * (1.0 - n.value),
+                13 => {
+                    if v[n.a].value > 0.0 {
+                        v[n.a].grad += gi;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    })
+}
+
 /// Sends an HTTP request of any method, with an optional single request header and
 /// body, for the richer `net` module.
 fn net_build(method: &str, url: &str, body: &str, header: Option<(&str, &str)>) -> Result<ureq::Response, ureq::Error> {
@@ -3648,6 +3753,85 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             Value::Real((b - a + 180.0).rem_euclid(360.0) - 180.0)
         }
         GwgReached => Value::Bool((real(&args[0]) - real(&args[1])).abs() <= real(&args[2])),
+
+        // ======== module "grad": reverse-mode autodiff ========
+        GradVar | GradConst => Value::Int(g_push(real(&args[0]), 0, 0, 0, 0.0)),
+        GradAdd => {
+            let (a, b) = (int(&args[0]), int(&args[1]));
+            let v = g_val(a)? + g_val(b)?;
+            Value::Int(g_push(v, 1, a as usize, b as usize, 0.0))
+        }
+        GradSub => {
+            let (a, b) = (int(&args[0]), int(&args[1]));
+            let v = g_val(a)? - g_val(b)?;
+            Value::Int(g_push(v, 2, a as usize, b as usize, 0.0))
+        }
+        GradMul => {
+            let (a, b) = (int(&args[0]), int(&args[1]));
+            let v = g_val(a)? * g_val(b)?;
+            Value::Int(g_push(v, 3, a as usize, b as usize, 0.0))
+        }
+        GradDiv => {
+            let (a, b) = (int(&args[0]), int(&args[1]));
+            let v = g_val(a)? / g_val(b)?;
+            Value::Int(g_push(v, 4, a as usize, b as usize, 0.0))
+        }
+        GradNeg => {
+            let a = int(&args[0]);
+            let v = -g_val(a)?;
+            Value::Int(g_push(v, 5, a as usize, 0, 0.0))
+        }
+        GradPow => {
+            let (a, k) = (int(&args[0]), real(&args[1]));
+            let v = g_val(a)?.powf(k);
+            Value::Int(g_push(v, 6, a as usize, 0, k))
+        }
+        GradExp => {
+            let a = int(&args[0]);
+            let v = g_val(a)?.exp();
+            Value::Int(g_push(v, 7, a as usize, 0, 0.0))
+        }
+        GradLn => {
+            let a = int(&args[0]);
+            let v = g_val(a)?.ln();
+            Value::Int(g_push(v, 8, a as usize, 0, 0.0))
+        }
+        GradSin => {
+            let a = int(&args[0]);
+            let v = g_val(a)?.sin();
+            Value::Int(g_push(v, 9, a as usize, 0, 0.0))
+        }
+        GradCos => {
+            let a = int(&args[0]);
+            let v = g_val(a)?.cos();
+            Value::Int(g_push(v, 10, a as usize, 0, 0.0))
+        }
+        GradTanh => {
+            let a = int(&args[0]);
+            let v = g_val(a)?.tanh();
+            Value::Int(g_push(v, 11, a as usize, 0, 0.0))
+        }
+        GradSigmoid => {
+            let a = int(&args[0]);
+            let v = 1.0 / (1.0 + (-g_val(a)?).exp());
+            Value::Int(g_push(v, 12, a as usize, 0, 0.0))
+        }
+        GradRelu => {
+            let a = int(&args[0]);
+            let v = g_val(a)?.max(0.0);
+            Value::Int(g_push(v, 13, a as usize, 0, 0.0))
+        }
+        GradValue => Value::Real(g_val(int(&args[0]))?),
+        GradBackward => {
+            g_backward(int(&args[0]))?;
+            Value::Null
+        }
+        GradGrad => Value::Real(g_grad(int(&args[0]))?),
+        GradReset => {
+            GRAD.with(|g| g.borrow_mut().clear());
+            Value::Null
+        }
+        GradCount => Value::Int(GRAD.with(|g| g.borrow().len() as i64)),
 
         // ======== batch M: 615 modules ========
         Mk0001 => Value::Real(real(&args[0]) * 1e-10),

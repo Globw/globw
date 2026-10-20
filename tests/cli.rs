@@ -60,6 +60,26 @@ fn modules_and_lazy_imports() {
 }
 
 #[test]
+fn autodiff_gradients_and_training() {
+    let dir = std::env::temp_dir().join("globw_grad_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("g.gw");
+    std::fs::write(
+        &prog,
+        "import grad\nvariables:\n    x, y, xy, z, xh, c5, d, loss, i as int\n    curr as float\n\
+         grad.reset()\nx = grad.var(2.0)\ny = grad.var(3.0)\nxy = grad.mul(x, y)\nz = grad.add(xy, x)\n\
+         grad.backward(z)\noutput(grad.grad(x))\noutput(grad.grad(y))\n\
+         curr = 0.0\nfor(i from 1 to 200)\n    grad.reset()\n    xh = grad.var(curr)\n    c5 = grad.const(5.0)\n\
+         \x20   d = grad.sub(xh, c5)\n    loss = grad.pow(d, 2.0)\n    grad.backward(loss)\n    curr = curr - 0.1 * grad.grad(xh)\nend loop\n\
+         output(curr > 4.99 and curr < 5.01)\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "4.0\n2.0\ntrue\n");
+}
+
+#[test]
 fn unit_conversion_modules_work() {
     let dir = std::env::temp_dir().join("globw_units_test");
     std::fs::create_dir_all(&dir).unwrap();

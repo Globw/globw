@@ -879,6 +879,14 @@ case, so `straße` → `STRASSE`), `unicode.reverse`, `unicode.trim`, and the
 single-character tests `unicode.is_letter`, `unicode.is_digit`, `unicode.is_space`,
 `unicode.is_upper`.
 
+**`grad` — automatic differentiation.** A built-in reverse-mode autodiff engine: build
+an expression from `grad.var(x)` / `grad.const(x)` and the ops `add`, `sub`, `mul`, `div`,
+`neg`, `pow`, `exp`, `ln`, `sin`, `cos`, `tanh`, `sigmoid`, `relu` (each returns a node
+handle), then `grad.backward(node)` fills every input's gradient, read with `grad.grad(h)`
+(and the value with `grad.value(h)`); `grad.reset()` starts a new tape. Gradient descent
+is a few lines — e.g. minimising `(x-5)^2` converges `x` to 5. A language with
+differentiable values built in is something Python needs PyTorch/JAX for.
+
 **`gwgame` — 2D game toolkit.** Primitives for little games, on top of the graphics
 window: collisions `aabb`, `hit_circle`, `point_in`, `overlap`; input `axis(negKey, posKey)`
 (returns -1/0/1) and `key`; movement `move_toward`, `wrap` (screen wrap), `bounce`
