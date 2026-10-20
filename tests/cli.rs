@@ -60,6 +60,36 @@ fn modules_and_lazy_imports() {
 }
 
 #[test]
+fn net_url_parsing_and_unicode() {
+    let (code, stdout, stderr) = globw(&["examples/net_url.gw"]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "api.github.com\n/repos/x\nnew\nSTRASSE\nwbolg\n");
+}
+
+#[test]
+fn imports_resolve_from_a_libs_folder() {
+    let (code, stdout, stderr) = globw(&["tests/fixtures/pkgapp.gw"]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "hello from libs\n");
+}
+
+#[test]
+fn imports_resolve_from_globw_path() {
+    let dir = std::env::temp_dir().join("globw_path_test");
+    let lib = dir.join("pkgs");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(dir.join("prog.gw"), "import tool\ntool.run()\n").unwrap();
+    std::fs::write(lib.join("tool.gw"), "procedure run()\n    output(\"from GLOBW_PATH\")\nend procedure\n").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_globw"))
+        .arg(dir.join("prog.gw"))
+        .env("GLOBW_PATH", &lib)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"), "from GLOBW_PATH\n");
+}
+
+#[test]
 fn errors_in_modules_name_their_file() {
     let dir = std::env::temp_dir().join("globw_module_errors_test");
     std::fs::create_dir_all(&dir).unwrap();

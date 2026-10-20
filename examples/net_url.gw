@@ -1,0 +1,8 @@
+' URL parsing and unicode-aware text (no network needed)
+import net
+import unicode
+output(net.host("https://api.github.com:443/repos/x?tab=main"))
+output(net.path("https://api.github.com/repos/x?tab=main"))
+output(net.query("https://x.com/a?page=3&sort=new", "sort"))
+output(unicode.upper("straße"))
+output(unicode.reverse("globw"))

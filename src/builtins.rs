@@ -757,6 +757,10 @@ pub enum Builtin {
     GtqToggleIcon, GtqTextButton, GtqSliderMini, GtqStepperF, GtqCloseButton,
     // gtq batch G: liquid glass
     GtqGlass, GtqGlassRound, GtqGlassCircle, GtqGlassButton,
+    // module "net" (rich HTTP client) and unicode-aware string ops
+    NetRequest, NetSend, NetStatus, NetHeader, NetOk, NetHost, NetPath, NetQuery,
+    UnicodeUpper, UnicodeLower, UnicodeReverse, UnicodeTrim,
+    UnicodeIsLetter, UnicodeIsDigit, UnicodeIsSpace, UnicodeIsUpper,
 }
 
 use Builtin::*;
@@ -1909,6 +1913,24 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqGlassRound, "gtq.glass_round", Sig::Fixed(&[R, R, R, R, S, I, R], None)),
     (GtqGlassCircle, "gtq.glass_circle", Sig::Fixed(&[R, R, R, S, I], None)),
     (GtqGlassButton, "gtq.glass_button", Sig::Fixed(&[R, R, R, R, S], Some(Bool))),
+    // module "net" (rich HTTP client)
+    (NetRequest, "net.request", Sig::Fixed(&[S, S, S], Some(Str))),
+    (NetSend, "net.send", Sig::Fixed(&[S, S, S, S, S], Some(Str))),
+    (NetStatus, "net.status", Sig::Fixed(&[S, S], Some(Int))),
+    (NetHeader, "net.header", Sig::Fixed(&[S, S], Some(Str))),
+    (NetOk, "net.ok", Sig::Fixed(&[S], Some(Bool))),
+    (NetHost, "net.host", Sig::Fixed(&[S], Some(Str))),
+    (NetPath, "net.path", Sig::Fixed(&[S], Some(Str))),
+    (NetQuery, "net.query", Sig::Fixed(&[S, S], Some(Str))),
+    // unicode-aware string operations
+    (UnicodeUpper, "unicode.upper", Sig::Fixed(&[S], Some(Str))),
+    (UnicodeLower, "unicode.lower", Sig::Fixed(&[S], Some(Str))),
+    (UnicodeReverse, "unicode.reverse", Sig::Fixed(&[S], Some(Str))),
+    (UnicodeTrim, "unicode.trim", Sig::Fixed(&[S], Some(Str))),
+    (UnicodeIsLetter, "unicode.is_letter", Sig::Fixed(&[S], Some(Bool))),
+    (UnicodeIsDigit, "unicode.is_digit", Sig::Fixed(&[S], Some(Bool))),
+    (UnicodeIsSpace, "unicode.is_space", Sig::Fixed(&[S], Some(Bool))),
+    (UnicodeIsUpper, "unicode.is_upper", Sig::Fixed(&[S], Some(Bool))),
 ];
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
@@ -1971,6 +1993,7 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "ease", "trig2", "special", "polar", "transform", "temp2", "storage", "area2", "kitchen",
     "chem", "elec", "finance2", "health2", "music", "space", "optics", "prob2", "rpg",
     "physics2", "stats2", "map", "date2", "wave2", "light", "sound2",
+    "net",
 ];
 
 pub fn is_builtin_module(name: &str) -> bool {

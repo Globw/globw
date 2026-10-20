@@ -559,6 +559,49 @@ fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
     }
 }
 
+/// Sends an HTTP request of any method, with an optional single request header and
+/// body, for the richer `net` module.
+fn net_build(method: &str, url: &str, body: &str, header: Option<(&str, &str)>) -> Result<ureq::Response, ureq::Error> {
+    let mut req = ureq::request(&method.to_uppercase(), url).timeout(std::time::Duration::from_secs(30));
+    if let Some((name, value)) = header {
+        req = req.set(name, value);
+    }
+    if body.is_empty() {
+        req.call()
+    } else {
+        req.send_string(body)
+    }
+}
+
+fn url_host(url: &str) -> String {
+    let s = url.split("://").nth(1).unwrap_or(url);
+    let authority = s.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    authority.split(':').next().unwrap_or(authority).to_string()
+}
+
+fn url_path(url: &str) -> String {
+    let s = url.split("://").nth(1).unwrap_or(url);
+    match s.find('/') {
+        Some(i) => s[i..].split(['?', '#']).next().unwrap_or("/").to_string(),
+        None => "/".to_string(),
+    }
+}
+
+fn url_query(url: &str, key: &str) -> String {
+    let Some((_, q)) = url.split_once('?') else {
+        return String::new();
+    };
+    let q = q.split('#').next().unwrap_or(q);
+    for pair in q.split('&') {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        if k == key {
+            return v.to_string();
+        }
+    }
+    String::new()
+}
+
 // ---------------------------------------------------------------- the "chart" module (SVG plots)
 
 enum ChartKind {
@@ -3500,6 +3543,53 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         GtqWrapIndex => Value::Int(int(&args[0]).rem_euclid(int(&args[1]).max(1))),
         GtqClampPos => Value::Real(real(&args[0]).clamp(real(&args[1]), real(&args[2]))),
         GtqCellX | GtqCellY => Value::Real(real(&args[0]) + int(&args[1]) as f64 * real(&args[2])),
+
+        // ======== module "net": rich HTTP client ========
+        NetRequest => {
+            let (m, u, b) = (text(&args[0]), text(&args[1]), text(&args[2]));
+            let resp = net_build(m, u, b, None).map_err(|e| web_error("net.request", u, e))?;
+            string(resp.into_string().map_err(|e| format!("net.request: cannot read the reply: {}", e))?)
+        }
+        NetSend => {
+            let (m, u, b, hn, hv) =
+                (text(&args[0]), text(&args[1]), text(&args[2]), text(&args[3]), text(&args[4]));
+            let resp = net_build(m, u, b, Some((hn, hv))).map_err(|e| web_error("net.send", u, e))?;
+            string(resp.into_string().map_err(|e| format!("net.send: cannot read the reply: {}", e))?)
+        }
+        NetStatus => {
+            let (m, u) = (text(&args[0]), text(&args[1]));
+            match net_build(m, u, "", None) {
+                Ok(r) => Value::Int(r.status() as i64),
+                Err(ureq::Error::Status(code, _)) => Value::Int(code as i64),
+                Err(ureq::Error::Transport(t)) => return Err(format!("net.status: cannot reach \"{}\": {}", u, t)),
+            }
+        }
+        NetHeader => {
+            let (u, name) = (text(&args[0]), text(&args[1]));
+            let resp = net_build("GET", u, "", None).map_err(|e| web_error("net.header", u, e))?;
+            string(resp.header(name).unwrap_or("").to_string())
+        }
+        NetOk => {
+            let u = text(&args[0]);
+            match net_build("GET", u, "", None) {
+                Ok(r) => Value::Bool((200..300).contains(&r.status())),
+                Err(ureq::Error::Status(_, _)) => Value::Bool(false),
+                Err(ureq::Error::Transport(_)) => Value::Bool(false),
+            }
+        }
+        NetHost => string(url_host(text(&args[0]))),
+        NetPath => string(url_path(text(&args[0]))),
+        NetQuery => string(url_query(text(&args[0]), text(&args[1]))),
+
+        // ======== unicode-aware string operations ========
+        UnicodeUpper => string(text(&args[0]).to_uppercase()),
+        UnicodeLower => string(text(&args[0]).to_lowercase()),
+        UnicodeReverse => string(text(&args[0]).chars().rev().collect::<String>()),
+        UnicodeTrim => string(text(&args[0]).trim().to_string()),
+        UnicodeIsLetter => Value::Bool(text(&args[0]).chars().next().is_some_and(|c| c.is_alphabetic())),
+        UnicodeIsDigit => Value::Bool(text(&args[0]).chars().next().is_some_and(|c| c.is_numeric())),
+        UnicodeIsSpace => Value::Bool(text(&args[0]).chars().next().is_some_and(|c| c.is_whitespace())),
+        UnicodeIsUpper => Value::Bool(text(&args[0]).chars().next().is_some_and(|c| c.is_uppercase())),
 
         // conversions
         ToInt => match &args[0] {

@@ -1,0 +1,3 @@
+procedure greet()
+    output("hello from libs")
+end procedure

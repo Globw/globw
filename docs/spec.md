@@ -864,6 +864,26 @@ Draw it *after* the content it sits over.
 - `gtq.glass_circle(x, y, radius, tint, blur)` — a circular glass orb.
 - `gtq.glass_button(x, y, w, h, label)` — a glass button; returns `true` on the frame it is clicked.
 
+**Rich HTTP client (`net`).** Beyond `web`'s simple get/post, `net` speaks the full
+set of methods, custom headers and URL parsing:
+
+- `net.request(method, url, body)` — any method (`"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`, …); returns the reply, or fails on a non-2xx status.
+- `net.send(method, url, body, header, value)` — the same with one request header set (e.g. an `Authorization` token).
+- `net.status(method, url)` — the status code as a number, even for 4xx/5xx (only an unreachable host fails).
+- `net.header(url, name)` — a response header from a GET.
+- `net.ok(url)` — `true` when a GET returns 2xx.
+- `net.host(url)`, `net.path(url)`, `net.query(url, key)` — parse a URL (no request made).
+
+**Unicode-aware text (`unicode`).** `unicode.upper`/`unicode.lower` (full Unicode
+case, so `straße` → `STRASSE`), `unicode.reverse`, `unicode.trim`, and the
+single-character tests `unicode.is_letter`, `unicode.is_digit`, `unicode.is_space`,
+`unicode.is_upper`.
+
+**Where `import` looks for a module.** A module `foo` is loaded from `foo.gw`, searched
+in this order: next to the file that imports it, then the main program's folder, then a
+`libs/` folder there, then every directory listed in the `GLOBW_PATH` environment
+variable (a minimal package path, OS path separator). Built-in modules need no file.
+
 **More built-in functions (batch H, 150 functions).**
 
 - `ease` — Robert Penner easing curves for animation, `t` in 0..1:

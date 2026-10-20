@@ -86,10 +86,24 @@ pub fn load(main: SourceFile, dir: &Path) -> (Vec<SourceFile>, Result<Program, V
                 return (files, Err(vec![Error::new(imp.pos, "a module cannot import itself")]));
             }
             let file_name = format!("{}.gw", imp.module);
-            let candidates = [modules[k].dir.join(&file_name), dir.join(&file_name)];
+            // search: next to the importing file, the main program's folder, a
+            // "libs" folder there, then every directory on GLOBW_PATH (a minimal
+            // package path).
+            let mut candidates = vec![
+                modules[k].dir.join(&file_name),
+                dir.join(&file_name),
+                dir.join("libs").join(&file_name),
+            ];
+            if let Some(path_var) = std::env::var_os("GLOBW_PATH") {
+                for d in std::env::split_paths(&path_var) {
+                    candidates.push(d.join(&file_name));
+                }
+            }
             let Some(path) = candidates.iter().find(|p| p.is_file()).cloned() else {
-                let e = Error::new(imp.pos, format!("module \"{}\" not found", imp.module))
-                    .with_hint(format!("put the file {} in the same folder as the program", file_name));
+                let e = Error::new(imp.pos, format!("module \"{}\" not found", imp.module)).with_hint(format!(
+                    "put {} next to the program, in a \"libs\" folder there, or on GLOBW_PATH",
+                    file_name
+                ));
                 return (files, Err(vec![e]));
             };
             if imp.module == main_stem && path.parent() == Some(dir) {
