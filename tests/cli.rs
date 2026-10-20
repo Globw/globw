@@ -60,6 +60,25 @@ fn modules_and_lazy_imports() {
 }
 
 #[test]
+fn dataframe_csv_aggregates_and_groupby() {
+    let dir = std::env::temp_dir().join("globw_frame_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv = dir.join("d.csv");
+    std::fs::write(&csv, "dept,salary\n1,50\n1,60\n2,80\n2,90\n1,55\n").unwrap();
+    let prog = dir.join("f.gw");
+    let src = format!(
+        "import gwframe\nvariables:\n    f, g as int\nf = gwframe.from_csv(\"{}\")\n\
+         output(gwframe.sum(f, \"salary\"))\noutput(gwframe.rows(gwframe.filter(f, \"salary\", \">\", 60.0)))\n\
+         g = gwframe.group_sum(f, \"dept\", \"salary\")\noutput(gwframe.get(g, 1, \"salary\"))\noutput(gwframe.get(g, 2, \"salary\"))\n",
+        csv.to_str().unwrap().replace('\\', "/")
+    );
+    std::fs::write(&prog, src).unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "335.0\n2\n165.0\n170.0\n");
+}
+
+#[test]
 fn autodiff_gradients_and_training() {
     let dir = std::env::temp_dir().join("globw_grad_test");
     std::fs::create_dir_all(&dir).unwrap();

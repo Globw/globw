@@ -887,6 +887,14 @@ handle), then `grad.backward(node)` fills every input's gradient, read with `gra
 is a few lines — e.g. minimising `(x-5)^2` converges `x` to 5. A language with
 differentiable values built in is something Python needs PyTorch/JAX for.
 
+**`gwframe` — numeric dataframe (pandas-like).** Load a numeric CSV with a header into
+a frame: `gwframe.from_csv(path)` → handle. Inspect with `rows`, `cols`, `colname(f, i)`,
+`get(f, row, name)`; aggregate a column with `sum`, `mean`, `min`, `max`, `std`; reshape
+with `filter(f, name, op, value)` (op is `">"`, `"<"`, `">="`, `"<="`, `"=="`, `"!="`),
+`sort(f, name, ascending)`, `head(f, n)`, and `group_sum` / `group_mean(f, keyCol, valCol)`;
+output with `show(f, n)` (a printable table) and `to_csv(f, path)`. `gwframe.free(f)`
+releases it.
+
 **`gwgame` — 2D game toolkit.** Primitives for little games, on top of the graphics
 window: collisions `aabb`, `hit_circle`, `point_in`, `overlap`; input `axis(negKey, posKey)`
 (returns -1/0/1) and `key`; movement `move_toward`, `wrap` (screen wrap), `bounce`

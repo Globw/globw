@@ -559,6 +559,84 @@ fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
     }
 }
 
+// ---- module "gwframe": a small numeric dataframe (pandas-like) ----
+struct Frame {
+    names: Vec<String>,
+    cols: Vec<Vec<f64>>, // every column has the same length (the row count)
+}
+
+thread_local! {
+    static FRAMES: RefCell<Vec<Option<Frame>>> = const { RefCell::new(Vec::new()) };
+}
+
+fn frame_push(f: Frame) -> i64 {
+    FRAMES.with(|r| {
+        let mut v = r.borrow_mut();
+        v.push(Some(f));
+        (v.len() - 1) as i64
+    })
+}
+
+fn frame_col<'a>(f: &'a Frame, name: &str) -> Result<&'a Vec<f64>, String> {
+    f.names
+        .iter()
+        .position(|n| n == name)
+        .map(|i| &f.cols[i])
+        .ok_or_else(|| format!("gwframe: no column \"{}\"", name))
+}
+
+fn with_frame<R>(h: i64, f: impl FnOnce(&Frame) -> Result<R, String>) -> Result<R, String> {
+    FRAMES.with(|r| {
+        let v = r.borrow();
+        let fr = usize::try_from(h)
+            .ok()
+            .and_then(|i| v.get(i))
+            .and_then(|o| o.as_ref())
+            .ok_or("gwframe: invalid handle")?;
+        f(fr)
+    })
+}
+
+fn frame_rows(f: &Frame) -> usize {
+    f.cols.first().map_or(0, Vec::len)
+}
+
+fn frame_from_csv(path: &str) -> Result<Frame, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("gwframe.from_csv: cannot read {}: {}", path, e))?;
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let header = lines.next().ok_or("gwframe.from_csv: the file is empty")?;
+    let names: Vec<String> = header.split(',').map(|s| s.trim().to_string()).collect();
+    let mut cols: Vec<Vec<f64>> = vec![Vec::new(); names.len()];
+    for (li, line) in lines.enumerate() {
+        let cells: Vec<&str> = line.split(',').collect();
+        if cells.len() != names.len() {
+            return Err(format!("gwframe.from_csv: row {} has {} cells, expected {}", li + 2, cells.len(), names.len()));
+        }
+        for (i, c) in cells.iter().enumerate() {
+            let v = c
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| format!("gwframe.from_csv: \"{}\" in row {} is not a number", c.trim(), li + 2))?;
+            cols[i].push(v);
+        }
+    }
+    Ok(Frame { names, cols })
+}
+
+fn frame_select(f: &Frame, keep: &[bool]) -> Frame {
+    let cols = f
+        .cols
+        .iter()
+        .map(|c| c.iter().zip(keep).filter(|(_, &k)| k).map(|(&x, _)| x).collect())
+        .collect();
+    Frame { names: f.names.clone(), cols }
+}
+
+fn frame_reorder(f: &Frame, order: &[usize]) -> Frame {
+    let cols = f.cols.iter().map(|c| order.iter().map(|&i| c[i]).collect()).collect();
+    Frame { names: f.names.clone(), cols }
+}
+
 // ---- module "grad": a tape-based reverse-mode autodiff engine ----
 // Each operation appends a node whose inputs always have smaller indices, so one
 // reverse pass over the tape (high index to low) back-propagates the gradients.
@@ -3832,6 +3910,158 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             Value::Null
         }
         GradCount => Value::Int(GRAD.with(|g| g.borrow().len() as i64)),
+
+        // ======== module "gwframe": numeric dataframe ========
+        FrameNew => Value::Int(frame_push(Frame { names: Vec::new(), cols: Vec::new() })),
+        FrameFromCsv => Value::Int(frame_push(frame_from_csv(text(&args[0]))?)),
+        FrameRows => Value::Int(with_frame(int(&args[0]), |f| Ok(frame_rows(f) as i64))?),
+        FrameCols => Value::Int(with_frame(int(&args[0]), |f| Ok(f.names.len() as i64))?),
+        FrameColname => with_frame(int(&args[0]), |f| {
+            let i = int(&args[1]);
+            usize::try_from(i - 1)
+                .ok()
+                .and_then(|i| f.names.get(i))
+                .cloned()
+                .ok_or_else(|| format!("gwframe.colname: no column {}", i))
+        })
+        .map(string)?,
+        FrameGet => with_frame(int(&args[0]), |f| {
+            let row = usize::try_from(int(&args[1]) - 1).map_err(|_| "gwframe.get: row out of range".to_string())?;
+            let col = frame_col(f, text(&args[2]))?;
+            col.get(row).copied().ok_or_else(|| "gwframe.get: row out of range".to_string())
+        })
+        .map(Value::Real)?,
+        FrameSum => Value::Real(with_frame(int(&args[0]), |f| Ok(frame_col(f, text(&args[1]))?.iter().sum()))?),
+        FrameMean => Value::Real(with_frame(int(&args[0]), |f| {
+            let c = frame_col(f, text(&args[1]))?;
+            Ok(if c.is_empty() { 0.0 } else { c.iter().sum::<f64>() / c.len() as f64 })
+        })?),
+        FrameMin => Value::Real(with_frame(int(&args[0]), |f| {
+            Ok(frame_col(f, text(&args[1]))?.iter().copied().fold(f64::INFINITY, f64::min))
+        })?),
+        FrameMax => Value::Real(with_frame(int(&args[0]), |f| {
+            Ok(frame_col(f, text(&args[1]))?.iter().copied().fold(f64::NEG_INFINITY, f64::max))
+        })?),
+        FrameStd => Value::Real(with_frame(int(&args[0]), |f| {
+            let c = frame_col(f, text(&args[1]))?;
+            if c.is_empty() {
+                return Ok(0.0);
+            }
+            let m = c.iter().sum::<f64>() / c.len() as f64;
+            Ok((c.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / c.len() as f64).sqrt())
+        })?),
+        FrameFilter => {
+            let (name, op, val) = (text(&args[1]), text(&args[2]).to_string(), real(&args[3]));
+            let newf = with_frame(int(&args[0]), |f| {
+                let c = frame_col(f, name)?;
+                let keep: Vec<bool> = c
+                    .iter()
+                    .map(|&x| match op.as_str() {
+                        ">" => x > val,
+                        "<" => x < val,
+                        ">=" => x >= val,
+                        "<=" => x <= val,
+                        "==" => x == val,
+                        "!=" => x != val,
+                        _ => false,
+                    })
+                    .collect();
+                if !matches!(op.as_str(), ">" | "<" | ">=" | "<=" | "==" | "!=") {
+                    return Err(format!("gwframe.filter: unknown operator \"{}\" (use > < >= <= == !=)", op));
+                }
+                Ok(frame_select(f, &keep))
+            })?;
+            Value::Int(frame_push(newf))
+        }
+        FrameSort => {
+            let (name, asc) = (text(&args[1]), matches!(&args[2], Value::Bool(true)));
+            let newf = with_frame(int(&args[0]), |f| {
+                let c = frame_col(f, name)?;
+                let mut order: Vec<usize> = (0..c.len()).collect();
+                order.sort_by(|&i, &j| {
+                    let o = c[i].partial_cmp(&c[j]).unwrap_or(Ordering::Equal);
+                    if asc { o } else { o.reverse() }
+                });
+                Ok(frame_reorder(f, &order))
+            })?;
+            Value::Int(frame_push(newf))
+        }
+        FrameHead => {
+            let n = int(&args[1]).max(0) as usize;
+            let newf = with_frame(int(&args[0]), |f| {
+                let keep: Vec<bool> = (0..frame_rows(f)).map(|i| i < n).collect();
+                Ok(frame_select(f, &keep))
+            })?;
+            Value::Int(frame_push(newf))
+        }
+        FrameGroupSum | FrameGroupMean => {
+            let mean = matches!(b, FrameGroupMean);
+            let (kname, vname) = (text(&args[1]), text(&args[2]));
+            let newf = with_frame(int(&args[0]), |f| {
+                let (kc, vc) = (frame_col(f, kname)?, frame_col(f, vname)?);
+                let mut keys: Vec<f64> = Vec::new();
+                let mut sums: Vec<f64> = Vec::new();
+                let mut counts: Vec<f64> = Vec::new();
+                for (k, v) in kc.iter().zip(vc) {
+                    match keys.iter().position(|x| x == k) {
+                        Some(i) => {
+                            sums[i] += v;
+                            counts[i] += 1.0;
+                        }
+                        None => {
+                            keys.push(*k);
+                            sums.push(*v);
+                            counts.push(1.0);
+                        }
+                    }
+                }
+                if mean {
+                    for i in 0..sums.len() {
+                        sums[i] /= counts[i];
+                    }
+                }
+                Ok(Frame { names: vec![kname.to_string(), vname.to_string()], cols: vec![keys, sums] })
+            })?;
+            Value::Int(frame_push(newf))
+        }
+        FrameToCsv => {
+            let path = text(&args[1]).to_string();
+            let out = with_frame(int(&args[0]), |f| {
+                let mut s = f.names.join(",");
+                s.push('\n');
+                for r in 0..frame_rows(f) {
+                    let row: Vec<String> = f.cols.iter().map(|c| format_real(c[r])).collect();
+                    s.push_str(&row.join(","));
+                    s.push('\n');
+                }
+                Ok(s)
+            })?;
+            std::fs::write(&path, out).map_err(|e| format!("gwframe.to_csv: cannot write {}: {}", path, e))?;
+            Value::Null
+        }
+        FrameShow => {
+            let n = int(&args[1]).max(0) as usize;
+            let out = with_frame(int(&args[0]), |f| {
+                let mut s = f.names.join(" | ");
+                s.push('\n');
+                for r in 0..frame_rows(f).min(n) {
+                    let row: Vec<String> = f.cols.iter().map(|c| format_real(c[r])).collect();
+                    s.push_str(&row.join(" | "));
+                    s.push('\n');
+                }
+                s.push_str(&format!("[{} rows x {} cols]", frame_rows(f), f.names.len()));
+                Ok(s)
+            })?;
+            string(out)
+        }
+        FrameFree => {
+            FRAMES.with(|r| {
+                if let Some(slot) = usize::try_from(int(&args[0])).ok().and_then(|i| r.borrow_mut().get_mut(i).map(|s| *s = None)) {
+                    slot;
+                }
+            });
+            Value::Null
+        }
 
         // ======== batch M: 615 modules ========
         Mk0001 => Value::Real(real(&args[0]) * 1e-10),
