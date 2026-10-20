@@ -60,6 +60,26 @@ fn modules_and_lazy_imports() {
 }
 
 #[test]
+fn audio_tone_fft_and_wav_roundtrip() {
+    let dir = std::env::temp_dir().join("globw_synth_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let wav = dir.join("t.wav").to_str().unwrap().replace('\\', "/");
+    let prog = dir.join("s.gw");
+    std::fs::write(
+        &prog,
+        format!(
+            "import synth\nvariables:\n    a, b as int\nsynth.rate(8000)\na = synth.tone(440.0, 0.05, \"sine\")\n\
+             output(synth.length(a))\noutput(synth.dominant(a))\nsynth.save_wav(a, \"{wav}\")\n\
+             b = synth.load_wav(\"{wav}\")\noutput(synth.dominant(b))\n"
+        ),
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "400\n440.0\n440.0\n");
+}
+
+#[test]
 fn physics_gravity_and_collision() {
     let dir = std::env::temp_dir().join("globw_sim_test");
     std::fs::create_dir_all(&dir).unwrap();

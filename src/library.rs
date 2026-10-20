@@ -559,6 +559,83 @@ fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
     }
 }
 
+// ---- module "synth": audio synthesis and simple DSP ----
+thread_local! {
+    static SYNTH: RefCell<Vec<Option<Vec<f32>>>> = const { RefCell::new(Vec::new()) };
+    static SRATE: std::cell::Cell<u32> = const { std::cell::Cell::new(44100) };
+}
+
+fn syn_rate() -> u32 {
+    SRATE.with(std::cell::Cell::get)
+}
+
+fn syn_push(buf: Vec<f32>) -> i64 {
+    SYNTH.with(|r| {
+        let mut v = r.borrow_mut();
+        v.push(Some(buf));
+        (v.len() - 1) as i64
+    })
+}
+
+fn syn_get<R>(h: i64, f: impl FnOnce(&Vec<f32>) -> R) -> Result<R, String> {
+    SYNTH.with(|r| {
+        let v = r.borrow();
+        let b = usize::try_from(h).ok().and_then(|i| v.get(i)).and_then(|o| o.as_ref()).ok_or("synth: invalid handle")?;
+        Ok(f(b))
+    })
+}
+
+fn syn_mut(h: i64, f: impl FnOnce(&mut Vec<f32>)) -> Result<(), String> {
+    SYNTH.with(|r| {
+        let mut v = r.borrow_mut();
+        let b = usize::try_from(h).ok().and_then(|i| v.get_mut(i)).and_then(|o| o.as_mut()).ok_or("synth: invalid handle")?;
+        f(b);
+        Ok(())
+    })
+}
+
+fn syn_wav_bytes(samples: &[f32], rate: u32) -> Vec<u8> {
+    let data_len = (samples.len() * 2) as u32;
+    let mut b = Vec::with_capacity(44 + samples.len() * 2);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + data_len).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    b.extend_from_slice(&1u16.to_le_bytes()); // mono
+    b.extend_from_slice(&rate.to_le_bytes());
+    b.extend_from_slice(&(rate * 2).to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&data_len.to_le_bytes());
+    for &s in samples {
+        b.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+    }
+    b
+}
+
+fn syn_read_wav(path: &str) -> Result<(Vec<f32>, u32), String> {
+    let b = std::fs::read(path).map_err(|e| format!("synth.load_wav: cannot read {}: {}", path, e))?;
+    if b.len() < 44 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return Err("synth.load_wav: not a WAV file".to_string());
+    }
+    let rate = u32::from_le_bytes([b[24], b[25], b[26], b[27]]);
+    // find the "data" chunk
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let id = &b[i..i + 4];
+        let len = u32::from_le_bytes([b[i + 4], b[i + 5], b[i + 6], b[i + 7]]) as usize;
+        if id == b"data" {
+            let end = (i + 8 + len).min(b.len());
+            let samples = b[i + 8..end].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect();
+            return Ok((samples, rate.max(1)));
+        }
+        i += 8 + len + (len & 1);
+    }
+    Err("synth.load_wav: no data chunk".to_string())
+}
+
 // ---- module "gwsim": a small 2D physics world of circular bodies ----
 #[derive(Clone, Copy)]
 struct Body {
@@ -4026,6 +4103,196 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             Value::Null
         }
         GradCount => Value::Int(GRAD.with(|g| g.borrow().len() as i64)),
+
+        // ======== module "synth": audio synthesis / DSP ========
+        SynthRate => {
+            SRATE.with(|r| r.set(int(&args[0]).clamp(1, 384000) as u32));
+            Value::Null
+        }
+        SynthBuffer | SynthSilence => {
+            let n = (real(&args[0]) * syn_rate() as f64).max(0.0) as usize;
+            Value::Int(syn_push(vec![0.0; n]))
+        }
+        SynthTone => {
+            let (freq, secs) = (real(&args[0]), real(&args[1]));
+            let wave = text(&args[2]).to_string();
+            let rate = syn_rate() as f64;
+            let n = (secs * rate).max(0.0) as usize;
+            let mut buf = Vec::with_capacity(n);
+            let mut seed: u32 = 0x1234_5678;
+            for i in 0..n {
+                let t = i as f64 / rate;
+                let ph = (freq * t).fract(); // 0..1 within a cycle
+                let s = match wave.as_str() {
+                    "square" => {
+                        if ph < 0.5 {
+                            1.0
+                        } else {
+                            -1.0
+                        }
+                    }
+                    "saw" => 2.0 * ph - 1.0,
+                    "triangle" => 1.0 - 4.0 * (ph - 0.5).abs(),
+                    "noise" => {
+                        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        (seed >> 8) as f64 / 8_388_608.0 - 1.0
+                    }
+                    _ => (2.0 * std::f64::consts::PI * freq * t).sin(),
+                };
+                buf.push(s as f32);
+            }
+            Value::Int(syn_push(buf))
+        }
+        SynthGain => {
+            let h = int(&args[0]);
+            let g = real(&args[1]) as f32;
+            syn_mut(h, |b| b.iter_mut().for_each(|s| *s *= g))?;
+            Value::Int(h)
+        }
+        SynthMix => {
+            let (a, b) = (int(&args[0]), int(&args[1]));
+            let other = syn_get(b, Clone::clone)?;
+            syn_mut(a, |dst| {
+                if dst.len() < other.len() {
+                    dst.resize(other.len(), 0.0);
+                }
+                for (d, s) in dst.iter_mut().zip(&other) {
+                    *d += s;
+                }
+            })?;
+            Value::Int(a)
+        }
+        SynthConcat => {
+            let (a, b) = (int(&args[0]), int(&args[1]));
+            let other = syn_get(b, Clone::clone)?;
+            syn_mut(a, |dst| dst.extend_from_slice(&other))?;
+            Value::Int(a)
+        }
+        SynthFade => {
+            let h = int(&args[0]);
+            let rate = syn_rate() as f64;
+            let (at, rel) = ((real(&args[1]) * rate) as usize, (real(&args[2]) * rate) as usize);
+            syn_mut(h, |b| {
+                let n = b.len();
+                for (i, s) in b.iter_mut().enumerate() {
+                    let mut g = 1.0f32;
+                    if at > 0 && i < at {
+                        g = g.min(i as f32 / at as f32);
+                    }
+                    if rel > 0 && i >= n.saturating_sub(rel) {
+                        g = g.min((n - i) as f32 / rel as f32);
+                    }
+                    *s *= g;
+                }
+            })?;
+            Value::Int(h)
+        }
+        SynthLowpass => {
+            let h = int(&args[0]);
+            let cutoff = real(&args[1]).max(1.0);
+            let rate = syn_rate() as f64;
+            let dt = 1.0 / rate;
+            let rc = 1.0 / (2.0 * std::f64::consts::PI * cutoff);
+            let alpha = (dt / (rc + dt)) as f32;
+            syn_mut(h, |b| {
+                let mut prev = 0.0f32;
+                for s in b.iter_mut() {
+                    prev += alpha * (*s - prev);
+                    *s = prev;
+                }
+            })?;
+            Value::Int(h)
+        }
+        SynthHighpass => {
+            let h = int(&args[0]);
+            let cutoff = real(&args[1]).max(1.0);
+            let rate = syn_rate() as f64;
+            let dt = 1.0 / rate;
+            let rc = 1.0 / (2.0 * std::f64::consts::PI * cutoff);
+            let alpha = (rc / (rc + dt)) as f32;
+            syn_mut(h, |b| {
+                let mut prev_in = 0.0f32;
+                let mut prev_out = 0.0f32;
+                for s in b.iter_mut() {
+                    let out = alpha * (prev_out + *s - prev_in);
+                    prev_in = *s;
+                    prev_out = out;
+                    *s = out;
+                }
+            })?;
+            Value::Int(h)
+        }
+        SynthNormalize => {
+            let h = int(&args[0]);
+            let peak = syn_get(h, |b| b.iter().fold(0.0f32, |m, s| m.max(s.abs())))?;
+            if peak > 0.0 {
+                syn_mut(h, |b| b.iter_mut().for_each(|s| *s /= peak))?;
+            }
+            Value::Int(h)
+        }
+        SynthLength => Value::Int(syn_get(int(&args[0]), |b| b.len() as i64)?),
+        SynthDuration => Value::Real(syn_get(int(&args[0]), |b| b.len() as f64 / syn_rate() as f64)?),
+        SynthPeak => Value::Real(syn_get(int(&args[0]), |b| b.iter().fold(0.0f32, |m, s| m.max(s.abs())) as f64)?),
+        SynthRms => Value::Real(syn_get(int(&args[0]), |b| {
+            if b.is_empty() {
+                0.0
+            } else {
+                (b.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / b.len() as f64).sqrt()
+            }
+        })?),
+        SynthDominant => {
+            let rate = syn_rate() as f64;
+            Value::Real(syn_get(int(&args[0]), |b| {
+                let n = b.len();
+                if n < 2 {
+                    return 0.0;
+                }
+                let (mut best, mut bestmag) = (0.0, -1.0);
+                for k in 1..n / 2 {
+                    let w = -2.0 * std::f64::consts::PI * k as f64 / n as f64;
+                    let (mut re, mut im) = (0.0, 0.0);
+                    for (i, &s) in b.iter().enumerate() {
+                        let a = w * i as f64;
+                        re += s as f64 * a.cos();
+                        im += s as f64 * a.sin();
+                    }
+                    let mag = re * re + im * im;
+                    if mag > bestmag {
+                        bestmag = mag;
+                        best = k as f64 * rate / n as f64;
+                    }
+                }
+                best
+            })?)
+        }
+        SynthSaveWav => {
+            let path = text(&args[1]).to_string();
+            let bytes = syn_get(int(&args[0]), |b| syn_wav_bytes(b, syn_rate()))?;
+            std::fs::write(&path, bytes).map_err(|e| format!("synth.save_wav: cannot write {}: {}", path, e))?;
+            Value::Null
+        }
+        SynthLoadWav => {
+            let (samples, rate) = syn_read_wav(text(&args[0]))?;
+            SRATE.with(|r| r.set(rate));
+            Value::Int(syn_push(samples))
+        }
+        SynthPlay => {
+            let path = text(&args[0]).to_string();
+            #[cfg(windows)]
+            let r = std::process::Command::new("cmd").args(["/C", "start", "", &path]).spawn();
+            #[cfg(not(windows))]
+            let r = std::process::Command::new("xdg-open").arg(&path).spawn();
+            r.map_err(|e| format!("synth.play: cannot play {}: {}", path, e))?;
+            Value::Null
+        }
+        SynthFree => {
+            SYNTH.with(|r| {
+                if let Some(slot) = usize::try_from(int(&args[0])).ok().and_then(|i| r.borrow_mut().get_mut(i).map(|s| *s = None)) {
+                    let _ = slot;
+                }
+            });
+            Value::Null
+        }
 
         // ======== module "gwsim": 2D physics ========
         SimReset => {

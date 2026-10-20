@@ -777,6 +777,10 @@ pub enum Builtin {
     // module "gwsim" (2D physics)
     SimReset, SimBody, SimFix, SimGravity, SimBounds, SimPush, SimSetVel, SimSetPos,
     SimStep, SimX, SimY, SimVx, SimVy, SimCount, SimCollide,
+    // module "synth" (audio synthesis / DSP)
+    SynthRate, SynthBuffer, SynthTone, SynthSilence, SynthGain, SynthMix, SynthConcat,
+    SynthFade, SynthLowpass, SynthHighpass, SynthNormalize, SynthLength, SynthDuration,
+    SynthPeak, SynthRms, SynthDominant, SynthSaveWav, SynthLoadWav, SynthPlay, SynthFree,
     // ======== batch M: 615 modules to reach 1000 ========
     Mk0001, Mk0002, Mk0003, Mk0004, Mk0005, Mk0006, Mk0007, Mk0008, Mk0009, Mk0010, Mk0011, Mk0012,
     Mk0013, Mk0014, Mk0015, Mk0016, Mk0017, Mk0018, Mk0019, Mk0020, Mk0021, Mk0022, Mk0023, Mk0024,
@@ -2124,6 +2128,27 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (SimVy, "gwsim.vy", Sig::Fixed(&[I], Some(Real))),
     (SimCount, "gwsim.count", Sig::Fixed(&[], Some(Int))),
     (SimCollide, "gwsim.collide", Sig::Fixed(&[I, I], Some(Bool))),
+    // module "synth" (audio synthesis / DSP)
+    (SynthRate, "synth.rate", Sig::Fixed(&[I], None)),
+    (SynthBuffer, "synth.buffer", Sig::Fixed(&[R], Some(Int))),
+    (SynthTone, "synth.tone", Sig::Fixed(&[R, R, S], Some(Int))),
+    (SynthSilence, "synth.silence", Sig::Fixed(&[R], Some(Int))),
+    (SynthGain, "synth.gain", Sig::Fixed(&[I, R], Some(Int))),
+    (SynthMix, "synth.mix", Sig::Fixed(&[I, I], Some(Int))),
+    (SynthConcat, "synth.concat", Sig::Fixed(&[I, I], Some(Int))),
+    (SynthFade, "synth.fade", Sig::Fixed(&[I, R, R], Some(Int))),
+    (SynthLowpass, "synth.lowpass", Sig::Fixed(&[I, R], Some(Int))),
+    (SynthHighpass, "synth.highpass", Sig::Fixed(&[I, R], Some(Int))),
+    (SynthNormalize, "synth.normalize", Sig::Fixed(&[I], Some(Int))),
+    (SynthLength, "synth.length", Sig::Fixed(&[I], Some(Int))),
+    (SynthDuration, "synth.duration", Sig::Fixed(&[I], Some(Real))),
+    (SynthPeak, "synth.peak", Sig::Fixed(&[I], Some(Real))),
+    (SynthRms, "synth.rms", Sig::Fixed(&[I], Some(Real))),
+    (SynthDominant, "synth.dominant", Sig::Fixed(&[I], Some(Real))),
+    (SynthSaveWav, "synth.save_wav", Sig::Fixed(&[I, S], None)),
+    (SynthLoadWav, "synth.load_wav", Sig::Fixed(&[S], Some(Int))),
+    (SynthPlay, "synth.play", Sig::Fixed(&[S], None)),
+    (SynthFree, "synth.free", Sig::Fixed(&[I], None)),
     // ======== batch M ========
     (Mk0001, "angstrom.si", Sig::Fixed(&[R], Some(Real))),
     (Mk0002, "angstrom.inv", Sig::Fixed(&[R], Some(Real))),
@@ -3336,7 +3361,7 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "ease", "trig2", "special", "polar", "transform", "temp2", "storage", "area2", "kitchen",
     "chem", "elec", "finance2", "health2", "music", "space", "optics", "prob2", "rpg",
     "physics2", "stats2", "map", "date2", "wave2", "light", "sound2",
-    "net", "gwgame", "grad", "gwframe", "gwsim",
+    "net", "gwgame", "grad", "gwframe", "gwsim", "synth",
     // batch M
     "methuselah", "yardpersecond", "kilderkin", "footofwater", "poise", "anomalistic_year", "sho", "squarerod", "sidereal_day", "picometre",
     "hectare", "avogadro_const", "zolotnik", "knot", "maund", "therm", "hin", "beaufort_approx", "erg", "cahen",

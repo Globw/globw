@@ -887,6 +887,14 @@ handle), then `grad.backward(node)` fills every input's gradient, read with `gra
 is a few lines — e.g. minimising `(x-5)^2` converges `x` to 5. A language with
 differentiable values built in is something Python needs PyTorch/JAX for.
 
+**`synth` — audio synthesis and DSP.** Make and shape sound buffers: `synth.rate(hz)`
+sets the sample rate; `synth.tone(freq, seconds, wave)` generates `"sine"`, `"square"`,
+`"saw"`, `"triangle"` or `"noise"`; `synth.buffer`/`synth.silence` make empty ones. Shape
+them in place (each returns the handle, for chaining): `gain`, `mix`, `concat`, `fade`
+(attack/release), `lowpass`, `highpass`, `normalize`. Measure with `length`, `duration`,
+`peak`, `rms`, and `dominant` (the fundamental frequency, via a DFT). Save and load 16-bit
+WAV with `save_wav` / `load_wav`, and `synth.play(path)` hands a file to the OS player.
+
 **`gwsim` — 2D physics.** A little world of circular bodies: `gwsim.body(x, y, r, mass)`
 → handle, `gwsim.fix(h, true)` makes it static, `gwsim.gravity(gx, gy)` and
 `gwsim.bounds(x, y, w, h, restitution)` set the world; `gwsim.push`, `gwsim.set_vel`,
