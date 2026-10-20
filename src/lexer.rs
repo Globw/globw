@@ -246,7 +246,16 @@ impl Scanner {
     fn string(&mut self) -> Result<(), Error> {
         let (line, col) = (self.line, self.col);
         self.bump();
+        // An interpolated string "a ${expr} b" becomes ("a " + (expr) + " b"); plain
+        // `{` stays literal (so regex and JSON text are unaffected), only `${` starts
+        // an inserted value, and `\$` is a literal dollar sign.
+        enum Part {
+            Lit(String),
+            Expr(String),
+        }
+        let mut parts: Vec<Part> = Vec::new();
         let mut text = String::new();
+        let mut interpolated = false;
         loop {
             match self.peek(0) {
                 None | Some('\n') => {
@@ -264,12 +273,70 @@ impl Scanner {
                         Some('n') => text.push('\n'),
                         Some('"') => text.push('"'),
                         Some('\\') => text.push('\\'),
+                        Some('$') => text.push('$'),
                         _ => {
                             return Err(Error::new(Pos::new(l, k, 2), "invalid escape sequence")
-                                .with_hint("after \\ you can use n, \" or \\"))
+                                .with_hint("after \\ you can use n, \", \\ or $"))
                         }
                     }
                     self.bump();
+                }
+                Some('$') if self.peek(1) == Some('{') => {
+                    self.bump();
+                    self.bump();
+                    interpolated = true;
+                    parts.push(Part::Lit(std::mem::take(&mut text)));
+                    let mut src = String::new();
+                    let mut depth = 1;
+                    loop {
+                        match self.peek(0) {
+                            None | Some('\n') => {
+                                return Err(Error::new(Pos::new(line, col, 1), "unterminated ${ } in the text")
+                                    .with_hint("close the inserted value with }"))
+                            }
+                            Some('}') => {
+                                self.bump();
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                                src.push('}');
+                            }
+                            Some('{') => {
+                                self.bump();
+                                depth += 1;
+                                src.push('{');
+                            }
+                            Some('"') => {
+                                // copy a nested string literal verbatim
+                                src.push(self.bump());
+                                loop {
+                                    match self.peek(0) {
+                                        None | Some('\n') => {
+                                            return Err(Error::new(Pos::new(line, col, 1), "unterminated string inside ${ }"))
+                                        }
+                                        Some('\\') => {
+                                            src.push(self.bump());
+                                            if self.peek(0).is_some() {
+                                                src.push(self.bump());
+                                            }
+                                        }
+                                        Some('"') => {
+                                            src.push(self.bump());
+                                            break;
+                                        }
+                                        Some(_) => {
+                                            src.push(self.bump());
+                                        }
+                                    }
+                                }
+                            }
+                            Some(_) => {
+                                src.push(self.bump());
+                            }
+                        }
+                    }
+                    parts.push(Part::Expr(src));
                 }
                 Some(_) => {
                     let c = self.bump();
@@ -277,8 +344,39 @@ impl Scanner {
                 }
             }
         }
-        let len = self.col - col;
-        self.push(Tok::Str(text), line, col, len);
+        if !interpolated {
+            let len = self.col - col;
+            self.push(Tok::Str(text), line, col, len);
+            return Ok(());
+        }
+        parts.push(Part::Lit(text));
+        // emit  ( lit0 + (expr0) + lit1 + ... )
+        self.push(Tok::LParen, line, col, 1);
+        let mut first = true;
+        for part in parts {
+            if !first {
+                self.push(Tok::Plus, line, col, 1);
+            }
+            first = false;
+            match part {
+                Part::Lit(s) => self.push(Tok::Str(s), line, col, 1),
+                Part::Expr(src) => {
+                    self.push(Tok::LParen, line, col, 1);
+                    let toks = tokenize(&src).map_err(|_| {
+                        Error::new(Pos::new(line, col, 1), format!("invalid expression inside ${{ }}: {}", src.trim()))
+                            .with_hint("inside ${ } write a value, like a variable or a + b")
+                    })?;
+                    for t in toks {
+                        if matches!(t.tok, Tok::Newline | Tok::Eof) {
+                            continue;
+                        }
+                        self.push(t.tok, line, col, 1);
+                    }
+                    self.push(Tok::RParen, line, col, 1);
+                }
+            }
+        }
+        self.push(Tok::RParen, line, col, 1);
         Ok(())
     }
 
@@ -481,6 +579,17 @@ mod tests {
     #[test]
     fn compound_assignment_operators() {
         assert_eq!(toks("+= -= *= /=")[..4], [PlusEq, MinusEq, StarEq, SlashEq]);
+    }
+
+    #[test]
+    fn string_interpolation() {
+        // "a ${x} b" lexes as ( "a " + ( x ) + " b" )
+        assert_eq!(
+            toks("\"a ${x} b\"")[..9],
+            [LParen, Str("a ".to_string()), Plus, LParen, name("x"), RParen, Plus, Str(" b".to_string()), RParen]
+        );
+        // plain braces (regex, JSON) are left alone: one string token
+        assert_eq!(toks("\"[0-9]{4}\"")[..1], [Str("[0-9]{4}".to_string())]);
     }
 
     #[test]
