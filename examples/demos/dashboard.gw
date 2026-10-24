@@ -1,0 +1,59 @@
+' Globw flagship demo: a liquid-glass data dashboard.
+' Shows const, string interpolation, a list comprehension, and the gtq GUI
+' with Apple-style liquid glass - all in one file, no dependencies.
+import gtq
+variables:
+    names as list of string
+    scores as list of int
+    top as list of int
+    i, s, bw as int
+    media as float
+    grade, head as string
+    colors as list of string
+names = ["Anna", "Luca", "Marco", "Sara", "Gino", "Elsa"]
+scores = [92, 78, 64, 88, 54, 81]
+colors = ["#f43f5e", "#f59e0b", "#22c55e", "#06b6d4", "#8b5cf6", "#eab308"]
+' a comprehension: how many scored 80 or more
+top = [s for s in scores if s >= 80]
+media = to_float(sum(scores)) / to_float(length(scores))
+window(720, 480, "Globw Dashboard")
+while(open())
+    clear("#0b1020")
+    ' colourful shapes behind, so the frosted glass is visible
+    for(i from 1 to length(names))
+        circle(90.0 + i * 95.0, 120.0, 70.0, colors[i])
+    end loop
+    ' header card in liquid glass
+    gtq.glass(24.0, 20.0, 672.0, 70.0, "#ffffff", 6)
+    gtq.label(44.0, 38.0, "Report classe - Globw", "#0f172a")
+    head = "Media ${round_to(media, 1)}   |   Studenti >= 80: ${length(top)} / ${length(names)}"
+    gtq.label(44.0, 62.0, head, "#334155")
+    ' one glass row per student with a score bar and a grade badge
+    for(i from 1 to length(names))
+        s = scores[i]
+        bw = s * 4
+        gtq.glass(24.0, 110.0 + i * 56.0, 672.0, 48.0, "#cbd5e1", 5)
+        gtq.label(44.0, 124.0 + i * 56.0, names[i], "#0f172a")
+        rect(180.0, 122.0 + i * 56.0, bw, 22.0, colors[i])
+        gtq.label(200.0 + bw, 124.0 + i * 56.0, "${s}", "#0f172a")
+        if(s >= 90)
+            grade = "A"
+        else
+            if(s >= 80)
+                grade = "B"
+            else
+                if(s >= 70)
+                    grade = "C"
+                else
+                    if(s >= 60)
+                        grade = "D"
+                    else
+                        grade = "F"
+                    end if
+                end if
+            end if
+        end if
+        gtq.badge(640.0, 123.0 + i * 56.0, grade, colors[i])
+    end loop
+    show()
+end loop
