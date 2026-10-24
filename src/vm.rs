@@ -1,7 +1,7 @@
 //! The virtual machine: executes the register bytecode produced by the compiler.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::rc::Rc;
 
@@ -130,6 +130,25 @@ pub struct Matrix {
 
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
 const MAX_CALL_DEPTH: usize = 100_000;
+const MAX_TASKS: usize = 100_000;
+
+/// A suspended cooperative task: its own registers, call stack and handlers, plus
+/// where it was running (a green thread, not an OS thread).
+struct TaskSlot {
+    regs: Vec<Value>,
+    frames: Vec<Frame>,
+    handlers: Vec<Handler>,
+    func: usize,
+    ip: usize,
+    base: usize,
+    done: bool,
+}
+
+impl TaskSlot {
+    fn empty() -> TaskSlot {
+        TaskSlot { regs: Vec::new(), frames: Vec::new(), handlers: Vec::new(), func: 0, ip: 0, base: 0, done: false }
+    }
+}
 
 fn seq(v: &Value) -> &Rc<RefCell<Vec<Value>>> {
     match v {
@@ -333,6 +352,9 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         frames: Vec::new(),
         env: Env::default(),
         handlers: Vec::new(),
+        tasks: Vec::new(),
+        ready: VecDeque::new(),
+        current: 0,
         prof: None,
     };
     let result = vm.execute(input, output);
@@ -357,6 +379,9 @@ pub fn run_profiled(
         frames: Vec::new(),
         env: Env::default(),
         handlers: Vec::new(),
+        tasks: Vec::new(),
+        ready: VecDeque::new(),
+        current: 0,
         prof: Some(HashMap::new()),
     };
     let result = vm.execute(input, output);
@@ -378,6 +403,13 @@ struct Vm<'m> {
     env: Env,
     /// active error handlers (try blocks), innermost last
     handlers: Vec<Handler>,
+    /// cooperative tasks (green threads); the running one's live state is in the
+    /// fields above, its slot here is empty until it is suspended
+    tasks: Vec<TaskSlot>,
+    /// handles of tasks ready to run, in round-robin order
+    ready: VecDeque<usize>,
+    /// the handle of the task running right now
+    current: usize,
     /// when profiling: how many times each opcode ran
     prof: Option<HashMap<&'static str, u64>>,
 }
@@ -411,6 +443,10 @@ impl<'m> Vm<'m> {
         let mut ip = 0usize;
         let mut base = 0usize;
         self.regs.resize(m.functions[0].n_regs as usize, Value::Null);
+        // task 0 is the main program; its live state is in the locals above and in
+        // self, so its slot stays empty until it is suspended
+        self.tasks.push(TaskSlot::empty());
+        self.current = 0;
 
         macro_rules! reg {
             ($r:expr) => {
@@ -421,6 +457,44 @@ impl<'m> Vm<'m> {
             ($msg:expr) => {
                 break Some(($msg).to_string())
             };
+        }
+        // Saves the running task's live state into its slot (keeping `done`), so
+        // another task can run; then its slot holds everything to resume it.
+        macro_rules! save_current {
+            () => {{
+                let cur = self.current;
+                self.tasks[cur].regs = std::mem::take(&mut self.regs);
+                self.tasks[cur].frames = std::mem::take(&mut self.frames);
+                self.tasks[cur].handlers = std::mem::take(&mut self.handlers);
+                self.tasks[cur].func = func;
+                self.tasks[cur].ip = ip;
+                self.tasks[cur].base = base;
+            }};
+        }
+        // Makes `$idx` the running task: loads its state into the locals and self.
+        macro_rules! load_task {
+            ($idx:expr) => {{
+                let t = std::mem::replace(&mut self.tasks[$idx], TaskSlot::empty());
+                self.regs = t.regs;
+                self.frames = t.frames;
+                self.handlers = t.handlers;
+                func = t.func;
+                ip = t.ip;
+                base = t.base;
+                code = &m.functions[func].code;
+                self.current = $idx;
+            }};
+        }
+        // The running task's top function has returned: mark it done and run the
+        // next ready task, or finish the program if none are left.
+        macro_rules! finish_task {
+            () => {{
+                self.tasks[self.current].done = true;
+                match self.ready.pop_front() {
+                    Some(next) => load_task!(next),
+                    None => return Ok(()),
+                }
+            }};
         }
 
         loop {
@@ -851,41 +925,83 @@ impl<'m> Vm<'m> {
                 }
                 Op::Ret(s) => {
                     let v = std::mem::replace(&mut reg!(s), Value::Null);
-                    let Some(fr) = self.frames.pop() else { return Ok(()) };
-                    self.regs.truncate(base);
-                    func = fr.func;
-                    code = &m.functions[func].code;
-                    ip = fr.ip;
-                    base = fr.base;
-                    reg!(fr.dst) = v;
-                    self.drop_handlers_above();
+                    match self.frames.pop() {
+                        Some(fr) => {
+                            self.regs.truncate(base);
+                            func = fr.func;
+                            code = &m.functions[func].code;
+                            ip = fr.ip;
+                            base = fr.base;
+                            reg!(fr.dst) = v;
+                            self.drop_handlers_above();
+                        }
+                        None => finish_task!(),
+                    }
                 }
-                Op::RetNone => {
-                    let Some(fr) = self.frames.pop() else { return Ok(()) };
-                    self.regs.truncate(base);
-                    func = fr.func;
-                    code = &m.functions[func].code;
-                    ip = fr.ip;
-                    base = fr.base;
-                    self.drop_handlers_above();
-                }
+                Op::RetNone => match self.frames.pop() {
+                    Some(fr) => {
+                        self.regs.truncate(base);
+                        func = fr.func;
+                        code = &m.functions[func].code;
+                        ip = fr.ip;
+                        base = fr.base;
+                        self.drop_handlers_above();
+                    }
+                    None => finish_task!(),
+                },
                 Op::Builtin { id, first, argc, dst } => {
                     let b = Builtin::from_id(id);
-                    if matches!(b, Builtin::Message | Builtin::Confirm | Builtin::Ask) {
-                        let _ = output.flush();
-                    }
-                    let start = base + first as usize;
-                    match self.env.call(b, &self.regs[start..start + argc as usize]) {
-                        Ok(v) => {
-                            if b == Builtin::Stop {
-                                self.env.close_window();
-                                return Ok(());
+                    match b {
+                        Builtin::TaskSpawn => {
+                            let start = base + first as usize;
+                            let fidx = match &self.regs[start] {
+                                Value::Func(i) => *i as usize,
+                                _ => fail!("task.spawn needs a function to run"),
+                            };
+                            if self.tasks.len() >= MAX_TASKS {
+                                fail!("too many tasks (a runaway task.spawn?)");
                             }
-                            if b.is_function() {
-                                reg!(dst) = v;
+                            let n = m.functions[fidx].n_regs as usize;
+                            let handle = self.tasks.len();
+                            self.tasks.push(TaskSlot {
+                                regs: vec![Value::Null; n],
+                                frames: Vec::new(),
+                                handlers: Vec::new(),
+                                func: fidx,
+                                ip: 0,
+                                base: 0,
+                                done: false,
+                            });
+                            self.ready.push_back(handle);
+                            reg!(dst) = Value::Int(handle as i64);
+                        }
+                        Builtin::TaskYield => {
+                            if let Some(next) = self.ready.pop_front() {
+                                save_current!();
+                                self.ready.push_back(self.current);
+                                load_task!(next);
                             }
                         }
-                        Err(msg) => fail!(msg),
+                        Builtin::TaskId => reg!(dst) = Value::Int(self.current as i64),
+                        Builtin::TaskCount => reg!(dst) = Value::Int(self.tasks.len() as i64),
+                        _ => {
+                            if matches!(b, Builtin::Message | Builtin::Confirm | Builtin::Ask) {
+                                let _ = output.flush();
+                            }
+                            let start = base + first as usize;
+                            match self.env.call(b, &self.regs[start..start + argc as usize]) {
+                                Ok(v) => {
+                                    if b == Builtin::Stop {
+                                        self.env.close_window();
+                                        return Ok(());
+                                    }
+                                    if b.is_function() {
+                                        reg!(dst) = v;
+                                    }
+                                }
+                                Err(msg) => fail!(msg),
+                            }
+                        }
                     }
                 }
                 Op::Read(d, ty) => {

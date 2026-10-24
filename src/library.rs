@@ -65,6 +65,13 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => ok(none(1), Type::Base(Str)),
             }
         }
+        TaskSpawn => {
+            arity(1)?;
+            match a[0] {
+                Type::Func(_) => ok(none(1), Type::Base(Int)),
+                _ => other("task.spawn needs a function to run, like task.spawn(worker)"),
+            }
+        }
         Absolute => {
             arity(1)?;
             match a[0] {

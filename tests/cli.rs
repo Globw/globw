@@ -169,6 +169,21 @@ fn unit_conversion_modules_work() {
 }
 
 #[test]
+fn cooperative_tasks_spawn_and_yield() {
+    let dir = std::env::temp_dir().join("globw_task_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("t.gw");
+    std::fs::write(
+        &prog,
+        "import task\nvariables:\n    t as int\n    w as function()\nw = function()\n    output(\"worker 1\")\n    task.yield()\n    output(\"worker 2\")\nend procedure\nt = task.spawn(w)\noutput(\"main a\")\ntask.yield()\noutput(\"main b\")\ntask.yield()\noutput(\"main c\")\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "main a\nworker 1\nmain b\nworker 2\nmain c\n");
+}
+
+#[test]
 fn list_comprehension() {
     let dir = std::env::temp_dir().join("globw_comp_test");
     std::fs::create_dir_all(&dir).unwrap();

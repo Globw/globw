@@ -892,6 +892,15 @@ handle), then `grad.backward(node)` fills every input's gradient, read with `gra
 is a few lines — e.g. minimising `(x-5)^2` converges `x` to 5. A language with
 differentiable values built in is something Python needs PyTorch/JAX for.
 
+**`task` — cooperative tasks (green threads).** `task.spawn(f)` starts the function
+`f` as a lightweight task and returns its handle; `task.yield()` hands control to the
+next ready task; the program ends when every task has finished. Tasks share everything
+(globals, the window, files) and run one at a time on a single thread — switching only at
+`task.yield()` — so there are no data races. `task.id()` is the running task's handle and
+`task.count()` the number of tasks. (A worker is usually a no-argument lambda:
+`w = function()` … `end procedure`, then `task.spawn(w)`.) This is part (a): `await` and
+channels come next.
+
 **`ai` — chat with a language model.** One module for both paid API keys and local
 models, because Groq, OpenRouter, OpenAI and a local **Ollama** all speak the same
 `POST {endpoint}/chat/completions` API. Pick a backend with `ai.use_groq(key, model)`,
