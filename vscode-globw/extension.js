@@ -6,12 +6,17 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { parseErrors } = require('./parse');
 
-const LOCAL_BUILD = 'C:\\Users\\Utente\\globw\\target\\release\\globw.exe';
+const EXE = process.platform === 'win32' ? 'globw.exe' : 'globw';
 
 function globwPath() {
     const configured = vscode.workspace.getConfiguration('globw').get('path');
     if (configured) return configured;
-    return fs.existsSync(LOCAL_BUILD) ? LOCAL_BUILD : 'globw';
+    // a local dev build inside the opened workspace, if there is one
+    for (const folder of vscode.workspace.workspaceFolders || []) {
+        const local = path.join(folder.uri.fsPath, 'target', 'release', EXE);
+        if (fs.existsSync(local)) return local;
+    }
+    return EXE; // otherwise rely on PATH
 }
 
 /** The line of `doc` that imports module `name` (the first line if none does). */
@@ -29,7 +34,7 @@ function check(doc, diagnostics) {
     if (doc.languageId !== 'globw' || doc.uri.scheme !== 'file') return;
     execFile(globwPath(), ['--check', doc.fileName], { windowsHide: true }, (err, _stdout, stderr) => {
         if (err && err.code === 'ENOENT') {
-            vscode.window.showErrorMessage('Globw: globw.exe not found. Set "globw.path" in the settings.');
+            vscode.window.showErrorMessage('Globw: the globw executable was not found. Set "globw.path" in the settings.');
             return;
         }
         // errors of this file, and of the modules it imports (shown in their own file
@@ -72,10 +77,18 @@ async function run() {
     await doc.save();
     let terminal = vscode.window.terminals.find((t) => t.name === 'Globw');
     if (!terminal) {
-        terminal = vscode.window.createTerminal({ name: 'Globw', shellPath: 'powershell.exe', shellArgs: ['-NoLogo'] });
+        // Windows: a PowerShell terminal (its usual default), so the `&` call runs;
+        // Linux/macOS: the user's default shell, where a quoted command runs as-is.
+        const opts =
+            process.platform === 'win32'
+                ? { name: 'Globw', shellPath: 'powershell.exe', shellArgs: ['-NoLogo'] }
+                : { name: 'Globw' };
+        terminal = vscode.window.createTerminal(opts);
     }
     terminal.show();
-    terminal.sendText(`& "${globwPath()}" "${doc.fileName}"`);
+    const exe = globwPath();
+    const cmd = process.platform === 'win32' ? `& "${exe}" "${doc.fileName}"` : `"${exe}" "${doc.fileName}"`;
+    terminal.sendText(cmd);
 }
 
 function activate(context) {
