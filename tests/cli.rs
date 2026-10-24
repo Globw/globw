@@ -169,6 +169,21 @@ fn unit_conversion_modules_work() {
 }
 
 #[test]
+fn match_statement() {
+    let dir = std::env::temp_dir().join("globw_match_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("m.gw");
+    std::fs::write(
+        &prog,
+        "variables:\n    x, i as int\nfor(i from 1 to 4)\n    x = i\n    match x\n        when 1\n            output(\"one\")\n        when 2, 3\n            output(\"two-ish\")\n        else\n            output(\"other\")\n    end match\nend loop\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "one\ntwo-ish\ntwo-ish\nother\n");
+}
+
+#[test]
 fn const_declarations() {
     let dir = std::env::temp_dir().join("globw_const_test");
     std::fs::create_dir_all(&dir).unwrap();

@@ -46,6 +46,9 @@ pub enum Tok {
     EndTry,
     Fail,
     Const,
+    Match,
+    When,
+    EndMatch,
     // symbols
     Assign,
     Eq,
@@ -113,6 +116,8 @@ pub fn keyword(word: &str) -> Option<Tok> {
         "always" => Tok::Always,
         "fail" => Tok::Fail,
         "const" => Tok::Const,
+        "match" => Tok::Match,
+        "when" => Tok::When,
         _ => return None,
     })
 }
@@ -432,10 +437,11 @@ impl Scanner {
                 "procedure" => Tok::EndProcedure,
                 "class" => Tok::EndClass,
                 "try" => Tok::EndTry,
+                "match" => Tok::EndMatch,
                 _ => {
                     return Err(Error::new(
                         Pos::new(line, col, 3),
-                        "end must be followed by if, loop, function, procedure, class or try",
+                        "end must be followed by if, loop, function, procedure, class, try or match",
                     )
                     .with_hint("for example: end if or end loop"))
                 }
@@ -638,7 +644,7 @@ mod tests {
     fn errors() {
         let msg = |s: &str| tokenize(s).unwrap_err().message;
         assert_eq!(msg("\"abc"), "unterminated string");
-        assert_eq!(msg("end x"), "end must be followed by if, loop, function, procedure, class or try");
+        assert_eq!(msg("end x"), "end must be followed by if, loop, function, procedure, class, try or match");
         assert_eq!(msg("a # b"), "invalid character '#'");
         assert_eq!(msg("a <> b"), "invalid operator <>");
         assert_eq!(msg("99999999999999999999"), "integer too large");

@@ -19,7 +19,7 @@ pub(crate) struct Parser {
 }
 
 /// Deeper nesting would overflow the stack of the later phases.
-const MAX_DEPTH: u32 = 100;
+const MAX_DEPTH: u32 = 80;
 const MAX_OPS: u32 = 1000;
 const MAX_ELEMENTS: usize = 10_000_000;
 const TOO_BIG: &str = "an array can have at most 10000000 elements";
@@ -84,6 +84,9 @@ fn text(t: &Tok) -> &'static str {
         Tok::Gt => ">",
         Tok::GtEq => ">=",
         Tok::Const => "const",
+        Tok::Match => "match",
+        Tok::When => "when",
+        Tok::EndMatch => "end match",
         Tok::Plus => "+",
         Tok::Minus => "-",
         Tok::Star => "*",
@@ -827,6 +830,7 @@ impl Parser {
                 StmtKind::Fail(message)
             }
             Tok::Const => self.const_stmt()?,
+            Tok::Match => self.match_stmt(pos)?,
             Tok::Name(name) => self.name_stmt(name, pos)?,
             Tok::Variables | Tok::Global => {
                 return self.fail("variable declarations must come at the start of the program or function")
@@ -970,6 +974,73 @@ impl Parser {
         let value = self.expr()?;
         self.end_stmt()?;
         Ok(StmtKind::Unpack(names, value))
+    }
+
+    /// `match subject ... when v: ... when a, b: ... else: ... end match`.
+    /// Desugars to an if / else-if chain: each `when` arm becomes a branch whose
+    /// condition is `subject == value` (OR-ed for several values). The subject is
+    /// compared in each branch, so match it on a variable or a simple value.
+    fn match_stmt(&mut self, pos: Pos) -> Result<StmtKind, Error> {
+        self.advance(); // match
+        let subject = self.expr()?;
+        self.end_stmt()?;
+        self.enter()?;
+        let eq = |a: Expr, b: Expr| Expr { kind: ExprKind::Binary(BinOp::Eq, Box::new(a), Box::new(b)), pos };
+        let mut branches: Vec<(Expr, Vec<Stmt>)> = Vec::new();
+        let mut else_body: Option<Vec<Stmt>> = None;
+        self.skip_newlines();
+        loop {
+            if self.is(&Tok::EndMatch) {
+                break;
+            }
+            if self.is(&Tok::Eof) {
+                self.depth -= 1;
+                return Err(Error::new(pos, "this match is never closed").with_hint("add end match at the end"));
+            }
+            if self.is(&Tok::When) {
+                if else_body.is_some() {
+                    self.depth -= 1;
+                    return self.fail("when cannot come after else in a match");
+                }
+                self.advance();
+                let mut values = vec![self.expr()?];
+                while self.accept(&Tok::Comma) {
+                    values.push(self.expr()?);
+                }
+                self.end_stmt()?;
+                let body = self.match_arm_body()?;
+                let mut cond = eq(subject.clone(), values[0].clone());
+                for v in values.into_iter().skip(1) {
+                    cond = Expr {
+                        kind: ExprKind::Binary(BinOp::Or, Box::new(cond), Box::new(eq(subject.clone(), v))),
+                        pos,
+                    };
+                }
+                branches.push((cond, body));
+            } else if self.is(&Tok::Else) {
+                self.advance();
+                self.end_stmt()?;
+                else_body = Some(self.match_arm_body()?);
+            } else {
+                self.depth -= 1;
+                return self.fail("inside match, expected when, else or end match");
+            }
+        }
+        self.depth -= 1;
+        self.advance(); // end match
+        self.end_stmt()?;
+        Ok(StmtKind::If { branches, else_body })
+    }
+
+    /// The statements of one `when`/`else` arm, up to the next arm or `end match`.
+    fn match_arm_body(&mut self) -> Result<Vec<Stmt>, Error> {
+        let mut body = Vec::new();
+        self.skip_newlines();
+        while !matches!(self.tok(), Tok::When | Tok::Else | Tok::EndMatch | Tok::Eof) {
+            body.push(self.stmt()?);
+            self.skip_newlines();
+        }
+        Ok(body)
     }
 
     /// `const NAME = value`: a compile-time constant. The value must be a fixed
@@ -1708,9 +1779,9 @@ end function
     #[test]
     fn nesting_and_length_have_limits() {
         let deep = "if(true)\n".repeat(150) + &"end if\n".repeat(150);
-        assert_eq!(err(&deep).message, "the program is nested too deeply (more than 100 levels)");
+        assert_eq!(err(&deep).message, "the program is nested too deeply (more than 80 levels)");
         let parens = format!("x = {}1{}\n", "(".repeat(3000), ")".repeat(3000));
-        assert_eq!(err(&parens).message, "the program is nested too deeply (more than 100 levels)");
+        assert_eq!(err(&parens).message, "the program is nested too deeply (more than 80 levels)");
         let long = format!("x = {}1\n", "1 + ".repeat(5000));
         assert_eq!(err(&long).message, "this expression is too long (more than 1000 operations)");
     }

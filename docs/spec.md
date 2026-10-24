@@ -48,6 +48,7 @@ output(double(n))
 - **Identifiers**: letters (accented letters included), digits and `_`. They cannot start with a digit. They are case-sensitive.
 - **Literals**: integers `42`, reals `3.14`, reals in scientific notation `6.022e23`, `1.989e30`, `1e-10` (the `e`/`E` exponent makes it a real), strings `"text"` (escapes `\"`, `\\`, `\n`), booleans `true` / `false`.
 - **Compound assignment**: `x += e`, `x -= e`, `x *= e`, `x /= e` are short for `x = x + e` and so on, and work on an indexed target too (`nums[i] += 1`). As with `/`, `x /= e` produces a real, so it only fits a `float` variable (use `div` for integers).
+- **`match`**: `match subject` with `when value` arms (several values with commas, `when a, b`), an optional `else`, closed by `end match`. Each arm runs when `subject` equals one of its values; it is short for an `if` / else-if chain, so the subject is compared in each arm (match a variable or a simple value). Example: `match grade` / `when 10` … / `when 8, 9` … / `else` … / `end match`.
 - **Constants**: `const NAME = value` names a fixed value — a number, text, or `true`/`false` (e.g. `const PI = 3.14159`, `const MAX = 100`, `const GREETING = "hi"`). The value is substituted wherever the name is used and the name cannot be assigned to. A `const` goes among the statements (after `variables:`) and must be declared before it is used.
 - **String interpolation**: inside text, `${expr}` inserts a value — `"Hi ${name}, you have ${score + bonus} points"` is short for `"Hi " + name + ", you have " + score + bonus + " points"` (string `+` converts the value to text). A plain `{` is still literal, so regex and JSON text are unaffected; write `\$` for a literal dollar sign.
 - **Assignment** is `=`; equality is compared with `==`. A single `=` inside a condition is an error that suggests `==`, and `==` used as a statement is an error that suggests `=`.
@@ -1142,7 +1143,7 @@ Error at line 7, column 5: variable "total" is not declared
     ^^^^^
 Hint: add it to "variables:" at the top of the program
 ```
-- **Before running**: syntax, names, types, value before use, missing `return`, and programs nested more than 100 levels deep or with a statement of more than 1000 operations.
+- **Before running**: syntax, names, types, value before use, missing `return`, and programs nested more than 80 levels deep or with a statement of more than 1000 operations.
   - The lexer and the parser stop at the first error.
   - The checker reports every error it finds, up to 20, sorted by position.
   - The program does not start.
