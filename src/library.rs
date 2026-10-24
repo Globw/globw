@@ -4743,7 +4743,9 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             let path = text(&args[0]).to_string();
             #[cfg(windows)]
             let r = std::process::Command::new("cmd").args(["/C", "start", "", &path]).spawn();
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
+            let r = std::process::Command::new("open").arg(&path).spawn();
+            #[cfg(not(any(windows, target_os = "macos")))]
             let r = std::process::Command::new("xdg-open").arg(&path).spawn();
             r.map_err(|e| format!("synth.play: cannot play {}: {}", path, e))?;
             Value::Null

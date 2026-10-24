@@ -10,7 +10,12 @@ use fontdue::{Font, FontSettings, Metrics};
 
 use crate::canvas::Canvas;
 
+#[cfg(windows)]
 const DEFAULT_FONT: &str = "Segoe UI";
+#[cfg(target_os = "macos")]
+const DEFAULT_FONT: &str = "Helvetica";
+#[cfg(not(any(windows, target_os = "macos")))]
+const DEFAULT_FONT: &str = "DejaVu Sans";
 const DEFAULT_SIZE: i64 = 20;
 
 #[derive(Clone, Copy)]
@@ -40,6 +45,7 @@ fn is_font_file(name: &str) -> bool {
 }
 
 /// Fonts listed in the Windows registry (machine-wide and per-user).
+#[cfg(windows)]
 fn installed_fonts() -> Vec<(String, PathBuf)> {
     let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
     let font_dir = Path::new(&windir).join("Fonts");
@@ -60,6 +66,62 @@ fn installed_fonts() -> Vec<(String, PathBuf)> {
         }
     }
     out
+}
+
+/// Fonts found in the usual system font directories on Linux and macOS,
+/// indexed by the family name read from each file.
+#[cfg(not(windows))]
+fn installed_fonts() -> Vec<(String, PathBuf)> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".fonts"));
+        dirs.push(home.join(".local/share/fonts"));
+        dirs.push(home.join("Library/Fonts")); // macOS, per user
+    }
+    #[cfg(target_os = "macos")]
+    {
+        dirs.push(PathBuf::from("/System/Library/Fonts"));
+        dirs.push(PathBuf::from("/Library/Fonts"));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        dirs.push(PathBuf::from("/usr/share/fonts"));
+        dirs.push(PathBuf::from("/usr/local/share/fonts"));
+    }
+    let mut out = Vec::new();
+    for dir in dirs {
+        collect_fonts(&dir, 0, &mut out);
+    }
+    out
+}
+
+/// Walks `dir` for font files and records each face's family name → path.
+#[cfg(not(windows))]
+fn collect_fonts(dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
+    if depth > 6 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_fonts(&path, depth + 1, out);
+        } else if path.file_name().and_then(|n| n.to_str()).is_some_and(is_font_file) {
+            let Ok(data) = std::fs::read(&path) else { continue };
+            let count = ttf_parser::fonts_in_collection(&data).unwrap_or(1);
+            for i in 0..count {
+                let Ok(face) = ttf_parser::Face::parse(&data, i) else { continue };
+                for n in face.names() {
+                    if n.name_id == ttf_parser::name_id::FAMILY {
+                        if let Some(s) = n.to_string() {
+                            out.push((s.to_lowercase(), path.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Index of the face whose family is `family` inside a font file (0 if none matches).
@@ -109,8 +171,8 @@ impl Fonts {
                     let installed = self.installed.get_or_insert_with(installed_fonts);
                     let Some((_, path)) = installed.iter().find(|(n, _)| *n == key) else {
                         return Err(format!(
-                            "font \"{}\" not found: use a font installed in Windows (like \"Arial\"), a .ttf/.otf file, or \"pixel\"",
-                            name
+                            "font \"{}\" not found: use a font installed on your system (like \"{}\"), a .ttf/.otf file, or \"pixel\"",
+                            name, DEFAULT_FONT
                         ));
                     };
                     let path = path.clone();
