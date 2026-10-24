@@ -1,14 +1,57 @@
 use std::io::{self, BufWriter, Write};
 use std::process::ExitCode;
 
+/// `globw add <url>`: downloads a .gw module into a local `libs/` folder, where
+/// `import` can then find it.
+fn globw_add(url: &str) -> ExitCode {
+    let base = url.rsplit('/').next().unwrap_or("").split(['?', '#']).next().unwrap_or("");
+    let file = if base.ends_with(".gw") { base.to_string() } else { format!("{}.gw", base) };
+    if file == ".gw" || file.is_empty() {
+        eprintln!("globw add: could not work out a module name from \"{}\"", url);
+        return ExitCode::from(3);
+    }
+    let body = match ureq::get(url).timeout(std::time::Duration::from_secs(60)).call() {
+        Ok(r) => match r.into_string() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("globw add: cannot read the reply from {}: {}", url, e);
+                return ExitCode::from(1);
+            }
+        },
+        Err(e) => {
+            eprintln!("globw add: cannot download {}: {}", url, e);
+            return ExitCode::from(1);
+        }
+    };
+    let dir = std::path::Path::new("libs");
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("globw add: cannot create the libs folder: {}", e);
+        return ExitCode::from(1);
+    }
+    let path = dir.join(&file);
+    if let Err(e) = std::fs::write(&path, body) {
+        eprintln!("globw add: cannot write {}: {}", path.display(), e);
+        return ExitCode::from(1);
+    }
+    println!("added {} - use it with: import {}", path.display(), file.trim_end_matches(".gw"));
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [cmd, url] = args.as_slice() {
+        if cmd == "add" {
+            return globw_add(url);
+        }
+    }
     let (check_only, profile, file) = match args.as_slice() {
         [f] if !f.starts_with("--") => (false, false, f),
         [flag, f] if flag == "--check" => (true, false, f),
         [flag, f] if flag == "--profile" => (false, true, f),
         _ => {
-            eprintln!("Usage: globw program.gw\n       globw --check program.gw\n       globw --profile program.gw");
+            eprintln!(
+                "Usage: globw program.gw\n       globw --check program.gw\n       globw --profile program.gw\n       globw add <url>   (download a .gw module into libs/)"
+            );
             return ExitCode::from(3);
         }
     };

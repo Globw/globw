@@ -965,6 +965,11 @@ in this order: next to the file that imports it, then the main program's folder,
 `libs/` folder there, then every directory listed in the `GLOBW_PATH` environment
 variable (a minimal package path, OS path separator). Built-in modules need no file.
 
+**Getting a module from the web.** `globw add <url>` downloads a `.gw` file and saves it
+into a `libs/` folder in the current directory, so `import` can then find it — a minimal
+way to share modules. The module name comes from the file name in the URL
+(`https://.../shapes.gw` → `import shapes`).
+
 **More built-in functions (batch H, 150 functions).**
 
 - `ease` — Robert Penner easing curves for animation, `t` in 0..1:

@@ -260,6 +260,13 @@ fn net_url_parsing_and_unicode() {
 }
 
 #[test]
+fn globw_add_reports_a_clean_error_when_unreachable() {
+    let (code, _, stderr) = globw(&["add", "http://127.0.0.1:1/mod.gw"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("globw add: cannot download"), "{}", stderr);
+}
+
+#[test]
 fn imports_resolve_from_a_libs_folder() {
     let (code, stdout, stderr) = globw(&["tests/fixtures/pkgapp.gw"]);
     assert_eq!(code, 0, "{}", stderr);
