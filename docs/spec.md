@@ -891,6 +891,16 @@ handle), then `grad.backward(node)` fills every input's gradient, read with `gra
 is a few lines — e.g. minimising `(x-5)^2` converges `x` to 5. A language with
 differentiable values built in is something Python needs PyTorch/JAX for.
 
+**`ai` — chat with a language model.** One module for both paid API keys and local
+models, because Groq, OpenRouter, OpenAI and a local **Ollama** all speak the same
+`POST {endpoint}/chat/completions` API. Pick a backend with `ai.use_groq(key, model)`,
+`ai.use_openrouter(key, model)`, `ai.use_openai(key, model)` or `ai.use_ollama(model)`
+(local, no key), or set `ai.endpoint`, `ai.key`, `ai.model` by hand; `ai.system(text)`
+sets a system prompt and `ai.temperature(t)` the randomness. Then `ai.ask(prompt)`
+returns a one-shot answer, while `ai.say(prompt)` keeps the conversation (it remembers
+the previous turns) and `ai.reset()` clears that history. Example (fully local): 
+`ai.use_ollama("llama3")` then `ai.ask("Capital of Italy?")`.
+
 **`symbol` — symbolic mathematics.** Build an expression tree from `symbol.var("x")`,
 `symbol.const(c)` and the ops `add`, `sub`, `mul`, `div`, `pow`, `neg`, `sin`, `cos`,
 `exp`, `ln` (each returns a node handle); then `symbol.diff(expr, var)` returns the

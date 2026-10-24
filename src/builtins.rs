@@ -784,6 +784,9 @@ pub enum Builtin {
     // module "symbol" (symbolic mathematics)
     SymVar, SymConst, SymAdd, SymSub, SymMul, SymDiv, SymPow, SymNeg,
     SymSin, SymCos, SymExp, SymLn, SymDiff, SymSimplify, SymEval, SymText, SymReset,
+    // module "ai" (chat with an OpenAI-compatible API: Groq, OpenRouter, OpenAI, or a local Ollama)
+    AiUseGroq, AiUseOpenRouter, AiUseOpenAI, AiUseOllama, AiEndpoint, AiKey, AiModel,
+    AiSystem, AiTemperature, AiAsk, AiSay, AiReset,
     // ======== batch M: 615 modules to reach 1000 ========
     Mk0001, Mk0002, Mk0003, Mk0004, Mk0005, Mk0006, Mk0007, Mk0008, Mk0009, Mk0010, Mk0011, Mk0012,
     Mk0013, Mk0014, Mk0015, Mk0016, Mk0017, Mk0018, Mk0019, Mk0020, Mk0021, Mk0022, Mk0023, Mk0024,
@@ -2170,6 +2173,19 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (SymEval, "symbol.eval", Sig::Fixed(&[I, I, R], Some(Real))),
     (SymText, "symbol.text", Sig::Fixed(&[I], Some(Str))),
     (SymReset, "symbol.reset", Sig::Fixed(&[], None)),
+    // module "ai" (OpenAI-compatible chat: Groq, OpenRouter, OpenAI, local Ollama)
+    (AiUseGroq, "ai.use_groq", Sig::Fixed(&[S, S], None)),
+    (AiUseOpenRouter, "ai.use_openrouter", Sig::Fixed(&[S, S], None)),
+    (AiUseOpenAI, "ai.use_openai", Sig::Fixed(&[S, S], None)),
+    (AiUseOllama, "ai.use_ollama", Sig::Fixed(&[S], None)),
+    (AiEndpoint, "ai.endpoint", Sig::Fixed(&[S], None)),
+    (AiKey, "ai.key", Sig::Fixed(&[S], None)),
+    (AiModel, "ai.model", Sig::Fixed(&[S], None)),
+    (AiSystem, "ai.system", Sig::Fixed(&[S], None)),
+    (AiTemperature, "ai.temperature", Sig::Fixed(&[R], None)),
+    (AiAsk, "ai.ask", Sig::Fixed(&[S], Some(Str))),
+    (AiSay, "ai.say", Sig::Fixed(&[S], Some(Str))),
+    (AiReset, "ai.reset", Sig::Fixed(&[], None)),
     // ======== batch M ========
     (Mk0001, "angstrom.si", Sig::Fixed(&[R], Some(Real))),
     (Mk0002, "angstrom.inv", Sig::Fixed(&[R], Some(Real))),
@@ -3382,7 +3398,7 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "ease", "trig2", "special", "polar", "transform", "temp2", "storage", "area2", "kitchen",
     "chem", "elec", "finance2", "health2", "music", "space", "optics", "prob2", "rpg",
     "physics2", "stats2", "map", "date2", "wave2", "light", "sound2",
-    "net", "gwgame", "grad", "gwframe", "gwsim", "synth", "symbol",
+    "net", "gwgame", "grad", "gwframe", "gwsim", "synth", "symbol", "ai",
     // batch M
     "methuselah", "yardpersecond", "kilderkin", "footofwater", "poise", "anomalistic_year", "sho", "squarerod", "sidereal_day", "picometre",
     "hectare", "avogadro_const", "zolotnik", "knot", "maund", "therm", "hin", "beaufort_approx", "erg", "cahen",

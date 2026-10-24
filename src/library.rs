@@ -559,6 +559,72 @@ fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
     }
 }
 
+// ---- module "ai": chat with an OpenAI-compatible endpoint ----
+// Groq, OpenRouter, OpenAI and a local Ollama all speak the same
+// POST {endpoint}/chat/completions API, so one module covers paid keys and
+// local models (Ollama needs no key).
+struct AiConfig {
+    endpoint: String,
+    key: String,
+    model: String,
+    system: String,
+    temperature: f64,
+    history: Vec<(String, String)>,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        AiConfig {
+            endpoint: "http://localhost:11434/v1".to_string(), // Ollama by default
+            key: String::new(),
+            model: "llama3".to_string(),
+            system: String::new(),
+            temperature: 0.7,
+            history: Vec::new(),
+        }
+    }
+}
+
+thread_local! {
+    static AI: RefCell<AiConfig> = RefCell::new(AiConfig::default());
+}
+
+fn ai_send(cfg: &AiConfig, messages: Vec<Json>) -> Result<String, String> {
+    let url = format!("{}/chat/completions", cfg.endpoint.trim_end_matches('/'));
+    let body = serde_json::json!({ "model": cfg.model, "messages": messages, "temperature": cfg.temperature });
+    let body = serde_json::to_string(&body).map_err(|e| format!("ai: cannot build the request: {}", e))?;
+    let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(180)).set("Content-Type", "application/json");
+    if !cfg.key.is_empty() {
+        req = req.set("Authorization", &format!("Bearer {}", cfg.key));
+    }
+    let resp = req.send_string(&body).map_err(|e| match e {
+        ureq::Error::Status(code, r) => {
+            format!("ai: the server answered with status {} - {}", code, r.into_string().unwrap_or_default())
+        }
+        ureq::Error::Transport(t) => format!("ai: cannot reach {}: {}", url, t),
+    })?;
+    let text = resp.into_string().map_err(|e| format!("ai: cannot read the reply: {}", e))?;
+    let json: Json = serde_json::from_str(&text).map_err(|e| format!("ai: the reply is not JSON: {}", e))?;
+    json["choices"][0]["message"]["content"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("ai: no answer in the reply: {}", text))
+}
+
+fn ai_messages(cfg: &AiConfig, extra: Option<&str>) -> Vec<Json> {
+    let mut messages = Vec::new();
+    if !cfg.system.is_empty() {
+        messages.push(serde_json::json!({ "role": "system", "content": cfg.system }));
+    }
+    for (role, content) in &cfg.history {
+        messages.push(serde_json::json!({ "role": role, "content": content }));
+    }
+    if let Some(prompt) = extra {
+        messages.push(serde_json::json!({ "role": "user", "content": prompt }));
+    }
+    messages
+}
+
 // ---- module "symbol": symbolic mathematics ----
 // Un ops: 0 neg, 1 sin, 2 cos, 3 exp, 4 ln. Bin ops: 0 add, 1 sub, 2 mul, 3 div, 4 pow.
 #[derive(Clone)]
@@ -4336,6 +4402,97 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             Value::Null
         }
         GradCount => Value::Int(GRAD.with(|g| g.borrow().len() as i64)),
+
+        // ======== module "ai": OpenAI-compatible chat ========
+        AiUseGroq => {
+            let (key, model) = (text(&args[0]).to_string(), text(&args[1]).to_string());
+            AI.with(|c| {
+                let mut cfg = c.borrow_mut();
+                cfg.endpoint = "https://api.groq.com/openai/v1".to_string();
+                cfg.key = key;
+                cfg.model = model;
+            });
+            Value::Null
+        }
+        AiUseOpenRouter => {
+            let (key, model) = (text(&args[0]).to_string(), text(&args[1]).to_string());
+            AI.with(|c| {
+                let mut cfg = c.borrow_mut();
+                cfg.endpoint = "https://openrouter.ai/api/v1".to_string();
+                cfg.key = key;
+                cfg.model = model;
+            });
+            Value::Null
+        }
+        AiUseOpenAI => {
+            let (key, model) = (text(&args[0]).to_string(), text(&args[1]).to_string());
+            AI.with(|c| {
+                let mut cfg = c.borrow_mut();
+                cfg.endpoint = "https://api.openai.com/v1".to_string();
+                cfg.key = key;
+                cfg.model = model;
+            });
+            Value::Null
+        }
+        AiUseOllama => {
+            let model = text(&args[0]).to_string();
+            AI.with(|c| {
+                let mut cfg = c.borrow_mut();
+                cfg.endpoint = "http://localhost:11434/v1".to_string();
+                cfg.key = String::new();
+                cfg.model = model;
+            });
+            Value::Null
+        }
+        AiEndpoint => {
+            let v = text(&args[0]).to_string();
+            AI.with(|c| c.borrow_mut().endpoint = v);
+            Value::Null
+        }
+        AiKey => {
+            let v = text(&args[0]).to_string();
+            AI.with(|c| c.borrow_mut().key = v);
+            Value::Null
+        }
+        AiModel => {
+            let v = text(&args[0]).to_string();
+            AI.with(|c| c.borrow_mut().model = v);
+            Value::Null
+        }
+        AiSystem => {
+            let v = text(&args[0]).to_string();
+            AI.with(|c| c.borrow_mut().system = v);
+            Value::Null
+        }
+        AiTemperature => {
+            let v = real(&args[0]);
+            AI.with(|c| c.borrow_mut().temperature = v);
+            Value::Null
+        }
+        AiAsk => {
+            let prompt = text(&args[0]).to_string();
+            let answer = AI.with(|c| {
+                let cfg = c.borrow();
+                ai_send(&cfg, ai_messages(&cfg, Some(&prompt)))
+            })?;
+            string(answer)
+        }
+        AiSay => {
+            let prompt = text(&args[0]).to_string();
+            let answer = AI.with(|c| {
+                let mut cfg = c.borrow_mut();
+                let messages = ai_messages(&cfg, Some(&prompt));
+                let ans = ai_send(&cfg, messages)?;
+                cfg.history.push(("user".to_string(), prompt));
+                cfg.history.push(("assistant".to_string(), ans.clone()));
+                Ok::<String, String>(ans)
+            })?;
+            string(answer)
+        }
+        AiReset => {
+            AI.with(|c| c.borrow_mut().history.clear());
+            Value::Null
+        }
 
         // ======== module "symbol": symbolic mathematics ========
         SymVar => Value::Int(SYM.with(|s| s_push(&mut s.borrow_mut(), SNode::Var(text(&args[0]).to_string())) as i64)),

@@ -226,6 +226,18 @@ fn constant_expressions_are_folded() {
 }
 
 #[test]
+fn ai_module_errors_cleanly_when_unreachable() {
+    // no network dependency: point at a closed local port and check the clean error
+    let dir = std::env::temp_dir().join("globw_ai_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("a.gw");
+    std::fs::write(&prog, "import ai\nai.endpoint(\"http://127.0.0.1:1/v1\")\noutput(ai.ask(\"hi\"))\n").unwrap();
+    let (code, _, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("ai: cannot reach"), "{}", stderr);
+}
+
+#[test]
 fn net_url_parsing_and_unicode() {
     let (code, stdout, stderr) = globw(&["examples/net_url.gw"]);
     assert_eq!(code, 0, "{}", stderr);
