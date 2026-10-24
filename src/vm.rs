@@ -142,11 +142,22 @@ struct TaskSlot {
     ip: usize,
     base: usize,
     done: bool,
+    /// handles of tasks blocked in task.await on this one, woken when it finishes
+    waiters: Vec<usize>,
 }
 
 impl TaskSlot {
     fn empty() -> TaskSlot {
-        TaskSlot { regs: Vec::new(), frames: Vec::new(), handlers: Vec::new(), func: 0, ip: 0, base: 0, done: false }
+        TaskSlot {
+            regs: Vec::new(),
+            frames: Vec::new(),
+            handlers: Vec::new(),
+            func: 0,
+            ip: 0,
+            base: 0,
+            done: false,
+            waiters: Vec::new(),
+        }
     }
 }
 
@@ -474,13 +485,14 @@ impl<'m> Vm<'m> {
         // Makes `$idx` the running task: loads its state into the locals and self.
         macro_rules! load_task {
             ($idx:expr) => {{
-                let t = std::mem::replace(&mut self.tasks[$idx], TaskSlot::empty());
-                self.regs = t.regs;
-                self.frames = t.frames;
-                self.handlers = t.handlers;
-                func = t.func;
-                ip = t.ip;
-                base = t.base;
+                // move the execution state into self, but leave the task's metadata
+                // (waiters, done) in the slot so it survives while the task runs
+                self.regs = std::mem::take(&mut self.tasks[$idx].regs);
+                self.frames = std::mem::take(&mut self.tasks[$idx].frames);
+                self.handlers = std::mem::take(&mut self.tasks[$idx].handlers);
+                func = self.tasks[$idx].func;
+                ip = self.tasks[$idx].ip;
+                base = self.tasks[$idx].base;
                 code = &m.functions[func].code;
                 self.current = $idx;
             }};
@@ -490,6 +502,9 @@ impl<'m> Vm<'m> {
         macro_rules! finish_task {
             () => {{
                 self.tasks[self.current].done = true;
+                // wake everyone that was blocked in task.await on this task
+                let waiters = std::mem::take(&mut self.tasks[self.current].waiters);
+                self.ready.extend(waiters);
                 match self.ready.pop_front() {
                     Some(next) => load_task!(next),
                     None => return Ok(()),
@@ -971,6 +986,7 @@ impl<'m> Vm<'m> {
                                 ip: 0,
                                 base: 0,
                                 done: false,
+                                waiters: Vec::new(),
                             });
                             self.ready.push_back(handle);
                             reg!(dst) = Value::Int(handle as i64);
@@ -981,6 +997,30 @@ impl<'m> Vm<'m> {
                                 self.ready.push_back(self.current);
                                 load_task!(next);
                             }
+                        }
+                        Builtin::TaskAwait => {
+                            let start = base + first as usize;
+                            let h = match self.regs[start] {
+                                Value::Int(i) if i >= 0 && (i as usize) < self.tasks.len() => i as usize,
+                                _ => fail!("task.await: that is not a task handle"),
+                            };
+                            // block until task h finishes, unless it is already done or is us
+                            if !self.tasks[h].done && h != self.current {
+                                save_current!();
+                                self.tasks[h].waiters.push(self.current);
+                                match self.ready.pop_front() {
+                                    Some(next) => load_task!(next),
+                                    None => fail!("deadlock: a task is waiting for one that can never run"),
+                                }
+                            }
+                        }
+                        Builtin::TaskDone => {
+                            let start = base + first as usize;
+                            let done = match self.regs[start] {
+                                Value::Int(i) if i >= 0 && (i as usize) < self.tasks.len() => self.tasks[i as usize].done,
+                                _ => fail!("task.done: that is not a task handle"),
+                            };
+                            reg!(dst) = Value::Bool(done);
                         }
                         Builtin::TaskId => reg!(dst) = Value::Int(self.current as i64),
                         Builtin::TaskCount => reg!(dst) = Value::Int(self.tasks.len() as i64),

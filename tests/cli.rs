@@ -169,6 +169,21 @@ fn unit_conversion_modules_work() {
 }
 
 #[test]
+fn task_await_waits_for_completion() {
+    let dir = std::env::temp_dir().join("globw_await_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("a.gw");
+    std::fs::write(
+        &prog,
+        "import task\nvariables:\n    a as int\n    w as function()\nw = function()\n    output(\"worker\")\nend procedure\na = task.spawn(w)\ntask.await(a)\noutput(\"after\")\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "worker\nafter\n");
+}
+
+#[test]
 fn cooperative_tasks_spawn_and_yield() {
     let dir = std::env::temp_dir().join("globw_task_test");
     std::fs::create_dir_all(&dir).unwrap();

@@ -896,10 +896,11 @@ differentiable values built in is something Python needs PyTorch/JAX for.
 `f` as a lightweight task and returns its handle; `task.yield()` hands control to the
 next ready task; the program ends when every task has finished. Tasks share everything
 (globals, the window, files) and run one at a time on a single thread — switching only at
-`task.yield()` — so there are no data races. `task.id()` is the running task's handle and
-`task.count()` the number of tasks. (A worker is usually a no-argument lambda:
-`w = function()` … `end procedure`, then `task.spawn(w)`.) This is part (a): `await` and
-channels come next.
+`task.yield()` — so there are no data races. `task.await(handle)` blocks the current task until that task has finished (a join);
+`task.done(handle)` tests it without blocking. `task.id()` is the running task's handle
+and `task.count()` the number of tasks. (A worker is usually a no-argument lambda:
+`w = function()` … `end procedure`, then `h = task.spawn(w)` … `task.await(h)`.) Workers
+return values to each other through shared variables or channels (channels come next).
 
 **`ai` — chat with a language model.** One module for both paid API keys and local
 models, because Groq, OpenRouter, OpenAI and a local **Ollama** all speak the same
