@@ -463,8 +463,82 @@ impl<'a> FnCompiler<'a> {
                     self.emit(Op::Move(d, r), pos);
                 }
             }
+            TExprKind::Comprehension { item, var, iter, kind, to_real, cond } => {
+                self.comprehension(item, *var, iter, *kind, *to_real, cond.as_deref(), d, pos);
+            }
         }
         self.next = mark;
+    }
+
+    /// Emits `[item for var in iter if cond]`: builds a list by iterating like a
+    /// for-each loop and appending `item` for each element the `cond` keeps.
+    fn comprehension(
+        &mut self,
+        item: &TExpr,
+        var: Place,
+        iter: &TExpr,
+        kind: IterKind,
+        to_real: bool,
+        cond: Option<&TExpr>,
+        d: Reg,
+        pos: Pos,
+    ) {
+        // build the result in a temporary: item/cond/iter may read the loop variable
+        let result = if d < self.n_locals { self.temp() } else { d };
+        self.emit(Op::NewList(result), pos);
+        let c = self.temp();
+        self.expr_into(iter, c);
+        if kind == IterKind::Keys {
+            self.emit(Op::Builtin { id: crate::builtins::Builtin::Keys.id(), first: c, argc: 1, dst: c }, pos);
+        } else if kind == IterKind::Set {
+            self.emit(Op::Builtin { id: crate::builtins::Builtin::ToList.id(), first: c, argc: 1, dst: c }, pos);
+        }
+        let i = self.temp();
+        self.emit(Op::LoadInt(i, 1), pos);
+        let one = self.temp();
+        self.emit(Op::LoadInt(one, 1), pos);
+        let n = self.temp();
+        let x = match var {
+            Place::Local(r) if !to_real => r,
+            _ => self.temp(),
+        };
+        let body_mark = self.next;
+        let top = self.here();
+        self.emit(Op::Length(n, c), pos);
+        let exit = self.emit(Op::JumpUnlessI(Cmp::LtEq, i, n, 0), pos);
+        self.emit(if kind == IterKind::Chars { Op::CharAt(x, c, i) } else { Op::GetElem(x, c, i) }, pos);
+        match var {
+            Place::Local(r) if to_real => {
+                self.emit(Op::ToReal(r, x), pos);
+            }
+            Place::Local(_) => {}
+            Place::Global(g) => {
+                if to_real {
+                    self.emit(Op::ToReal(x, x), pos);
+                }
+                self.emit(Op::SetGlobal(g, x), pos);
+            }
+        }
+        let skip = cond.map(|co| {
+            let cr = self.temp();
+            self.expr_into(co, cr);
+            self.emit(Op::JumpIfFalse(cr, 0), pos)
+        });
+        let v = self.temp();
+        self.expr_into(item, v);
+        self.emit(Op::Append(result, v), pos);
+        let cont = self.here();
+        if let Some(j) = skip {
+            self.patch(j, cont);
+        }
+        self.next = body_mark;
+        self.emit(Op::AddI(i, i, one), pos);
+        self.emit(Op::Jump(top), pos);
+        let end = self.here();
+        self.patch(exit, end);
+        if result != d {
+            self.emit(Op::Move(d, result), pos);
+        }
     }
 
     fn logic(&mut self, op: BinOp, a: &TExpr, b: &TExpr, d: Reg, pos: Pos) {

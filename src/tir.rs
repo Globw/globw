@@ -446,6 +446,16 @@ pub enum TExprKind {
     Index(Box<TExpr>, Box<TExpr>),
     /// a list written in brackets
     ListLit(Vec<TExpr>),
+    /// a list comprehension `[item for var in iter if cond]`: builds a list by
+    /// iterating and appending `item` for each element the optional `cond` keeps
+    Comprehension {
+        item: Box<TExpr>,
+        var: Place,
+        iter: Box<TExpr>,
+        kind: IterKind,
+        to_real: bool,
+        cond: Option<Box<TExpr>>,
+    },
     /// makes an object of a class and runs its constructor (if any)
     New { class: u16, ctor: Option<usize>, args: Vec<TExpr> },
     /// the value of a field of an object: `object.field`

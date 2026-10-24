@@ -482,6 +482,14 @@ impl Scope<'_> {
                 idx.iter_mut().for_each(|e| self.expr(e));
             }
             ExprKind::ListLit(items) => items.iter_mut().for_each(|e| self.expr(e)),
+            ExprKind::Comprehension { item, var, var_pos, iter, cond } => {
+                *var = self.resolve(var, *var_pos, false);
+                self.expr(iter);
+                self.expr(item);
+                if let Some(c) = cond {
+                    self.expr(c);
+                }
+            }
             ExprKind::Named(_, value) => self.expr(value),
             ExprKind::New(_, args) => args.iter_mut().for_each(|e| self.expr(e)),
             ExprKind::Field(b, _) => self.expr(b),

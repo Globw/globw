@@ -169,6 +169,21 @@ fn unit_conversion_modules_work() {
 }
 
 #[test]
+fn list_comprehension() {
+    let dir = std::env::temp_dir().join("globw_comp_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("c.gw");
+    std::fs::write(
+        &prog,
+        "variables:\n    nums, out as list of int\n    x as int\nnums = [1, 2, 3, 4, 5]\nout = [x * x for x in nums if x mod 2 == 1]\noutput(out)\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "[1, 9, 25]\n");
+}
+
+#[test]
 fn match_statement() {
     let dir = std::env::temp_dir().join("globw_match_test");
     std::fs::create_dir_all(&dir).unwrap();

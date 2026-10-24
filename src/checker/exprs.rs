@@ -227,6 +227,9 @@ impl<'p> Checker<'p> {
                 self.subscript(container, indices, pos)
             }
             ExprKind::ListLit(items) => self.list_literal(items, pos),
+            ExprKind::Comprehension { item, var, var_pos, iter, cond } => {
+                self.comprehension(item, var, *var_pos, iter, cond.as_deref(), pos)
+            }
             ExprKind::New(class, args) => self.construct(class, args, pos),
             ExprKind::Field(obj, field) => {
                 let object = self.expr(obj);
@@ -355,6 +358,59 @@ impl<'p> Checker<'p> {
         let elem = elem.unwrap_or(Type::Unknown);
         let converted = texprs.into_iter().map(|t| convert(t, elem.base())).collect();
         TExpr { kind: TExprKind::ListLit(converted), ty: list_of(elem), pos }
+    }
+
+    /// `[item for var in iter if cond]`: like a `for ... in` loop, but it builds a
+    /// list of the `item` values. The variable must be declared, as in a for-each.
+    fn comprehension(&mut self, item: &Expr, var: &str, var_pos: Pos, iter: &Expr, cond: Option<&Expr>, pos: Pos) -> TExpr {
+        let it = self.expr(iter);
+        let (elem, kind) = match it.ty {
+            Type::Unknown => (Type::Unknown, IterKind::Items),
+            Type::Base(BaseType::Str) => (Type::Base(BaseType::Str), IterKind::Chars),
+            Type::Array(Some(b)) => (Type::Base(b), IterKind::Items),
+            Type::Dict(k, _) => (Type::Base(k), IterKind::Keys),
+            Type::Set(e) => (Type::Base(e), IterKind::Set),
+            t => match list_elem(t) {
+                Some(e) => (e, IterKind::Items),
+                None => {
+                    self.report(Error::new(
+                        it.pos,
+                        format!("a comprehension iterates over lists, arrays, dictionaries and strings, not over {}", t.full_name()),
+                    ));
+                    (Type::Unknown, IterKind::Items)
+                }
+            },
+        };
+        let Some(p) = self.lookup(var) else {
+            let err = self.undeclared(var, var_pos);
+            self.report_structural(err);
+            return unknown(pos);
+        };
+        let declared = self.var(p).full_type();
+        if !fits(declared, elem) {
+            let what = if kind == IterKind::Keys { "the keys" } else { "the elements" };
+            self.report(Error::new(var_pos, format!("\"{}\" is {}, but {} are {}", var, declared.full_name(), what, elem.plural())));
+        }
+        let to_real = declared == Type::Base(BaseType::Real) && elem == Type::Base(BaseType::Int);
+        let before = self.assigned.clone();
+        if let Place::Local(i) = p {
+            self.assigned[i as usize] = true;
+        }
+        let item_t = self.expr(item);
+        let cond_t = cond.map(|c| {
+            let ct = self.expr(c);
+            if !matches!(ct.ty, Type::Base(BaseType::Bool) | Type::Unknown) {
+                self.report(Error::new(ct.pos, format!("the condition in a comprehension must be true or false, here it is {}", ct.ty.full_name())));
+            }
+            Box::new(ct)
+        });
+        self.assigned = before;
+        let result_ty = list_of(item_t.ty);
+        TExpr {
+            kind: TExprKind::Comprehension { item: Box::new(item_t), var: p, iter: Box::new(it), kind, to_real, cond: cond_t },
+            ty: result_ty,
+            pos,
+        }
     }
 
     /// Reads `base.field.field...` where `base` is a variable and the rest are

@@ -1384,17 +1384,49 @@ impl Parser {
                 return Ok(first);
             }
             Tok::LBracket => {
-                let mut items = Vec::new();
-                if !self.accept(&Tok::RBracket) {
-                    loop {
-                        items.push(self.expr()?);
-                        if self.accept(&Tok::RBracket) {
-                            break;
+                if self.accept(&Tok::RBracket) {
+                    ExprKind::ListLit(Vec::new())
+                } else {
+                    let first = self.expr()?;
+                    if self.is(&Tok::For) {
+                        // a comprehension: [ item for var in iter (if cond)? ]
+                        self.advance();
+                        let var_pos = self.pos();
+                        let var = match self.tok().clone() {
+                            Tok::Name(n) => {
+                                self.advance();
+                                n
+                            }
+                            other => return self.fail(format!("expected the loop variable name, found {}", describe(&other))),
+                        };
+                        if !self.is_name("in") {
+                            return self.fail("expected \"in\" in the comprehension (like [x for x in list])");
                         }
-                        self.expect(&Tok::Comma, "\",\" or \"]\"")?;
+                        self.advance();
+                        let iter = self.expr()?;
+                        let cond = if self.is(&Tok::If) {
+                            self.advance();
+                            Some(Box::new(self.expr()?))
+                        } else {
+                            None
+                        };
+                        self.expect(&Tok::RBracket, "\"]\" to close the comprehension")?;
+                        ExprKind::Comprehension { item: Box::new(first), var, var_pos, iter: Box::new(iter), cond }
+                    } else {
+                        let mut items = vec![first];
+                        if !self.accept(&Tok::RBracket) {
+                            self.expect(&Tok::Comma, "\",\" or \"]\"")?;
+                            loop {
+                                items.push(self.expr()?);
+                                if self.accept(&Tok::RBracket) {
+                                    break;
+                                }
+                                self.expect(&Tok::Comma, "\",\" or \"]\"")?;
+                            }
+                        }
+                        ExprKind::ListLit(items)
                     }
                 }
-                ExprKind::ListLit(items)
             }
             Tok::Function => return self.lambda(t.pos),
             Tok::New => {
@@ -1484,6 +1516,10 @@ mod tests {
             ExprKind::Index(n, ix) => format!("{}[{}]", n, list(ix)),
             ExprKind::Subscript(b, ix) => format!("{}[{}]", sx(b), list(ix)),
             ExprKind::ListLit(items) => format!("[{}]", list(items)),
+            ExprKind::Comprehension { item, var, iter, cond, .. } => match cond {
+                Some(c) => format!("[{} for {} in {} if {}]", sx(item), var, sx(iter), sx(c)),
+                None => format!("[{} for {} in {}]", sx(item), var, sx(iter)),
+            },
             ExprKind::Call(n, a) => format!("{}({})", n, list(a)),
             ExprKind::Unary(op, x) => format!("({:?} {})", op, sx(x)),
             ExprKind::Binary(op, a, b) => format!("({:?} {} {})", op, sx(a), sx(b)),

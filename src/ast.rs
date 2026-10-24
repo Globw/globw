@@ -50,6 +50,8 @@ pub enum ExprKind {
     Subscript(Box<Expr>, Vec<Expr>),
     /// a list written in brackets: `[1, 2, 3]`
     ListLit(Vec<Expr>),
+    /// a list comprehension: `[item for var in iter]`, optionally `... if cond`
+    Comprehension { item: Box<Expr>, var: String, var_pos: Pos, iter: Box<Expr>, cond: Option<Box<Expr>> },
     /// a value passed by parameter name in a call: `f(size = 3)`
     Named(String, Box<Expr>),
     /// `new Point(3, 4)`: makes an object and runs its constructor
