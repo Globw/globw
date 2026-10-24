@@ -331,18 +331,18 @@ end loop
   - a non-positive window size.
   `open()` before `window` returns `false`.
 - **Fonts:** `size` is the height in pixels, from 1 to 500. The `name` of `font` can be:
-  - the family name of a font installed in Windows, in any case, like `"Arial"`, `"Segoe UI"` or `"Comic Sans MS"`;
+  - the family name of a font installed on your system, in any case, like `"Arial"`, `"Segoe UI"` or `"Comic Sans MS"` (on Linux and macOS the usual font directories are searched);
   - a font file ending in `.ttf`, `.otf` or `.ttc`, like `"fonts/MyFont.ttf"`; a relative path starts from the folder of the program;
   - `"pixel"`: the built-in 8×8 bitmap font, drawn at a multiple of 8 pixels.
 
-  Vector fonts are drawn anti-aliased. Before any `font` call the font is `"Segoe UI"` at 20 pixels (or `"pixel"` at 16 if Segoe UI is missing). An unknown font or an unreadable file is a run-time error.
+  Vector fonts are drawn anti-aliased. Before any `font` call the font is the system default (Segoe UI on Windows, Helvetica on macOS, DejaVu Sans on Linux) at 20 pixels, or `"pixel"` at 16 if that font is missing. An unknown font or an unreadable file is a run-time error.
 - **End of the program:** when the program ends while the window is still open, the last frame stays on screen until the user closes the window.
 
 ### 6.8 Dialog boxes
 
 | Command | Kind | Effect |
 |---|---|---|
-| `message(text as string)` | procedure | Windows message box with an OK button; waits for it |
+| `message(text as string)` | procedure | message box with an OK button; waits for it |
 | `confirm(question as string)` | function → `bool` | Yes/No box: `true` for Yes |
 | `ask(question as string)` | function → `string` | input box; returns the text typed, or `""` if cancelled |
 
@@ -1207,7 +1207,7 @@ The project is a Cargo project at the repository root, with one module per phase
 | `canvas.rs` | pixel buffer: colors, shapes, text (no window, testable) | — |
 | `graphics.rs` | the window, keyboard and mouse (crate `minifb`) | canvas, render3d |
 | `render3d.rs` | 3D camera, shapes, clipping, shading and depth buffer on a canvas | canvas |
-| `dialogs.rs` | Windows message, Yes/No and input boxes | — |
+| `dialogs.rs` | cross-platform message, Yes/No and input boxes (crate `tinyfiledialogs`) | — |
 | `main.rs` | command line | lib |
 
 **Speed choices**
