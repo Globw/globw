@@ -169,6 +169,21 @@ fn unit_conversion_modules_work() {
 }
 
 #[test]
+fn task_channels_block_and_deliver() {
+    let dir = std::env::temp_dir().join("globw_chan_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let prog = dir.join("c.gw");
+    std::fs::write(
+        &prog,
+        "import task\nglobal variables:\n    ch as int\nvariables:\n    p as int\n    m as string\n    prod as function()\nch = task.channel()\nprod = function()\n    task.send(ch, \"hi\")\n    task.send(ch, \"bye\")\nend procedure\np = task.spawn(prod)\nm = task.recv(ch)\noutput(m)\nm = task.recv(ch)\noutput(m)\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = globw(&[prog.to_str().unwrap()]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "hi\nbye\n");
+}
+
+#[test]
 fn task_await_waits_for_completion() {
     let dir = std::env::temp_dir().join("globw_await_test");
     std::fs::create_dir_all(&dir).unwrap();

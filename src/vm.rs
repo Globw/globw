@@ -161,6 +161,13 @@ impl TaskSlot {
     }
 }
 
+/// A FIFO channel between tasks: it carries text values; a `task.recv` on an empty
+/// one blocks the task until another `task.send`s.
+struct Channel {
+    queue: VecDeque<Value>,
+    waiters: VecDeque<usize>,
+}
+
 fn seq(v: &Value) -> &Rc<RefCell<Vec<Value>>> {
     match v {
         Value::Seq(s) => s,
@@ -366,6 +373,7 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         tasks: Vec::new(),
         ready: VecDeque::new(),
         current: 0,
+        channels: Vec::new(),
         prof: None,
     };
     let result = vm.execute(input, output);
@@ -393,6 +401,7 @@ pub fn run_profiled(
         tasks: Vec::new(),
         ready: VecDeque::new(),
         current: 0,
+        channels: Vec::new(),
         prof: Some(HashMap::new()),
     };
     let result = vm.execute(input, output);
@@ -421,6 +430,8 @@ struct Vm<'m> {
     ready: VecDeque<usize>,
     /// the handle of the task running right now
     current: usize,
+    /// inter-task channels
+    channels: Vec<Channel>,
     /// when profiling: how many times each opcode ran
     prof: Option<HashMap<&'static str, u64>>,
 }
@@ -1024,6 +1035,53 @@ impl<'m> Vm<'m> {
                         }
                         Builtin::TaskId => reg!(dst) = Value::Int(self.current as i64),
                         Builtin::TaskCount => reg!(dst) = Value::Int(self.tasks.len() as i64),
+                        Builtin::TaskChannel => {
+                            let h = self.channels.len();
+                            self.channels.push(Channel { queue: VecDeque::new(), waiters: VecDeque::new() });
+                            reg!(dst) = Value::Int(h as i64);
+                        }
+                        Builtin::TaskSend => {
+                            let start = base + first as usize;
+                            let ch = match self.regs[start] {
+                                Value::Int(i) if i >= 0 && (i as usize) < self.channels.len() => i as usize,
+                                _ => fail!("task.send: that is not a channel"),
+                            };
+                            let v = self.regs[start + 1].clone();
+                            self.channels[ch].queue.push_back(v);
+                            if let Some(w) = self.channels[ch].waiters.pop_front() {
+                                self.ready.push_back(w);
+                            }
+                        }
+                        Builtin::TaskRecv => {
+                            let start = base + first as usize;
+                            let ch = match self.regs[start] {
+                                Value::Int(i) if i >= 0 && (i as usize) < self.channels.len() => i as usize,
+                                _ => fail!("task.recv: that is not a channel"),
+                            };
+                            match self.channels[ch].queue.pop_front() {
+                                Some(v) => reg!(dst) = v,
+                                None => {
+                                    // block until a value is sent, then re-run this op
+                                    ip -= 1;
+                                    save_current!();
+                                    self.channels[ch].waiters.push_back(self.current);
+                                    match self.ready.pop_front() {
+                                        Some(next) => load_task!(next),
+                                        None => fail!("deadlock: task.recv on an empty channel and no task can send"),
+                                    }
+                                }
+                            }
+                        }
+                        Builtin::TaskHas => {
+                            let start = base + first as usize;
+                            let has = match self.regs[start] {
+                                Value::Int(i) if i >= 0 && (i as usize) < self.channels.len() => {
+                                    !self.channels[i as usize].queue.is_empty()
+                                }
+                                _ => fail!("task.has: that is not a channel"),
+                            };
+                            reg!(dst) = Value::Bool(has);
+                        }
                         _ => {
                             if matches!(b, Builtin::Message | Builtin::Confirm | Builtin::Ask) {
                                 let _ = output.flush();

@@ -900,7 +900,12 @@ next ready task; the program ends when every task has finished. Tasks share ever
 `task.done(handle)` tests it without blocking. `task.id()` is the running task's handle
 and `task.count()` the number of tasks. (A worker is usually a no-argument lambda:
 `w = function()` … `end procedure`, then `h = task.spawn(w)` … `task.await(h)`.) Workers
-return values to each other through shared variables or channels (channels come next).
+talk to each other through **channels**: `task.channel()` makes one and returns its
+handle, `task.send(ch, text)` puts a text value on it, and `task.recv(ch)` takes the next
+one — **blocking** the task if the channel is empty until another task sends (so a
+producer and a consumer task hand work back and forth). `task.has(ch)` checks for a
+waiting value without blocking. Channels carry text, so send numbers with `to_text` and
+read them back with `to_float` / `to_int`.
 
 **`ai` — chat with a language model.** One module for both paid API keys and local
 models, because Groq, OpenRouter, OpenAI and a local **Ollama** all speak the same

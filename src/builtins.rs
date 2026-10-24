@@ -789,6 +789,7 @@ pub enum Builtin {
     AiSystem, AiTemperature, AiAsk, AiSay, AiReset,
     // module "task" (cooperative green-thread scheduler, handled by the VM)
     TaskSpawn, TaskYield, TaskAwait, TaskDone, TaskId, TaskCount,
+    TaskChannel, TaskSend, TaskRecv, TaskHas,
     // ======== batch M: 615 modules to reach 1000 ========
     Mk0001, Mk0002, Mk0003, Mk0004, Mk0005, Mk0006, Mk0007, Mk0008, Mk0009, Mk0010, Mk0011, Mk0012,
     Mk0013, Mk0014, Mk0015, Mk0016, Mk0017, Mk0018, Mk0019, Mk0020, Mk0021, Mk0022, Mk0023, Mk0024,
@@ -2195,6 +2196,10 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (TaskDone, "task.done", Sig::Fixed(&[I], Some(Bool))),
     (TaskId, "task.id", Sig::Fixed(&[], Some(Int))),
     (TaskCount, "task.count", Sig::Fixed(&[], Some(Int))),
+    (TaskChannel, "task.channel", Sig::Fixed(&[], Some(Int))),
+    (TaskSend, "task.send", Sig::Fixed(&[I, S], None)),
+    (TaskRecv, "task.recv", Sig::Fixed(&[I], Some(Str))),
+    (TaskHas, "task.has", Sig::Fixed(&[I], Some(Bool))),
     // ======== batch M ========
     (Mk0001, "angstrom.si", Sig::Fixed(&[R], Some(Real))),
     (Mk0002, "angstrom.inv", Sig::Fixed(&[R], Some(Real))),
