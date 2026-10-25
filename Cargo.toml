@@ -3,28 +3,62 @@ name = "globw"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The interpreter: run a program with `gw program.gw`.
+[[bin]]
+name = "gw"
+path = "src/main.rs"
+
+# The package manager for external libraries: `gwget install <name>`.
+[[bin]]
+name = "gwget"
+path = "src/bin/gwget.rs"
+required-features = ["native"]
+
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
 
+[features]
+# Native build: the modules that need a desktop OS (windows, SQLite, networking,
+# dialogs, dynamic BLAS, threads). On by default; the wasm playground builds
+# without it, and those modules then report a clean "not available here" error.
+default = ["native"]
+native = [
+    "dep:minifb", "dep:rusqlite", "dep:tiny_http", "dep:tinyfiledialogs",
+    "dep:ureq", "dep:libloading", "dep:rayon", "matrixmultiply/threading",
+]
+
 [dependencies]
+# portable everywhere (native and wasm)
 base64 = "0.22.1"
 chrono = "0.4.42"
 crc32fast = "1.4.2"
 font8x8 = "0.3"
 fontdue = "0.9.4"
-libloading = "0.8.6"
-matrixmultiply = { version = "0.3.9", features = ["threading"] }
-rayon = "1.10.0"
-minifb = "0.29"
+matrixmultiply = "0.3.9"
 regex = "1.11.1"
-rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde_json = "1.0.140"
 sha2 = "0.10.8"
-tiny_http = "0.12.0"
-tinyfiledialogs = "3.9.1"
-ureq = "2.12.1"
 uuid = { version = "1.11.0", features = ["v4"] }
 ttf-parser = "0.25.1"
+web-time = "1.1.0"
+# native-only, enabled by the `native` feature
+minifb = { version = "0.29", optional = true }
+rusqlite = { version = "0.32.1", features = ["bundled"], optional = true }
+tiny_http = { version = "0.12.0", optional = true }
+tinyfiledialogs = { version = "3.9.1", optional = true }
+ureq = { version = "2.12.1", optional = true }
+libloading = { version = "0.8.6", optional = true }
+rayon = { version = "1.10.0", optional = true }
+
+# wasm playground: the glue to call the interpreter from JavaScript
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.95"
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1.11.0", features = ["v4", "js"] }
+chrono = { version = "0.4.42", features = ["wasmbind"] }

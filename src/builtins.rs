@@ -3,7 +3,7 @@
 //! standard library. The checker reads their signatures here; the VM calls
 //! `Env::call`.
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::canvas::parse_color;
 use crate::dialogs;

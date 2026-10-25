@@ -1,7 +1,7 @@
 use std::process::Command;
 
 fn globw(args: &[&str]) -> (i32, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_globw")).args(args).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_gw")).args(args).output().unwrap();
     (
         out.status.code().unwrap(),
         String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
@@ -325,7 +325,7 @@ fn imports_resolve_from_globw_path() {
     std::fs::create_dir_all(&lib).unwrap();
     std::fs::write(dir.join("prog.gw"), "import tool\ntool.run()\n").unwrap();
     std::fs::write(lib.join("tool.gw"), "procedure run()\n    output(\"from GLOBW_PATH\")\nend procedure\n").unwrap();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_globw"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_gw"))
         .arg(dir.join("prog.gw"))
         .env("GLOBW_PATH", &lib)
         .output()

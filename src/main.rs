@@ -50,7 +50,7 @@ fn main() -> ExitCode {
         [flag, f] if flag == "--profile" => (false, true, f),
         _ => {
             eprintln!(
-                "Usage: globw program.gw\n       globw --check program.gw\n       globw --profile program.gw\n       globw add <url>   (download a .gw module into libs/)"
+                "Usage: gw program.gw\n       gw --check program.gw\n       gw --profile program.gw\n       gw add <url>   (download one .gw module into libs/)\n\nFor catalogue libraries use gwget, e.g. gwget install <name>."
             );
             return ExitCode::from(3);
         }

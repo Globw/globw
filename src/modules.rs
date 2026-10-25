@@ -61,6 +61,16 @@ impl Tables {
     }
 }
 
+/// The Globw home folder (default `~/.gw`), where `gwget` installs libraries.
+/// `GW_HOME` overrides it. Returns `None` when no home is known (e.g. on wasm).
+fn gw_home() -> Option<PathBuf> {
+    if let Some(h) = std::env::var_os("GW_HOME").filter(|h| !h.is_empty()) {
+        return Some(PathBuf::from(h));
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).filter(|h| !h.is_empty())?;
+    Some(PathBuf::from(home).join(".gw"))
+}
+
 /// Reads the main program and every module it imports, and merges them.
 /// The files come back in any case, so that errors can show their lines.
 pub fn load(main: SourceFile, dir: &Path) -> (Vec<SourceFile>, Result<Program, Vec<Error>>) {
@@ -87,22 +97,27 @@ pub fn load(main: SourceFile, dir: &Path) -> (Vec<SourceFile>, Result<Program, V
             }
             let file_name = format!("{}.gw", imp.module);
             // search: next to the importing file, the main program's folder, a
-            // "libs" folder there, then every directory on GLOBW_PATH (a minimal
-            // package path).
+            // "libs" folder there, the user-global ~/.gw/libs folder (where
+            // `gwget` installs), then every directory on GW_PATH / GLOBW_PATH.
             let mut candidates = vec![
                 modules[k].dir.join(&file_name),
                 dir.join(&file_name),
                 dir.join("libs").join(&file_name),
             ];
-            if let Some(path_var) = std::env::var_os("GLOBW_PATH") {
-                for d in std::env::split_paths(&path_var) {
-                    candidates.push(d.join(&file_name));
+            if let Some(home) = gw_home() {
+                candidates.push(home.join("libs").join(&file_name));
+            }
+            for var in ["GW_PATH", "GLOBW_PATH"] {
+                if let Some(path_var) = std::env::var_os(var) {
+                    for d in std::env::split_paths(&path_var) {
+                        candidates.push(d.join(&file_name));
+                    }
                 }
             }
             let Some(path) = candidates.iter().find(|p| p.is_file()).cloned() else {
                 let e = Error::new(imp.pos, format!("module \"{}\" not found", imp.module)).with_hint(format!(
-                    "put {} next to the program, in a \"libs\" folder there, or on GLOBW_PATH",
-                    file_name
+                    "put {} next to the program or in a \"libs\" folder, or install it with: gwget install {}",
+                    file_name, imp.module
                 ));
                 return (files, Err(vec![e]));
             };

@@ -15,9 +15,14 @@ pub mod classes;
 pub mod library;
 pub mod modules;
 pub mod parser;
+#[cfg(feature = "native")]
+pub mod pkg;
 pub mod render3d;
 pub mod tir;
 pub mod vm;
+
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
 use std::io::{BufRead, Write};
 

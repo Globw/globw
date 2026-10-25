@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
+#[cfg(feature = "native")]
 use rayon::prelude::*;
 use serde_json::Value as Json;
 
@@ -12,6 +13,42 @@ use crate::builtins::{Builtin, CheckError, Checked};
 use crate::tir::BaseType::{Bool, Int, Real, Str};
 use crate::tir::{fits, join, list_elem, list_of, resolve, BaseType, Type};
 use crate::vm::{display, format_real, missing_key, Dict, Key as DictKey, Value};
+
+// Messages for modules that need a desktop OS and are off in the wasm playground.
+#[cfg(not(feature = "native"))]
+const NET_OFF: &str = "networking is not available in the web playground";
+#[cfg(not(feature = "native"))]
+const DB_OFF: &str = "the database is not available in the web playground";
+#[cfg(not(feature = "native"))]
+const SERVE_OFF: &str = "the HTTP server is not available in the web playground";
+
+// Sequential stand-ins for the few rayon methods used below; the wasm build has
+// no threads, so `par_iter`/`into_par_iter` fall back to plain iterators.
+#[cfg(not(feature = "native"))]
+mod seq_par {
+    pub trait ParIter<'a> {
+        type Iter: Iterator;
+        fn par_iter(self) -> Self::Iter;
+    }
+    impl<'a, T: 'a> ParIter<'a> for &'a [T] {
+        type Iter = std::slice::Iter<'a, T>;
+        fn par_iter(self) -> Self::Iter {
+            self.iter()
+        }
+    }
+    pub trait IntoParIter {
+        type Iter: Iterator;
+        fn into_par_iter(self) -> Self::Iter;
+    }
+    impl IntoParIter for std::ops::Range<usize> {
+        type Iter = std::ops::Range<usize>;
+        fn into_par_iter(self) -> Self::Iter {
+            self
+        }
+    }
+}
+#[cfg(not(feature = "native"))]
+use seq_par::{IntoParIter, ParIter};
 
 // ---------------------------------------------------------------- types
 
@@ -547,6 +584,7 @@ fn list(items: Vec<Value>) -> Value {
 /// Fetches a web page over HTTP(S) and returns its body as text (the `web` module).
 /// Network, server and timeout problems become ordinary run-time errors, so the
 /// program can handle them with `try`/`catch`.
+#[cfg(feature = "native")]
 fn web_get(url: &str) -> Result<String, String> {
     let response = ureq::get(url)
         .timeout(std::time::Duration::from_secs(30))
@@ -558,7 +596,13 @@ fn web_get(url: &str) -> Result<String, String> {
     response.into_string().map_err(|e| format!("web.get: cannot read the reply: {}", e))
 }
 
+#[cfg(not(feature = "native"))]
+fn web_get(_url: &str) -> Result<String, String> {
+    Err(NET_OFF.to_string())
+}
+
 /// Turns a ureq error into a Globw run-time message for a `web.*` call.
+#[cfg(feature = "native")]
 fn web_error(ctx: &str, url: &str, e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(code, _) => format!("{}: the server answered with status {}", ctx, code),
@@ -596,6 +640,12 @@ thread_local! {
     static AI: RefCell<AiConfig> = RefCell::new(AiConfig::default());
 }
 
+#[cfg(not(feature = "native"))]
+fn ai_send(_cfg: &AiConfig, _messages: Vec<Json>) -> Result<String, String> {
+    Err(NET_OFF.to_string())
+}
+
+#[cfg(feature = "native")]
 fn ai_send(cfg: &AiConfig, messages: Vec<Json>) -> Result<String, String> {
     let url = format!("{}/chat/completions", cfg.endpoint.trim_end_matches('/'));
     let body = serde_json::json!({ "model": cfg.model, "messages": messages, "temperature": cfg.temperature });
@@ -1243,6 +1293,7 @@ fn g_backward(target: i64) -> Result<(), String> {
 
 /// Sends an HTTP request of any method, with an optional single request header and
 /// body, for the richer `net` module.
+#[cfg(feature = "native")]
 fn net_build(method: &str, url: &str, body: &str, header: Option<(&str, &str)>) -> Result<ureq::Response, ureq::Error> {
     let mut req = ureq::request(&method.to_uppercase(), url).timeout(std::time::Duration::from_secs(30));
     if let Some((name, value)) = header {
@@ -1864,17 +1915,20 @@ fn rel_lum(s: &str) -> Result<f64, String> {
 
 // ---- the "db" module (SQLite) ----
 
+#[cfg(feature = "native")]
 thread_local! {
     static DBS: RefCell<Vec<Option<rusqlite::Connection>>> = const { RefCell::new(Vec::new()) };
 }
 
 // ---- the "serve" module (HTTP server) ----
 
+#[cfg(feature = "native")]
 struct ServerState {
     server: tiny_http::Server,
     pending: Option<tiny_http::Request>,
 }
 
+#[cfg(feature = "native")]
 thread_local! {
     static SERVERS: RefCell<Vec<Option<ServerState>>> = const { RefCell::new(Vec::new()) };
 }
@@ -1885,6 +1939,7 @@ thread_local! {
     static PROCS: RefCell<Vec<Option<std::process::Child>>> = const { RefCell::new(Vec::new()) };
 }
 
+#[cfg(feature = "native")]
 fn db_with<T>(h: i64, f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>) -> Result<T, String> {
     DBS.with(|d| {
         let d = d.borrow();
@@ -1895,6 +1950,7 @@ fn db_with<T>(h: i64, f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>
     })
 }
 
+#[cfg(feature = "native")]
 fn sqlite_to_string(v: rusqlite::types::ValueRef) -> String {
     use rusqlite::types::ValueRef;
     match v {
@@ -1905,6 +1961,7 @@ fn sqlite_to_string(v: rusqlite::types::ValueRef) -> String {
     }
 }
 
+#[cfg(feature = "native")]
 fn sqlite_to_json(v: rusqlite::types::ValueRef) -> Json {
     use rusqlite::types::ValueRef;
     match v {
@@ -3440,9 +3497,11 @@ fn grid_zip(a: &Value, b: &Value, f: impl Fn(f64, f64) -> f64 + Sync + Send) -> 
 /// The optimized BLAS, loaded once at run time if one can be found. Globw uses
 /// it for `nungw.matmul` (as NumPy uses OpenBLAS); without it, a parallel pure-Rust
 /// kernel is used instead. Looked for via the `GLOBW_BLAS` path, then common names.
+#[cfg(feature = "native")]
 static BLAS: std::sync::OnceLock<Option<libloading::Library>> = std::sync::OnceLock::new();
 
 /// A row-major C = A*B (ILP64 cblas) as exported by OpenBLAS / scipy-openblas.
+#[cfg(feature = "native")]
 type CblasDgemm = unsafe extern "C" fn(
     i32, i32, i32, // layout, transA, transB
     i64, i64, i64, // M, N, K
@@ -3451,6 +3510,7 @@ type CblasDgemm = unsafe extern "C" fn(
     f64, *mut f64, i64, // beta, C, ldc
 );
 
+#[cfg(feature = "native")]
 fn blas_lib() -> Option<&'static libloading::Library> {
     BLAS.get_or_init(|| {
         let mut names: Vec<String> = Vec::new();
@@ -3472,6 +3532,7 @@ fn blas_lib() -> Option<&'static libloading::Library> {
 /// C (rows x cols, row-major) = A (rows x inner) * B (inner x cols). Uses the
 /// optimized BLAS if present, otherwise a cache-blocked parallel Rust kernel.
 fn matmul_into(out: &mut [f64], a: &[f64], b: &[f64], rows: usize, inner: usize, cols: usize) {
+    #[cfg(feature = "native")]
     if let Some(lib) = blas_lib() {
         // SAFETY: the ILP64 cblas signature matches; strides describe the row-major matrices.
         unsafe {
@@ -4227,17 +4288,22 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         GtqCellX | GtqCellY => Value::Real(real(&args[0]) + int(&args[1]) as f64 * real(&args[2])),
 
         // ======== module "net": rich HTTP client ========
+        #[cfg(not(feature = "native"))]
+        NetRequest | NetSend | NetStatus | NetHeader | NetOk => return Err(NET_OFF.to_string()),
+        #[cfg(feature = "native")]
         NetRequest => {
             let (m, u, b) = (text(&args[0]), text(&args[1]), text(&args[2]));
             let resp = net_build(m, u, b, None).map_err(|e| web_error("net.request", u, e))?;
             string(resp.into_string().map_err(|e| format!("net.request: cannot read the reply: {}", e))?)
         }
+        #[cfg(feature = "native")]
         NetSend => {
             let (m, u, b, hn, hv) =
                 (text(&args[0]), text(&args[1]), text(&args[2]), text(&args[3]), text(&args[4]));
             let resp = net_build(m, u, b, Some((hn, hv))).map_err(|e| web_error("net.send", u, e))?;
             string(resp.into_string().map_err(|e| format!("net.send: cannot read the reply: {}", e))?)
         }
+        #[cfg(feature = "native")]
         NetStatus => {
             let (m, u) = (text(&args[0]), text(&args[1]));
             match net_build(m, u, "", None) {
@@ -4246,11 +4312,13 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 Err(ureq::Error::Transport(t)) => return Err(format!("net.status: cannot reach \"{}\": {}", u, t)),
             }
         }
+        #[cfg(feature = "native")]
         NetHeader => {
             let (u, name) = (text(&args[0]), text(&args[1]));
             let resp = net_build("GET", u, "", None).map_err(|e| web_error("net.header", u, e))?;
             string(resp.header(name).unwrap_or("").to_string())
         }
+        #[cfg(feature = "native")]
         NetOk => {
             let u = text(&args[0]);
             match net_build("GET", u, "", None) {
@@ -7105,6 +7173,9 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         }
 
         // module "db" (SQLite)
+        #[cfg(not(feature = "native"))]
+        DbOpen | DbRun | DbValue | DbQuery | DbClose => return Err(DB_OFF.to_string()),
+        #[cfg(feature = "native")]
         DbOpen => {
             let conn = rusqlite::Connection::open(text(&args[0])).map_err(|e| format!("db.open: {}", e))?;
             Value::Int(DBS.with(|d| {
@@ -7113,10 +7184,12 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 (d.len() - 1) as i64
             }))
         }
+        #[cfg(feature = "native")]
         DbRun => {
             let n = db_with(int(&args[0]), |c| c.execute(text(&args[1]), []).map_err(|e| format!("db.run: {}", e)))?;
             Value::Int(n as i64)
         }
+        #[cfg(feature = "native")]
         DbValue => db_with(int(&args[0]), |c| {
             let mut stmt = c.prepare(text(&args[1])).map_err(|e| format!("db.value: {}", e))?;
             let mut rows = stmt.query([]).map_err(|e| format!("db.value: {}", e))?;
@@ -7125,6 +7198,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 None => Ok(string("")),
             }
         })?,
+        #[cfg(feature = "native")]
         DbQuery => db_with(int(&args[0]), |c| {
             let mut stmt = c.prepare(text(&args[1])).map_err(|e| format!("db.query: {}", e))?;
             let cols: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
@@ -7140,6 +7214,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
             Ok(string(serde_json::to_string(&Json::Array(arr)).unwrap_or_default()))
         })?,
+        #[cfg(feature = "native")]
         DbClose => {
             if let Ok(i) = usize::try_from(int(&args[0])) {
                 DBS.with(|d| {
@@ -7152,6 +7227,9 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         }
 
         // module "serve" (HTTP server)
+        #[cfg(not(feature = "native"))]
+        ServeStart | ServeWait | ServeReply | ServeStop => return Err(SERVE_OFF.to_string()),
+        #[cfg(feature = "native")]
         ServeStart => {
             let port = int(&args[0]);
             if !(1..=65535).contains(&port) {
@@ -7164,6 +7242,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 (s.len() - 1) as i64
             }))
         }
+        #[cfg(feature = "native")]
         ServeWait => {
             let json = SERVERS.with(|s| {
                 let mut s = s.borrow_mut();
@@ -7186,6 +7265,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             })?;
             string(json)
         }
+        #[cfg(feature = "native")]
         ServeReply => {
             SERVERS.with(|s| {
                 let mut s = s.borrow_mut();
@@ -7205,6 +7285,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             })?;
             Value::Null
         }
+        #[cfg(feature = "native")]
         ServeStop => {
             if let Ok(i) = usize::try_from(int(&args[0])) {
                 SERVERS.with(|s| {
@@ -8293,8 +8374,14 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
             Value::Real(g.par_iter().sum::<f64>() / g.len() as f64)
         }
+        #[cfg(feature = "native")]
         GridMax => Value::Real(floats(&args[0]).borrow().par_iter().cloned().reduce(|| f64::NEG_INFINITY, f64::max)),
+        #[cfg(not(feature = "native"))]
+        GridMax => Value::Real(floats(&args[0]).borrow().iter().cloned().fold(f64::NEG_INFINITY, f64::max)),
+        #[cfg(feature = "native")]
         GridMin => Value::Real(floats(&args[0]).borrow().par_iter().cloned().reduce(|| f64::INFINITY, f64::min)),
+        #[cfg(not(feature = "native"))]
+        GridMin => Value::Real(floats(&args[0]).borrow().iter().cloned().fold(f64::INFINITY, f64::min)),
         GridDot => {
             let (va, vb) = (floats(&args[0]).borrow(), floats(&args[1]).borrow());
             if va.len() != vb.len() {
@@ -8330,6 +8417,9 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         CounterItems => count_into(seq(&args[0]).borrow().iter().map(|v| text(v).to_string())),
         CounterChars => count_into(text(&args[0]).chars().map(|c| c.to_string())),
         CounterWords => count_into(text(&args[0]).split_whitespace().map(|w| w.to_string())),
+        #[cfg(not(feature = "native"))]
+        WebPost | WebStatus | WebDownload => return Err(NET_OFF.to_string()),
+        #[cfg(feature = "native")]
         WebPost => {
             let (url, body) = (text(&args[0]), text(&args[1]));
             let r = ureq::post(url)
@@ -8338,6 +8428,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 .map_err(|e| web_error("web.post", url, e))?;
             string(r.into_string().map_err(|e| format!("web.post: cannot read the reply: {}", e))?)
         }
+        #[cfg(feature = "native")]
         WebStatus => {
             let url = text(&args[0]);
             match ureq::get(url).timeout(std::time::Duration::from_secs(30)).call() {
@@ -8346,6 +8437,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 Err(ureq::Error::Transport(t)) => return Err(format!("web.status: cannot reach \"{}\": {}", url, t)),
             }
         }
+        #[cfg(feature = "native")]
         WebDownload => {
             let (url, path) = (text(&args[0]), text(&args[1]));
             let r = ureq::get(url).timeout(std::time::Duration::from_secs(30)).call().map_err(|e| web_error("web.download", url, e))?;

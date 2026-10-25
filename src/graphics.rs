@@ -1,12 +1,36 @@
 //! The graphics window: shows a `Canvas` and reads keyboard and mouse (crate minifb).
-
-pub use minifb::Key;
-use minifb::{MouseButton, MouseMode, Window, WindowOptions};
+//! Without the `native` feature (the wasm playground) there is no window, so
+//! `Graphics` is a stub whose `new` reports that graphics only run on the desktop.
 
 use crate::canvas::Canvas;
 use crate::render3d::Scene;
 
+#[cfg(not(feature = "native"))]
+pub struct Graphics {
+    pub canvas: Canvas,
+    pub scene: Scene,
+}
+
+#[cfg(not(feature = "native"))]
+impl Graphics {
+    pub fn new(_w: usize, _h: usize, _title: &str) -> Result<Graphics, String> {
+        Err("graphics only run on the desktop, not in the web playground".to_string())
+    }
+    pub fn is_open(&self) -> bool { false }
+    pub fn show(&mut self) {}
+    pub fn key(&self, _name: &str) -> Result<bool, String> { Ok(false) }
+    pub fn mouse(&self) -> (i64, i64) { (0, 0) }
+    pub fn click(&self) -> bool { false }
+    pub fn keep_open(&mut self) {}
+}
+
+#[cfg(feature = "native")]
+pub use minifb::Key;
+#[cfg(feature = "native")]
+use minifb::{MouseButton, MouseMode, Window, WindowOptions};
+
 /// The keys a key name stands for (SHIFT and CTRL have a left and a right key).
+#[cfg(feature = "native")]
 pub fn keys(name: &str) -> Option<Vec<Key>> {
     let upper = name.trim().to_uppercase();
     let one = |k| Some(vec![k]);
@@ -38,6 +62,7 @@ pub fn keys(name: &str) -> Option<Vec<Key>> {
     }
 }
 
+#[cfg(feature = "native")]
 pub struct Graphics {
     window: Window,
     pub canvas: Canvas,
@@ -45,6 +70,7 @@ pub struct Graphics {
     pub scene: Scene,
 }
 
+#[cfg(feature = "native")]
 impl Graphics {
     pub fn new(w: usize, h: usize, title: &str) -> Result<Graphics, String> {
         let mut window = Window::new(title, w, h, WindowOptions::default())
@@ -87,7 +113,7 @@ impl Graphics {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests {
     use super::*;
 
