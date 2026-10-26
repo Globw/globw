@@ -1229,7 +1229,3 @@ globw --check program.gw
 - **Examples**: the `examples/` folder holds pairs of `name.gw` + `name.expected` (expected output) and, where needed, `name.input`. One test runs them all and compares the output. Examples that *must* fail are included too, with their expected error text.
 - **Benchmarks**: recursive Fibonacci (fib 30), sieve of Eratosthenes (up to 10 million) and a sum loop (100 million iterations), compared with the same programs in Python.
   **Target**: at least 5 times faster than CPython on all three.
-
-## 10. Out of scope for v1
-
-Packages (modules in subfolders), records/structs, sets, sound, more than one window, editor syntax highlighting, interactive REPL, JIT compilation.
