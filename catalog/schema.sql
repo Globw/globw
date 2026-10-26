@@ -74,11 +74,13 @@ $$;
 -- What readers may see: non-blocked rows, safe columns only. The view runs as
 -- the CALLER (security_invoker), so it respects the base table's RLS below
 -- instead of the view creator's elevated rights (Supabase advisor-clean).
+-- No WHERE here: the base table's RLS policy (below) restricts anon to
+-- non-blocked rows, and the view must not read the `blocked` column itself
+-- (anon has no grant on it under security_invoker).
 create or replace view public.libraries_public
   with (security_invoker = true) as
   select name, version, description, author, files, updated_at
-  from public.libraries
-  where blocked = false;
+  from public.libraries;
 
 -- Base table: RLS on. The public (anon) key may read ONLY non-blocked rows and
 -- ONLY the safe columns (never edit_token_hash / blocked / files_hash), and can
