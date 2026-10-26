@@ -71,15 +71,25 @@ begin
 end;
 $$;
 
--- What readers are allowed to see: non-blocked rows, without the token hash.
-create or replace view public.libraries_public as
+-- What readers may see: non-blocked rows, safe columns only. The view runs as
+-- the CALLER (security_invoker), so it respects the base table's RLS below
+-- instead of the view creator's elevated rights (Supabase advisor-clean).
+create or replace view public.libraries_public
+  with (security_invoker = true) as
   select name, version, description, author, files, updated_at
   from public.libraries
   where blocked = false;
 
--- Lock the table itself: the public (anon) key cannot touch it directly.
+-- Base table: RLS on. The public (anon) key may read ONLY non-blocked rows and
+-- ONLY the safe columns (never edit_token_hash / blocked / files_hash), and can
+-- never insert/update/delete directly -- that only goes through publish_library.
 alter table public.libraries enable row level security;
 revoke all on public.libraries from anon, authenticated;
+drop policy if exists libraries_read_public on public.libraries;
+create policy libraries_read_public on public.libraries
+  for select to anon, authenticated using (blocked = false);
+grant select (name, version, description, author, files, updated_at)
+  on public.libraries to anon, authenticated;
 
 -- Publish or update a library in one step, checking the edit token server-side.
 create or replace function public.publish_library(
