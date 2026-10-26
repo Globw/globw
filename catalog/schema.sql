@@ -91,6 +91,9 @@ begin
   if coalesce(length(p_token), 0) < 8 then
     raise exception 'missing edit token';
   end if;
+  if length(coalesce(p_version, '')) = 0 or length(p_version) > 30 then
+    raise exception 'the version must be 1 to 30 characters';
+  end if;
   -- size limits: keep metadata short and the payload small (anti-DoS / abuse)
   if length(coalesce(p_description, '')) > 300 then
     raise exception 'the description is too long (max 300 characters)';
@@ -112,8 +115,9 @@ begin
     raise exception 'file names must be lower-case letters, digits, _ or -, ending in .gw';
   end if;
   -- anti-spam: reject links, promotions and offensive text in the metadata
-  if public.gw_blocked_text(p_name) or public.gw_blocked_text(p_description) or public.gw_blocked_text(p_author) then
-    raise exception 'rejected: the name, description or author looks like spam, a link or offensive content';
+  if public.gw_blocked_text(p_name) or public.gw_blocked_text(p_version)
+     or public.gw_blocked_text(p_description) or public.gw_blocked_text(p_author) then
+    raise exception 'rejected: the metadata looks like spam, a link or offensive content';
   end if;
 
   v_hash := public.gw_files_hash(p_files);
