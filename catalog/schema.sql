@@ -38,7 +38,7 @@ create or replace function public.publish_library(
 ) returns text
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare existing text;
 begin
