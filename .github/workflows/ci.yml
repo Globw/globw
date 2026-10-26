@@ -1,7 +1,8 @@
 name: ci
 
 # Builds and tests Globw on Windows, Linux and macOS. On a version tag
-# (e.g. v0.1.0) it also uploads the compiled binary for each platform.
+# (e.g. v0.1.0) it also packages the `gw` and `gwget` binaries for each
+# platform and publishes them as assets on a GitHub Release.
 
 on:
   push:
@@ -10,6 +11,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to create the release and upload assets
+
 jobs:
   build:
     name: ${{ matrix.os }}
@@ -17,7 +21,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            asset: globw-linux-x86_64.tar.gz
+          - os: macos-latest
+            asset: globw-macos-aarch64.tar.gz
+          - os: windows-latest
+            asset: globw-windows-x86_64.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -44,16 +54,32 @@ jobs:
           key: ${{ matrix.os }}-cargo-${{ hashFiles('Cargo.lock') }}
 
       - name: Build (release)
-        run: cargo build --release
+        run: cargo build --release --bins
 
       - name: Test
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: cargo test --release
 
-      - name: Upload binary
+      # Package the two binaries into one per-OS archive with a stable name,
+      # so the website can link to releases/latest/download/<asset>.
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: tar -C target/release -czf "${{ matrix.asset }}" gw gwget
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path target/release/gw.exe, target/release/gwget.exe -DestinationPath "${{ matrix.asset }}"
+        shell: pwsh
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: globw-${{ matrix.os }}
-          path: |
-            target/release/globw
-            target/release/globw.exe
-          if-no-files-found: ignore
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+      - name: Publish to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
+          fail_on_unmatched_files: true
