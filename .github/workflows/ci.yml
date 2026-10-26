@@ -57,9 +57,11 @@ jobs:
       - name: Build (release)
         run: cargo build --release --bins
 
+      # Dev profile (panic=unwind): release sets panic=abort, which clashes with
+      # the test harness's unwinding when building the integration tests.
       - name: Test
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: cargo test --release
+        run: cargo test
 
       # Package the two binaries into one per-OS archive with a stable name,
       # so the website can link to releases/latest/download/<asset>.
