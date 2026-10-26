@@ -91,6 +91,26 @@ begin
   if coalesce(length(p_token), 0) < 8 then
     raise exception 'missing edit token';
   end if;
+  -- size limits: keep metadata short and the payload small (anti-DoS / abuse)
+  if length(coalesce(p_description, '')) > 300 then
+    raise exception 'the description is too long (max 300 characters)';
+  end if;
+  if length(coalesce(p_author, '')) > 60 then
+    raise exception 'the author is too long (max 60 characters)';
+  end if;
+  if octet_length(p_files::text) > 262144 then
+    raise exception 'the library is too large (max 256 KB)';
+  end if;
+  if (select count(*) from jsonb_object_keys(p_files)) > 20 then
+    raise exception 'too many files (max 20)';
+  end if;
+  -- the entry module must be present, and every file must be a safe <name>.gw
+  if not (p_files ? (p_name || '.gw')) then
+    raise exception 'the library must contain %.gw (its entry module)', p_name;
+  end if;
+  if exists (select 1 from jsonb_object_keys(p_files) as t(k) where t.k !~ '^[a-z0-9_-]+\.gw$') then
+    raise exception 'file names must be lower-case letters, digits, _ or -, ending in .gw';
+  end if;
   -- anti-spam: reject links, promotions and offensive text in the metadata
   if public.gw_blocked_text(p_name) or public.gw_blocked_text(p_description) or public.gw_blocked_text(p_author) then
     raise exception 'rejected: the name, description or author looks like spam, a link or offensive content';
@@ -123,3 +143,9 @@ $$;
 -- The public key may read the safe view and call publish; nothing else.
 grant select on public.libraries_public to anon, authenticated;
 grant execute on function public.publish_library(text, text, text, text, jsonb, text) to anon, authenticated;
+
+-- Postgres grants EXECUTE on new functions to PUBLIC by default. Take it back
+-- from the internal helpers: only publish_library (security definer) needs
+-- them, and it calls them as its owner, so this does not break publishing.
+revoke execute on function public.gw_files_hash(jsonb) from public, anon, authenticated;
+revoke execute on function public.gw_blocked_text(text) from public, anon, authenticated;
