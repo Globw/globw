@@ -41,7 +41,8 @@ fn read_resp(resp: Result<ureq::Response, ureq::Error>) -> Result<String, String
         Ok(r) => r.into_string().map_err(|e| format!("cannot read the reply: {}", e)),
         Err(ureq::Error::Status(code, r)) => {
             let body = r.into_string().unwrap_or_default();
-            Err(format!("the catalogue refused the request ({}): {}", code, body.trim()))
+            let msg = pkg::supabase_error(&body).unwrap_or_else(|| body.trim().to_string());
+            Err(format!("the catalogue refused the request ({}): {}", code, msg))
         }
         Err(e) => Err(format!("cannot reach the catalogue: {}", e)),
     }

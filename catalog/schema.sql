@@ -15,11 +15,49 @@ create table if not exists public.libraries (
   description     text not null default '',
   author          text not null default 'anonymous',
   files           jsonb not null,            -- { "<name>.gw": "code", ... }
+  files_hash      text,                      -- sha256 of files, to reject copies
   edit_token_hash text not null,             -- sha256 hex of the author's token
   blocked         boolean not null default false,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now()
 );
+
+-- for catalogues created before the anti-copy check existed
+alter table public.libraries add column if not exists files_hash text;
+
+-- A hash of a library's file CONTENTS (sorted, names ignored), so a copy
+-- republished under a different name still hashes the same.
+create or replace function public.gw_files_hash(p_files jsonb) returns text
+language sql immutable
+set search_path = public, extensions
+as $$
+  select encode(digest(coalesce(string_agg(value, chr(10) order by value), ''), 'sha256'), 'hex')
+  from jsonb_each_text(p_files);
+$$;
+
+update public.libraries set files_hash = public.gw_files_hash(files);
+
+-- True when a name / description / author looks like spam, links or offensive
+-- text. The maintainer's block button is the backstop; this stops the obvious.
+create or replace function public.gw_blocked_text(txt text) returns boolean
+language plpgsql immutable
+as $$
+declare
+  t  text := lower(coalesce(txt, ''));
+  sq text := regexp_replace(lower(coalesce(txt, '')), '[^a-z0-9]', '', 'g');
+begin
+  if t ~ '(https?://|www\.|\.com|\.net|\.io|\.xyz|t\.me|@[a-z0-9_]{3,}|telegram|whatsapp|casino|crypto|bitcoin|viagra|buy now|click here|free money|\y(promo|sponsor|discount|coupon)\y)' then
+    return true;
+  end if;
+  if t ~ '\y(fuck|shit|bitch|asshole|cunt|pussy|bastard|slut|whore|nigger|nigga|faggot|retard|chink|spic|kike|tranny|cazzo|merda|stronzo|troia|puttana|vaffanculo|coglione|negro|frocio|terrone)\y' then
+    return true;
+  end if;
+  if sq ~ '(porn|nigger|faggot|rape)' then
+    return true;
+  end if;
+  return false;
+end;
+$$;
 
 -- What readers are allowed to see: non-blocked rows, without the token hash.
 create or replace view public.libraries_public as
@@ -40,7 +78,9 @@ language plpgsql
 security definer
 set search_path = public, extensions
 as $$
-declare existing text;
+declare
+  existing text;
+  v_hash   text;
 begin
   if p_name !~ '^[a-z][a-z0-9_]{0,39}$' then
     raise exception 'invalid library name "%": lower-case letters, digits and _ only', p_name;
@@ -51,17 +91,27 @@ begin
   if coalesce(length(p_token), 0) < 8 then
     raise exception 'missing edit token';
   end if;
+  -- anti-spam: reject links, promotions and offensive text in the metadata
+  if public.gw_blocked_text(p_name) or public.gw_blocked_text(p_description) or public.gw_blocked_text(p_author) then
+    raise exception 'rejected: the name, description or author looks like spam, a link or offensive content';
+  end if;
+
+  v_hash := public.gw_files_hash(p_files);
+  -- anti-copy: the same code already published under a different name
+  if exists (select 1 from public.libraries where files_hash = v_hash and name <> p_name) then
+    raise exception 'rejected: this is a copy of an existing library (identical code)';
+  end if;
 
   select edit_token_hash into existing from public.libraries where name = p_name;
   if existing is null then
-    insert into public.libraries(name, version, description, author, files, edit_token_hash)
+    insert into public.libraries(name, version, description, author, files, files_hash, edit_token_hash)
     values (p_name, p_version, coalesce(p_description, ''), coalesce(p_author, 'anonymous'),
-            p_files, encode(digest(p_token, 'sha256'), 'hex'));
+            p_files, v_hash, encode(digest(p_token, 'sha256'), 'hex'));
     return 'published';
   elsif existing = encode(digest(p_token, 'sha256'), 'hex') then
     update public.libraries
        set version = p_version, description = coalesce(p_description, ''),
-           author = coalesce(p_author, 'anonymous'), files = p_files, updated_at = now()
+           author = coalesce(p_author, 'anonymous'), files = p_files, files_hash = v_hash, updated_at = now()
      where name = p_name;
     return 'updated';
   else

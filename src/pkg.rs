@@ -308,6 +308,21 @@ pub fn new_token() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+/// Extracts a readable message from a PostgREST/Supabase error body, so the
+/// catalogue's own rejection text (spam, copy, wrong token) is shown plainly
+/// instead of raw JSON.
+pub fn supabase_error(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let msg = v.get("message").and_then(Value::as_str)?.trim();
+    if msg.is_empty() {
+        return None;
+    }
+    match v.get("hint").and_then(Value::as_str) {
+        Some(h) if !h.trim().is_empty() => Some(format!("{} ({})", msg, h.trim())),
+        _ => Some(msg.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,5 +410,19 @@ mod tests {
         let t = new_token();
         assert_eq!(t.len(), 32);
         assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn reads_supabase_error() {
+        assert_eq!(
+            supabase_error(r#"{"message":"rejected: spam","hint":null,"details":null}"#).as_deref(),
+            Some("rejected: spam")
+        );
+        assert_eq!(
+            supabase_error(r#"{"message":"bad name","hint":"use lower-case"}"#).as_deref(),
+            Some("bad name (use lower-case)")
+        );
+        assert_eq!(supabase_error("not json"), None);
+        assert_eq!(supabase_error(r#"{"code":"x"}"#), None);
     }
 }
