@@ -138,7 +138,12 @@ fn do_search(home: &Path, q: &str) -> Result<(), String> {
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let home = gw_home().ok_or("cannot find your home folder; set GW_HOME to choose where libraries go")?;
-    match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+    let a: Vec<&str> = args.iter().map(String::as_str).collect();
+    match a.as_slice() {
+        [] | ["help"] | ["-h"] | ["--help"] => {
+            println!("{}", help());
+            Ok(())
+        }
         ["publish"] => do_publish(&home, "."),
         ["publish", dir] => do_publish(&home, dir),
         ["install", name] | ["add", name] => do_install(&home, name),
@@ -163,23 +168,32 @@ fn run() -> Result<(), String> {
             println!("{}", pkg::libs_dir(&home).display());
             Ok(())
         }
-        _ => Err(usage()),
+        _ => Err(format!("unknown command \"{}\". Run \"gwget help\".", a.join(" "))),
     }
 }
 
-fn usage() -> String {
+fn help() -> String {
     concat!(
         "Usage:\n",
-        "  gwget install <name>   install a library from the catalogue into ~/.gw/libs\n",
-        "  gwget search <text>    search the catalogue\n",
-        "  gwget publish [dir]    publish the library in <dir> (default: here)\n",
-        "  gwget remove  <name>   uninstall a library from this machine\n",
-        "  gwget list             list installed libraries\n",
-        "  gwget where            print the libraries folder\n",
+        "  gwget <command> [arguments]\n",
         "\n",
-        "Publishing reads gw.json (name, version, description, author) plus the\n",
-        ".gw files in the folder, and prints a one-time edit token for later updates.\n",
-        "Connection: GWGET_SUPABASE_URL/KEY or ~/.gw/config.json; GW_HOME moves ~/.gw."
+        "Commands:\n",
+        "  install <name>    Install a library from the catalogue into ~/.gw/libs.\n",
+        "  search <text>     Search the catalogue by name or description.\n",
+        "  publish [dir]     Publish the library in <dir> (default: the current folder).\n",
+        "  remove <name>     Uninstall a library from this machine.\n",
+        "  list              List the libraries installed here.\n",
+        "  where             Print the libraries folder.\n",
+        "  help              Show this help.\n",
+        "\n",
+        "Publishing:\n",
+        "  Reads gw.json (name, version, description, author) and the .gw files in the\n",
+        "  folder. A library goes online at once; the first publish prints a one-time\n",
+        "  edit token, which you need to update it later.\n",
+        "\n",
+        "Configuration:\n",
+        "  GWGET_SUPABASE_URL and GWGET_SUPABASE_KEY, or ~/.gw/config.json.\n",
+        "  GW_HOME moves the ~/.gw folder."
     )
     .to_string()
 }
