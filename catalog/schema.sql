@@ -37,6 +37,18 @@ $$;
 
 update public.libraries set files_hash = public.gw_files_hash(files);
 
+-- Rate-limit log: one row per publish attempt, keyed by a HASH of the client
+-- IP (no raw IPs stored). Only publish_library (security definer) writes it.
+create table if not exists public.publish_log (
+  id      bigint generated always as identity primary key,
+  ip_hash text not null,
+  name    text,
+  at      timestamptz not null default now()
+);
+create index if not exists publish_log_ip_at on public.publish_log(ip_hash, at);
+alter table public.publish_log enable row level security;
+revoke all on public.publish_log from anon, authenticated;
+
 -- True when a name / description / author looks like spam, links or offensive
 -- text. The maintainer's block button is the backstop; this stops the obvious.
 create or replace function public.gw_blocked_text(txt text) returns boolean
@@ -81,7 +93,26 @@ as $$
 declare
   existing text;
   v_hash   text;
+  v_hdrs   json;
+  v_ip     text;
+  v_iph    text;
 begin
+  -- rate limiting by client IP (hashed; best-effort anti-flood). Counts every
+  -- attempt, so spam and wrong-token hammering are throttled too.
+  v_hdrs := nullif(current_setting('request.headers', true), '')::json;
+  v_ip := coalesce(v_hdrs ->> 'cf-connecting-ip', v_hdrs ->> 'x-real-ip',
+                   nullif(split_part(coalesce(v_hdrs ->> 'x-forwarded-for', ''), ',', 1), ''),
+                   'unknown');
+  v_iph := encode(digest(v_ip, 'sha256'), 'hex');
+  delete from public.publish_log where at < now() - interval '1 day';
+  if (select count(*) from public.publish_log where ip_hash = v_iph and at > now() - interval '1 minute') >= 5 then
+    raise exception 'too many publishes, slow down (max 5 per minute)';
+  end if;
+  if (select count(*) from public.publish_log where ip_hash = v_iph and at > now() - interval '1 hour') >= 30 then
+    raise exception 'too many publishes, try again later (max 30 per hour)';
+  end if;
+  insert into public.publish_log(ip_hash, name) values (v_iph, p_name);
+
   if p_name !~ '^[a-z][a-z0-9_]{0,39}$' then
     raise exception 'invalid library name "%": lower-case letters, digits and _ only', p_name;
   end if;
