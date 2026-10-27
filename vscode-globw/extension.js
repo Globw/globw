@@ -6,7 +6,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { parseErrors } = require('./parse');
 
-const EXE = process.platform === 'win32' ? 'globw.exe' : 'globw';
+const EXE = process.platform === 'win32' ? 'gw.exe' : 'gw';
 
 function globwPath() {
     const configured = vscode.workspace.getConfiguration('globw').get('path');
@@ -34,7 +34,7 @@ function check(doc, diagnostics) {
     if (doc.languageId !== 'globw' || doc.uri.scheme !== 'file') return;
     execFile(globwPath(), ['--check', doc.fileName], { windowsHide: true }, (err, _stdout, stderr) => {
         if (err && err.code === 'ENOENT') {
-            vscode.window.showErrorMessage('Globw: the globw executable was not found. Set "globw.path" in the settings.');
+            vscode.window.showErrorMessage('Globw: the gw executable was not found. Set "globw.path" in the settings, or add gw to your PATH.');
             return;
         }
         // errors of this file, and of the modules it imports (shown in their own file

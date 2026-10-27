@@ -3,8 +3,13 @@
   "displayName": "Globw",
   "description": "Syntax colors, run button and live errors for the Globw language (.gw)",
   "version": "1.44.0",
+  "license": "Apache-2.0",
   "icon": "images/icon.png",
   "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Globw/globw.git"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -70,7 +75,7 @@
         "globw.path": {
           "type": "string",
           "default": "",
-          "description": "Path to globw.exe. Empty: use the build in C:\\Users\\Utente\\globw, or `globw` from PATH."
+          "description": "Path to the gw executable. Empty: use target/release/gw in the workspace, or `gw` from PATH."
         }
       }
     }
