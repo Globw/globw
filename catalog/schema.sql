@@ -196,3 +196,52 @@ grant execute on function public.publish_library(text, text, text, text, jsonb, 
 -- them, and it calls them as its owner, so this does not break publishing.
 revoke execute on function public.gw_files_hash(jsonb) from public, anon, authenticated;
 revoke execute on function public.gw_blocked_text(text) from public, anon, authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- Ideas box: write-only. Anyone may submit an idea; only the maintainer reads
+-- them (from the Supabase dashboard). The table is never readable by the anon
+-- or authenticated roles; submission goes through submit_idea.
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.ideas (
+  id      bigint generated always as identity primary key,
+  text    text not null,
+  ip_hash text,
+  at      timestamptz not null default now()
+);
+alter table public.ideas enable row level security;
+revoke all on public.ideas from anon, authenticated;
+
+create or replace function public.submit_idea(p_text text) returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_hdrs json;
+  v_ip   text;
+  v_iph  text;
+begin
+  if p_text is null or length(btrim(p_text)) = 0 then
+    raise exception 'the idea is empty';
+  end if;
+  if length(p_text) > 5000 then
+    raise exception 'the idea is too long (max 5000 characters)';
+  end if;
+  if public.gw_blocked_text(p_text) then
+    raise exception 'rejected: please keep it respectful (no spam, links or offensive text)';
+  end if;
+  v_hdrs := nullif(current_setting('request.headers', true), '')::json;
+  v_ip := coalesce(v_hdrs ->> 'cf-connecting-ip', v_hdrs ->> 'x-real-ip',
+                   nullif(split_part(coalesce(v_hdrs ->> 'x-forwarded-for', ''), ',', 1), ''),
+                   'unknown');
+  v_iph := encode(digest(v_ip, 'sha256'), 'hex');
+  if (select count(*) from public.ideas where ip_hash = v_iph and at > now() - interval '1 hour') >= 10 then
+    raise exception 'too many ideas, try again later';
+  end if;
+  insert into public.ideas(text, ip_hash) values (p_text, v_iph);
+end;
+$$;
+
+grant execute on function public.submit_idea(text) to anon, authenticated;
