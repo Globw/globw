@@ -1,0 +1,11 @@
+' example: a template library.
+' Rename this file to <name>.gw (matching "name" in gw.json), write your own
+' functions, then run `gwget publish` from inside this folder.
+
+function greeting(name as string) as string
+    return "Hello, " + name + "!"
+end function
+
+function squared(n as int) as int
+    return n * n
+end function
