@@ -14,6 +14,12 @@ use std::process::ExitCode;
 
 use globw::pkg;
 
+/// The official catalogue, baked in so `gwget` works out of the box. The
+/// publishable key is public by design (Row Level Security protects the data);
+/// GWGET_SUPABASE_URL/KEY or ~/.gw/config.json override these.
+const DEFAULT_SUPABASE_URL: &str = "https://rvfoihgzfpcxiemyvljl.supabase.co";
+const DEFAULT_SUPABASE_KEY: &str = "sb_publishable_bJN4_EWOPQ7AlR7bYL5nfQ_XTUTEzNr";
+
 /// The Globw home folder (default `~/.gw`), overridable with GW_HOME.
 fn gw_home() -> Option<PathBuf> {
     if let Some(h) = std::env::var_os("GW_HOME").filter(|h| !h.is_empty()) {
@@ -72,14 +78,11 @@ fn sb_rpc(cfg: &pkg::Config, func: &str, body: serde_json::Value) -> Result<Stri
 }
 
 fn config(home: &Path) -> Result<pkg::Config, String> {
-    pkg::load_config(home).ok_or_else(|| {
-        format!(
-            "the catalogue is not set up yet. Either set GWGET_SUPABASE_URL and GWGET_SUPABASE_KEY, \
-             or create {} with:\n  {{\n    \"supabase_url\": \"https://<project>.supabase.co\",\n    \
-             \"supabase_anon_key\": \"<the public anon key>\"\n  }}",
-            home.join("config.json").display()
-        )
-    })
+    // env / ~/.gw/config.json override; otherwise the built-in official catalogue
+    Ok(pkg::load_config(home).unwrap_or_else(|| pkg::Config {
+        url: DEFAULT_SUPABASE_URL.to_string(),
+        key: DEFAULT_SUPABASE_KEY.to_string(),
+    }))
 }
 
 fn do_publish(home: &Path, dir: &str) -> Result<(), String> {

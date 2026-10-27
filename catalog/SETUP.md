@@ -16,9 +16,11 @@ blocking or deleting rows from the Supabase dashboard.
    - **anon public** key — a long token. It is *meant* to be public: it only
      allows reading the safe view and calling publish, nothing else.
 
-## 2. Point `gwget` at the catalogue
+## 2. Point `gwget` at a catalogue (optional)
 
-Either set two environment variables:
+`gwget` already ships pointed at the official catalogue, so it works out of the
+box. Override it only to use a *different* catalogue (e.g. your own project):
+either set two environment variables:
 
 ```
 GWGET_SUPABASE_URL = https://<project>.supabase.co
