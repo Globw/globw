@@ -487,6 +487,10 @@ pub enum Builtin {
     GridShape, GridNdim, GridReshape,
     // reductions along one axis, and N-d element access
     GridSumAxis, GridMeanAxis, GridMaxAxis, GridMinAxis, GridProdAxis, GridAt,
+    // random, identity, scans, sorting, clip, concatenate, select
+    GridRand, GridRandn, GridEye,
+    GridCumsum, GridCumprod, GridSort, GridArgsort,
+    GridClip, GridConcat, GridWhere,
     // module "counter" (tallies)
     CounterItems,
     CounterChars,
@@ -1533,6 +1537,16 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GridMinAxis, "nungw.min_axis", Sig::Flexible { function: true }),
     (GridProdAxis, "nungw.prod_axis", Sig::Flexible { function: true }),
     (GridAt, "nungw.at", Sig::Flexible { function: true }),
+    (GridRand, "nungw.rand", Sig::Flexible { function: true }),
+    (GridRandn, "nungw.randn", Sig::Flexible { function: true }),
+    (GridEye, "nungw.eye", Sig::Flexible { function: true }),
+    (GridCumsum, "nungw.cumsum", Sig::Flexible { function: true }),
+    (GridCumprod, "nungw.cumprod", Sig::Flexible { function: true }),
+    (GridSort, "nungw.sort", Sig::Flexible { function: true }),
+    (GridArgsort, "nungw.argsort", Sig::Flexible { function: true }),
+    (GridClip, "nungw.clip", Sig::Flexible { function: true }),
+    (GridConcat, "nungw.concat", Sig::Flexible { function: true }),
+    (GridWhere, "nungw.where", Sig::Flexible { function: true }),
     (CounterItems, "counter.items", Sig::Flexible { function: true }),
     (CounterChars, "counter.chars", Sig::Flexible { function: true }),
     (CounterWords, "counter.words", Sig::Flexible { function: true }),

@@ -289,7 +289,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => other(format!("{} works with an array or list of numbers", b.name())),
             }
         }
-        GridRange | GridZeros => {
+        GridRange | GridZeros | GridRand | GridRandn | GridEye => {
             arity(1)?;
             if a[0] != Type::Base(Int) {
                 return Err(CheckError::Arg { index: 0, expected: Type::Base(Int) });
@@ -358,7 +358,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             ok(none(1), Type::List(Some(Real)))
         }
         GridAdd | GridSub | GridMul | GridDiv | GridDot
-        | GridPow | GridAtan2 | GridHypot | GridMod | GridMaximum | GridMinimum => {
+        | GridPow | GridAtan2 | GridHypot | GridMod | GridMaximum | GridMinimum | GridConcat => {
             arity(2)?;
             for (index, t) in a.iter().enumerate() {
                 if *t != Type::Grid {
@@ -384,7 +384,8 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
         | GridSinh | GridCosh | GridTanh | GridAsinh | GridAcosh | GridAtanh
         | GridFloor | GridCeil | GridRound | GridTrunc
         | GridSign | GridCbrt | GridRecip | GridNeg | GridDegrees | GridRadians
-        | GridFft | GridIfft | GridCabs => {
+        | GridFft | GridIfft | GridCabs
+        | GridCumsum | GridCumprod | GridSort | GridArgsort => {
             arity(1)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -598,6 +599,27 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 }
             }
             ok(none(a.len()), Type::Base(Real))
+        }
+        GridClip => {
+            arity(3)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            for index in [1usize, 2] {
+                if a[index].base().map_or(true, |t| !numeric(t)) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Real) });
+                }
+            }
+            ok(vec![None, Some(Real), Some(Real)], Type::Grid)
+        }
+        GridWhere => {
+            arity(3)?;
+            for index in 0..3 {
+                if a[index] != Type::Grid {
+                    return Err(CheckError::Arg { index, expected: Type::Grid });
+                }
+            }
+            ok(none(3), Type::Grid)
         }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
@@ -8973,6 +8995,85 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 off += (i as usize - 1) * strides[d];
             }
             Value::Real(floats(&args[0]).borrow()[off])
+        }
+        GridRand => {
+            let n = int(&args[0]).max(0) as usize;
+            grid_val((0..n).map(|_| (rng_u64() >> 11) as f64 / (1u64 << 53) as f64).collect())
+        }
+        GridRandn => {
+            let n = int(&args[0]).max(0) as usize;
+            let unif = || ((rng_u64() >> 11) as f64 / (1u64 << 53) as f64).max(1e-300);
+            let mut out = Vec::with_capacity(n);
+            let mut i = 0;
+            while i < n {
+                // Box-Muller: two independent standard normals per pair of uniforms
+                let r = (-2.0 * unif().ln()).sqrt();
+                let (s, c) = (std::f64::consts::TAU * unif()).sin_cos();
+                out.push(r * c);
+                if i + 1 < n {
+                    out.push(r * s);
+                }
+                i += 2;
+            }
+            grid_val(out)
+        }
+        GridEye => {
+            let n = int(&args[0]).max(0) as usize;
+            let mut out = vec![0.0; n * n];
+            for i in 0..n {
+                out[i * n + i] = 1.0;
+            }
+            grid_val_shaped(out, vec![n, n])
+        }
+        GridCumsum => {
+            let v = floats(&args[0]).borrow();
+            let mut out = Vec::with_capacity(v.len());
+            let mut acc = 0.0;
+            for &x in v.iter() {
+                acc += x;
+                out.push(acc);
+            }
+            grid_val(out)
+        }
+        GridCumprod => {
+            let v = floats(&args[0]).borrow();
+            let mut out = Vec::with_capacity(v.len());
+            let mut acc = 1.0;
+            for &x in v.iter() {
+                acc *= x;
+                out.push(acc);
+            }
+            grid_val(out)
+        }
+        GridSort => {
+            let mut out = floats(&args[0]).borrow().to_vec();
+            out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            grid_val(out)
+        }
+        GridArgsort => {
+            let v = floats(&args[0]).borrow();
+            let mut idx: Vec<usize> = (0..v.len()).collect();
+            idx.sort_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap_or(Ordering::Equal));
+            grid_val(idx.iter().map(|&i| (i + 1) as f64).collect())
+        }
+        GridClip => {
+            let lo = real(&args[1]);
+            let hi = real(&args[2]);
+            grid_map(&args[0], move |x| x.max(lo).min(hi))
+        }
+        GridConcat => {
+            let mut out = floats(&args[0]).borrow().to_vec();
+            out.extend_from_slice(&floats(&args[1]).borrow());
+            grid_val(out)
+        }
+        GridWhere => {
+            let (c, a1, b1) =
+                (floats(&args[0]).borrow(), floats(&args[1]).borrow(), floats(&args[2]).borrow());
+            if c.len() != a1.len() || c.len() != b1.len() {
+                return Err(format!("nungw.where: the sizes differ ({}, {}, {})", c.len(), a1.len(), b1.len()));
+            }
+            let data: Vec<f64> = (0..c.len()).map(|i| if c[i] != 0.0 { a1[i] } else { b1[i] }).collect();
+            grid_val_shaped(data, (*shape_of(&args[0])).clone())
         }
         GridEval => grid_eval(&args[0], &args[1..])?,
         GridMatmul => {

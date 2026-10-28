@@ -695,6 +695,9 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.shape(g)`, `nungw.ndim(g)`, `nungw.reshape(g, [dims])` | a nungw is N-dimensional: read its shape, its number of dimensions, or give it a new shape |
 | `nungw.at(g, i, j, ...)` | read one element by N-dimensional index (1-based) |
 | `nungw.sum_axis / mean_axis / max_axis / min_axis / prod_axis(g, axis)` | reduce along one dimension (0-based `axis`), removing it |
+| `nungw.rand(n)`, `nungw.randn(n)`, `nungw.eye(n)` | random uniform `[0, 1)`, standard-normal, and the n×n identity |
+| `nungw.cumsum(g)`, `nungw.cumprod(g)`, `nungw.sort(g)`, `nungw.argsort(g)` | running sum/product, sorted values, and the 1-based sort order (all flattened) |
+| `nungw.clip(g, lo, hi)`, `nungw.concat(a, b)`, `nungw.where(cond, a, b)` | clamp to a range; join two arrays; pick from `a` where `cond` ≠ 0, else `b` |
 
 A nungw is **N-dimensional**: it carries a shape, and element-wise binary operators
 **broadcast** like NumPy (shapes align from the right; a size-1 dimension repeats).
