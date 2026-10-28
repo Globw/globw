@@ -1,0 +1,24 @@
+variables:
+    px, py, i, w, h, maxit, total as int
+    zr, zi, cr, ci, t as float
+w = 900
+h = 600
+maxit = 200
+total = 0
+for(py from 0 to h - 1)
+    for(px from 0 to w - 1)
+        cr = px * 3.5 / w - 2.5
+        ci = py * 2.0 / h - 1.0
+        zr = 0.0
+        zi = 0.0
+        i = 0
+        while(i < maxit and zr * zr + zi * zi <= 4.0)
+            t = zr * zr - zi * zi + cr
+            zi = 2.0 * zr * zi + ci
+            zr = t
+            i = i + 1
+        end loop
+        total = total + i
+    end loop
+end loop
+output(total)

@@ -1,0 +1,14 @@
+import nungw
+variables:
+    a, b, c as nungw of float
+    k, n as int
+    s as float
+n = 20000000
+a = nungw.range(n)
+b = nungw.range(n)
+s = 0.0
+for(k from 1 to 10)
+    c = nungw.sqrt(a * a + b * b)
+    s = s + nungw.sum(c)
+end loop
+output(s)

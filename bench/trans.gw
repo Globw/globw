@@ -1,0 +1,14 @@
+import nungw
+variables:
+    a, r as nungw of float
+    k, n as int
+    s as float
+n = 20000000
+a = nungw.range(n)
+a = nungw.offset(a, 1.0)
+s = 0.0
+for(k from 1 to 10)
+    r = nungw.exp(nungw.scale(a, 0.0000001)) + nungw.log(a) + nungw.sin(a)
+    s = s + nungw.sum(r)
+end loop
+output(round(s))

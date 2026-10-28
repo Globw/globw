@@ -1,0 +1,7 @@
+variables:
+    i, s as int
+s = 0
+for(i from 1 to 200000000)
+    s = s + i mod 7
+end loop
+output(s)

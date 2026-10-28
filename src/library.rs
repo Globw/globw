@@ -356,7 +356,8 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), Type::List(Some(Real)))
         }
-        GridAdd | GridSub | GridMul | GridDiv | GridDot => {
+        GridAdd | GridSub | GridMul | GridDiv | GridDot
+        | GridPow | GridAtan2 | GridHypot | GridMod | GridMaximum | GridMinimum => {
             arity(2)?;
             for (index, t) in a.iter().enumerate() {
                 if *t != Type::Grid {
@@ -375,14 +376,21 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(vec![None, Some(Real)], Type::Grid)
         }
-        GridSqrt | GridSquare | GridAbs => {
+        GridSqrt | GridSquare | GridAbs
+        | GridExp | GridExp2 | GridExpm1
+        | GridLog | GridLog2 | GridLog10 | GridLog1p
+        | GridSin | GridCos | GridTan | GridAsin | GridAcos | GridAtan
+        | GridSinh | GridCosh | GridTanh | GridAsinh | GridAcosh | GridAtanh
+        | GridFloor | GridCeil | GridRound | GridTrunc
+        | GridSign | GridCbrt | GridRecip | GridNeg | GridDegrees | GridRadians => {
             arity(1)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
             }
             ok(none(1), Type::Grid)
         }
-        GridSum | GridMean | GridMax | GridMin | GridSumSquares | GridNorm => {
+        GridSum | GridMean | GridMax | GridMin | GridSumSquares | GridNorm
+        | GridProd | GridVar | GridStd | GridMedian | GridArgmax | GridArgmin | GridPtp => {
             arity(1)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -8391,6 +8399,108 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         }
         GridSumSquares => Value::Real(floats(&args[0]).borrow().par_iter().map(|&x| x * x).sum()),
         GridNorm => Value::Real(floats(&args[0]).borrow().par_iter().map(|&x| x * x).sum::<f64>().sqrt()),
+        GridExp => grid_map(&args[0], |x| x.exp()),
+        GridExp2 => grid_map(&args[0], |x| x.exp2()),
+        GridExpm1 => grid_map(&args[0], |x| x.exp_m1()),
+        GridLog => grid_map(&args[0], |x| x.ln()),
+        GridLog2 => grid_map(&args[0], |x| x.log2()),
+        GridLog10 => grid_map(&args[0], |x| x.log10()),
+        GridLog1p => grid_map(&args[0], |x| x.ln_1p()),
+        GridSin => grid_map(&args[0], |x| x.sin()),
+        GridCos => grid_map(&args[0], |x| x.cos()),
+        GridTan => grid_map(&args[0], |x| x.tan()),
+        GridAsin => grid_map(&args[0], |x| x.asin()),
+        GridAcos => grid_map(&args[0], |x| x.acos()),
+        GridAtan => grid_map(&args[0], |x| x.atan()),
+        GridSinh => grid_map(&args[0], |x| x.sinh()),
+        GridCosh => grid_map(&args[0], |x| x.cosh()),
+        GridTanh => grid_map(&args[0], |x| x.tanh()),
+        GridAsinh => grid_map(&args[0], |x| x.asinh()),
+        GridAcosh => grid_map(&args[0], |x| x.acosh()),
+        GridAtanh => grid_map(&args[0], |x| x.atanh()),
+        GridFloor => grid_map(&args[0], |x| x.floor()),
+        GridCeil => grid_map(&args[0], |x| x.ceil()),
+        GridRound => grid_map(&args[0], |x| x.round_ties_even()),
+        GridTrunc => grid_map(&args[0], |x| x.trunc()),
+        GridSign => grid_map(&args[0], |x| if x.is_nan() { x } else if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }),
+        GridCbrt => grid_map(&args[0], |x| x.cbrt()),
+        GridRecip => grid_map(&args[0], |x| x.recip()),
+        GridNeg => grid_map(&args[0], |x| -x),
+        GridDegrees => grid_map(&args[0], |x| x.to_degrees()),
+        GridRadians => grid_map(&args[0], |x| x.to_radians()),
+        GridPow => grid_zip(&args[0], &args[1], |x, y| x.powf(y))?,
+        GridAtan2 => grid_zip(&args[0], &args[1], |x, y| x.atan2(y))?,
+        GridHypot => grid_zip(&args[0], &args[1], |x, y| x.hypot(y))?,
+        GridMod => grid_zip(&args[0], &args[1], |x, y| x - (x / y).floor() * y)?,
+        GridMaximum => grid_zip(&args[0], &args[1], |x, y| x.max(y))?,
+        GridMinimum => grid_zip(&args[0], &args[1], |x, y| x.min(y))?,
+        GridProd => Value::Real(floats(&args[0]).borrow().par_iter().product()),
+        GridVar => {
+            let g = floats(&args[0]).borrow();
+            if g.is_empty() {
+                return Err("nungw.var: the nungw is empty".to_string());
+            }
+            let n = g.len() as f64;
+            let mean = g.par_iter().sum::<f64>() / n;
+            Value::Real(g.par_iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>() / n)
+        }
+        GridStd => {
+            let g = floats(&args[0]).borrow();
+            if g.is_empty() {
+                return Err("nungw.std: the nungw is empty".to_string());
+            }
+            let n = g.len() as f64;
+            let mean = g.par_iter().sum::<f64>() / n;
+            let var = g.par_iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>() / n;
+            Value::Real(var.sqrt())
+        }
+        GridMedian => {
+            let g = floats(&args[0]).borrow();
+            if g.is_empty() {
+                return Err("nungw.median: the nungw is empty".to_string());
+            }
+            let mut v: Vec<f64> = g.to_vec();
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let m = v.len();
+            Value::Real(if m % 2 == 1 { v[m / 2] } else { (v[m / 2 - 1] + v[m / 2]) / 2.0 })
+        }
+        GridArgmax => {
+            let g = floats(&args[0]).borrow();
+            if g.is_empty() {
+                return Err("nungw.argmax: the nungw is empty".to_string());
+            }
+            let (mut bi, mut bv) = (0usize, g[0]);
+            for (i, &x) in g.iter().enumerate() {
+                if x > bv {
+                    bv = x;
+                    bi = i;
+                }
+            }
+            Value::Real((bi + 1) as f64)
+        }
+        GridArgmin => {
+            let g = floats(&args[0]).borrow();
+            if g.is_empty() {
+                return Err("nungw.argmin: the nungw is empty".to_string());
+            }
+            let (mut bi, mut bv) = (0usize, g[0]);
+            for (i, &x) in g.iter().enumerate() {
+                if x < bv {
+                    bv = x;
+                    bi = i;
+                }
+            }
+            Value::Real((bi + 1) as f64)
+        }
+        GridPtp => {
+            let g = floats(&args[0]).borrow();
+            if g.is_empty() {
+                return Err("nungw.ptp: the nungw is empty".to_string());
+            }
+            let mx = g.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let mn = g.iter().cloned().fold(f64::INFINITY, f64::min);
+            Value::Real(mx - mn)
+        }
         GridEval => grid_eval(&args[0], &args[1..])?,
         GridMatmul => {
             // a is (rows x inner), b is (inner x cols), both row-major; result rows x cols

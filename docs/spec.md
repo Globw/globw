@@ -683,7 +683,12 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.range(n)`, `nungw.zeros(n)`, `nungw.fill(n, v)`, `nungw.of(list)` | build one |
 | `nungw.size(g)`, `nungw.get(g, i)`, `nungw.set(g, i, v)`, `nungw.to_list(g)` | inspect, read, change, read back |
 | `nungw.sqrt/square/abs(g)` | element-wise, giving a new array (same as the operators) |
+| `nungw.exp/exp2/expm1/log/log2/log10/log1p(g)` | exponentials and logarithms, element-wise |
+| `nungw.sin/cos/tan/asin/acos/atan(g)`, `nungw.sinh/cosh/tanh/asinh/acosh/atanh(g)` | trigonometry and hyperbolics, element-wise |
+| `nungw.floor/ceil/round/trunc/sign/cbrt/recip/neg(g)`, `nungw.degrees/radians(g)` | rounding (round ties to even, like NumPy), sign, cube root, reciprocal, negation, angle conversion |
+| `nungw.pow(a, b)`, `nungw.atan2(a, b)`, `nungw.hypot(a, b)`, `nungw.mod(a, b)`, `nungw.maximum(a, b)`, `nungw.minimum(a, b)` | binary element-wise between two nungws |
 | `nungw.sum/mean/max/min(g)`, `nungw.dot(a, b)`, `nungw.sum_squares(g)`, `nungw.norm(g)` | reductions to a single number |
+| `nungw.prod/var/std/median/ptp(g)`, `nungw.argmax(g)`, `nungw.argmin(g)` | more statistics (`var`/`std` are population; `argmax`/`argmin` give the 1-based position) |
 | `nungw.matmul(a, rows, inner, b, cols)` | matrix product: `a` is `rows`×`inner`, `b` is `inner`×`cols` (row-major), result `rows`×`cols` |
 
 A nungw is a value: a temporary made by an operator frees itself when it is no

@@ -1,0 +1,59 @@
+' nungw: element-wise maths and statistics, checked against NumPy.
+' The element-wise results are rounded to 6 decimals (round(x * 1e6)) so the
+' expected output is stable across platforms (libm differs by ~1 ULP otherwise).
+import nungw
+variables:
+    a, b, c as nungw of float
+a = nungw.of([1.0, 2.0, 3.0, 4.0])
+b = nungw.of([2.0, 3.0, 0.5, 2.0])
+c = nungw.of([0.0, 0.5, -0.5, 0.9])          ' inside [-1, 1] for asin/acos/atanh
+
+' ---- unary element-wise (transcendental: scaled + rounded) ----
+output(nungw.to_list(nungw.round(nungw.scale(nungw.exp(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.exp2(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.expm1(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.log(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.log2(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.log10(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.log1p(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.sin(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.cos(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.tan(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.asin(c), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.acos(c), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.atan(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.sinh(c), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.cosh(c), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.tanh(c), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.asinh(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.acosh(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.atanh(c), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.cbrt(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.degrees(a), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.radians(a), 1000000.0))))
+
+' ---- unary element-wise (exact) ----
+output(nungw.to_list(nungw.floor(b)))
+output(nungw.to_list(nungw.ceil(b)))
+output(nungw.to_list(nungw.round(b)))
+output(nungw.to_list(nungw.trunc(b)))
+output(nungw.to_list(nungw.sign(nungw.offset(a, -2.0))))
+output(nungw.to_list(nungw.recip(a)))
+output(nungw.to_list(nungw.neg(a)))
+
+' ---- binary element-wise ----
+output(nungw.to_list(nungw.pow(a, b)))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.atan2(a, b), 1000000.0))))
+output(nungw.to_list(nungw.round(nungw.scale(nungw.hypot(a, b), 1000000.0))))
+output(nungw.to_list(nungw.mod(a, b)))
+output(nungw.to_list(nungw.maximum(a, b)))
+output(nungw.to_list(nungw.minimum(a, b)))
+
+' ---- statistics (reductions) ----
+output(nungw.prod(a))
+output(nungw.var(a))
+output(nungw.std(a))
+output(nungw.median(a))
+output(nungw.argmax(a))
+output(nungw.argmin(a))
+output(nungw.ptp(a))

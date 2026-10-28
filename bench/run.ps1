@@ -3,7 +3,7 @@
 param([string]$Python = "python")
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$globw = Join-Path $root "target\release\globw.exe"
+$globw = Join-Path $root "target\release\gw.exe"
 if (-not (Test-Path $globw)) { throw "build first: cargo build --release" }
 foreach ($name in "fib", "sieve", "sum") {
     $ez = Join-Path $PSScriptRoot "$name.gw"
