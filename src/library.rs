@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 #[cfg(feature = "native")]
 use rayon::prelude::*;
+use rustfft::{num_complex::Complex, FftPlanner};
 use serde_json::Value as Json;
 
 use crate::builtins::{Builtin, CheckError, Checked};
@@ -382,7 +383,8 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
         | GridSin | GridCos | GridTan | GridAsin | GridAcos | GridAtan
         | GridSinh | GridCosh | GridTanh | GridAsinh | GridAcosh | GridAtanh
         | GridFloor | GridCeil | GridRound | GridTrunc
-        | GridSign | GridCbrt | GridRecip | GridNeg | GridDegrees | GridRadians => {
+        | GridSign | GridCbrt | GridRecip | GridNeg | GridDegrees | GridRadians
+        | GridFft | GridIfft | GridCabs => {
             arity(1)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -513,6 +515,41 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 }
             }
             ok(none(5), Type::Grid)
+        }
+        GridInv | GridDet => {
+            arity(2)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            if a[1] != Type::Base(Int) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(Int) });
+            }
+            ok(none(2), if b == GridDet { Type::Base(Real) } else { Type::Grid })
+        }
+        GridSolve => {
+            arity(3)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            if a[1] != Type::Base(Int) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(Int) });
+            }
+            if a[2] != Type::Grid {
+                return Err(CheckError::Arg { index: 2, expected: Type::Grid });
+            }
+            ok(none(3), Type::Grid)
+        }
+        GridTranspose => {
+            arity(3)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            for index in [1usize, 2] {
+                if a[index] != Type::Base(Int) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Int) });
+                }
+            }
+            ok(none(3), Type::Grid)
         }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
@@ -3500,6 +3537,66 @@ fn grid_zip(a: &Value, b: &Value, f: impl Fn(f64, f64) -> f64 + Sync + Send) -> 
         return Err(format!("nungw: the sizes differ ({} and {})", va.len(), vb.len()));
     }
     Ok(grid_val(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| f(x, y)).collect()))
+}
+
+/// LU decomposition with partial pivoting, in place on `m` (an n x n row-major
+/// matrix). On return `m` holds L (below the diagonal, unit diagonal implied)
+/// and U (on and above), `perm` the row permutation. Gives the permutation sign
+/// (for the determinant), or None if the matrix is singular. Pure Rust so it
+/// works on wasm too (no LAPACK).
+fn lu_in_place(m: &mut [f64], n: usize, perm: &mut [usize]) -> Option<f64> {
+    for (i, slot) in perm.iter_mut().enumerate() {
+        *slot = i;
+    }
+    let mut sign = 1.0;
+    for k in 0..n {
+        let mut p = k;
+        let mut best = m[k * n + k].abs();
+        for i in (k + 1)..n {
+            let v = m[i * n + k].abs();
+            if v > best {
+                best = v;
+                p = i;
+            }
+        }
+        if best == 0.0 {
+            return None;
+        }
+        if p != k {
+            for j in 0..n {
+                m.swap(k * n + j, p * n + j);
+            }
+            perm.swap(k, p);
+            sign = -sign;
+        }
+        let pivot = m[k * n + k];
+        for i in (k + 1)..n {
+            let factor = m[i * n + k] / pivot;
+            m[i * n + k] = factor;
+            for j in (k + 1)..n {
+                m[i * n + j] -= factor * m[k * n + j];
+            }
+        }
+    }
+    Some(sign)
+}
+
+/// Solve A x = b given A's LU decomposition (from `lu_in_place`) and the row
+/// permutation, by forward then back substitution.
+fn lu_solve(lu: &[f64], n: usize, perm: &[usize], b: &[f64]) -> Vec<f64> {
+    let mut x: Vec<f64> = (0..n).map(|i| b[perm[i]]).collect();
+    for i in 0..n {
+        for j in 0..i {
+            x[i] -= lu[i * n + j] * x[j];
+        }
+    }
+    for i in (0..n).rev() {
+        for j in (i + 1)..n {
+            x[i] -= lu[i * n + j] * x[j];
+        }
+        x[i] /= lu[i * n + i];
+    }
+    x
 }
 
 /// The optimized BLAS, loaded once at run time if one can be found. Globw uses
@@ -8500,6 +8597,144 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             let mx = g.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let mn = g.iter().cloned().fold(f64::INFINITY, f64::min);
             Value::Real(mx - mn)
+        }
+        GridFft => {
+            let v = floats(&args[0]).borrow();
+            let n = v.len();
+            if n == 0 {
+                return Err("nungw.fft: the nungw is empty".to_string());
+            }
+            let mut buf: Vec<Complex<f64>> = v.iter().map(|&x| Complex::new(x, 0.0)).collect();
+            FftPlanner::new().plan_fft_forward(n).process(&mut buf);
+            let mut out = Vec::with_capacity(2 * n);
+            for c in &buf {
+                out.push(c.re);
+                out.push(c.im);
+            }
+            grid_val(out)
+        }
+        GridIfft => {
+            let v = floats(&args[0]).borrow();
+            if v.len() % 2 != 0 {
+                return Err("nungw.ifft: a complex nungw has an even length (re, im, re, im, ...)".to_string());
+            }
+            let n = v.len() / 2;
+            if n == 0 {
+                return Err("nungw.ifft: the nungw is empty".to_string());
+            }
+            let mut buf: Vec<Complex<f64>> = (0..n).map(|i| Complex::new(v[2 * i], v[2 * i + 1])).collect();
+            FftPlanner::new().plan_fft_inverse(n).process(&mut buf);
+            let scale = 1.0 / n as f64;
+            let mut out = Vec::with_capacity(2 * n);
+            for c in &buf {
+                out.push(c.re * scale);
+                out.push(c.im * scale);
+            }
+            grid_val(out)
+        }
+        GridCabs => {
+            let v = floats(&args[0]).borrow();
+            if v.len() % 2 != 0 {
+                return Err("nungw.cabs: a complex nungw has an even length (re, im, re, im, ...)".to_string());
+            }
+            let out: Vec<f64> = (0..v.len() / 2).map(|i| v[2 * i].hypot(v[2 * i + 1])).collect();
+            grid_val(out)
+        }
+        GridDet => {
+            let n = int(&args[1]);
+            if n < 0 {
+                return Err("nungw.det: the dimension cannot be negative".to_string());
+            }
+            let n = n as usize;
+            let v = floats(&args[0]).borrow();
+            if v.len() != n * n {
+                return Err(format!("nungw.det: a {n}x{n} matrix needs {} values, it has {}", n * n, v.len()));
+            }
+            if n == 0 {
+                Value::Real(1.0)
+            } else {
+                let mut m = v.to_vec();
+                let mut perm = vec![0usize; n];
+                match lu_in_place(&mut m, n, &mut perm) {
+                    None => Value::Real(0.0),
+                    Some(sign) => {
+                        let mut d = sign;
+                        for i in 0..n {
+                            d *= m[i * n + i];
+                        }
+                        Value::Real(d)
+                    }
+                }
+            }
+        }
+        GridSolve => {
+            let n = int(&args[1]);
+            if n < 0 {
+                return Err("nungw.solve: the dimension cannot be negative".to_string());
+            }
+            let n = n as usize;
+            let a0 = floats(&args[0]).borrow();
+            let b0 = floats(&args[2]).borrow();
+            if a0.len() != n * n {
+                return Err(format!("nungw.solve: a {n}x{n} matrix needs {} values, it has {}", n * n, a0.len()));
+            }
+            if b0.len() != n {
+                return Err(format!("nungw.solve: the right-hand side needs {n} values, it has {}", b0.len()));
+            }
+            let mut m = a0.to_vec();
+            let mut perm = vec![0usize; n];
+            match lu_in_place(&mut m, n, &mut perm) {
+                None => return Err("nungw.solve: the matrix is singular".to_string()),
+                Some(_) => grid_val(lu_solve(&m, n, &perm, &b0)),
+            }
+        }
+        GridInv => {
+            let n = int(&args[1]);
+            if n < 0 {
+                return Err("nungw.inv: the dimension cannot be negative".to_string());
+            }
+            let n = n as usize;
+            let a0 = floats(&args[0]).borrow();
+            if a0.len() != n * n {
+                return Err(format!("nungw.inv: a {n}x{n} matrix needs {} values, it has {}", n * n, a0.len()));
+            }
+            let mut m = a0.to_vec();
+            let mut perm = vec![0usize; n];
+            match lu_in_place(&mut m, n, &mut perm) {
+                None => return Err("nungw.inv: the matrix is singular".to_string()),
+                Some(_) => {
+                    let mut out = vec![0.0; n * n];
+                    let mut e = vec![0.0; n];
+                    for col in 0..n {
+                        for (i, slot) in e.iter_mut().enumerate() {
+                            *slot = if i == col { 1.0 } else { 0.0 };
+                        }
+                        let x = lu_solve(&m, n, &perm, &e);
+                        for i in 0..n {
+                            out[i * n + col] = x[i];
+                        }
+                    }
+                    grid_val(out)
+                }
+            }
+        }
+        GridTranspose => {
+            let (rows, cols) = (int(&args[1]), int(&args[2]));
+            if rows < 0 || cols < 0 {
+                return Err("nungw.transpose: the dimensions cannot be negative".to_string());
+            }
+            let (rows, cols) = (rows as usize, cols as usize);
+            let v = floats(&args[0]).borrow();
+            if v.len() != rows * cols {
+                return Err(format!("nungw.transpose: a {rows}x{cols} matrix needs {} values, it has {}", rows * cols, v.len()));
+            }
+            let mut out = vec![0.0; rows * cols];
+            for r in 0..rows {
+                for c in 0..cols {
+                    out[c * rows + r] = v[r * cols + c];
+                }
+            }
+            grid_val(out)
         }
         GridEval => grid_eval(&args[0], &args[1..])?,
         GridMatmul => {

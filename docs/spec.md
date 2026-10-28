@@ -690,6 +690,11 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.sum/mean/max/min(g)`, `nungw.dot(a, b)`, `nungw.sum_squares(g)`, `nungw.norm(g)` | reductions to a single number |
 | `nungw.prod/var/std/median/ptp(g)`, `nungw.argmax(g)`, `nungw.argmin(g)` | more statistics (`var`/`std` are population; `argmax`/`argmin` give the 1-based position) |
 | `nungw.matmul(a, rows, inner, b, cols)` | matrix product: `a` is `rows`×`inner`, `b` is `inner`×`cols` (row-major), result `rows`×`cols` |
+| `nungw.solve(a, n, b)`, `nungw.inv(a, n)`, `nungw.det(a, n)`, `nungw.transpose(a, rows, cols)` | linear algebra on a flat row-major matrix (LU with partial pivoting): solve `A x = b`, inverse, determinant, transpose |
+| `nungw.fft(a)`, `nungw.ifft(c)`, `nungw.cabs(c)` | FFT of a real array → complex, inverse FFT, and magnitudes; a complex array is interleaved `[re, im, re, im, ...]` |
+
+The linear algebra and FFT are pure Rust (no LAPACK), so they run everywhere Globw
+does, the WebAssembly playground included.
 
 A nungw is a value: a temporary made by an operator frees itself when it is no
 longer used, so loops do not leak. The reductions `sum_squares`, `norm` and `dot`

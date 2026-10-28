@@ -1,0 +1,13 @@
+' nungw FFT, checked against NumPy. A complex nungw is interleaved [re, im, ...].
+' Values scaled x1e6 and rounded (stable across platforms); offset(.,0.0) turns
+' any -0.0 into 0.0 so the expected output is sign-stable.
+import nungw
+variables:
+    a, b as nungw of float
+a = nungw.of([1.0, 2.0, 3.0, 4.0, 0.0, -1.0, 2.0, 1.0])     ' length 8 (radix-2)
+b = nungw.of([1.0, 2.0, 3.0, 2.0, 1.0, 0.0])                ' length 6 (mixed radix)
+output(nungw.to_list(nungw.offset(nungw.round(nungw.scale(nungw.fft(a), 1000000.0)), 0.0)))
+output(nungw.to_list(nungw.offset(nungw.round(nungw.scale(nungw.cabs(nungw.fft(a)), 1000000.0)), 0.0)))
+output(nungw.to_list(nungw.offset(nungw.round(nungw.scale(nungw.ifft(nungw.fft(a)), 1000000.0)), 0.0)))
+output(nungw.to_list(nungw.offset(nungw.round(nungw.scale(nungw.fft(b), 1000000.0)), 0.0)))
+output(nungw.to_list(nungw.offset(nungw.round(nungw.scale(nungw.cabs(nungw.fft(b)), 1000000.0)), 0.0)))

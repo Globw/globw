@@ -1,0 +1,13 @@
+' nungw linear algebra (LU with partial pivoting), checked against NumPy.
+' Matrices are flat row-major; the dimension is passed in (like matmul).
+import nungw
+variables:
+    a, b, m as nungw of float
+a = nungw.of([2.0, 1.0, 1.0, 1.0, 3.0, 2.0, 1.0, 0.0, 0.0])      ' 3x3, det = -1
+b = nungw.of([4.0, 5.0, 6.0])
+output(round(nungw.det(a, 3)))                                   ' determinant
+output(nungw.to_list(nungw.round(nungw.solve(a, 3, b))))         ' solve A x = b
+output(nungw.to_list(nungw.round(nungw.inv(a, 3))))              ' inverse
+m = nungw.of([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])                     ' 2x3
+output(nungw.to_list(nungw.transpose(m, 2, 3)))                  ' transpose -> 3x2
+output(nungw.to_list(nungw.offset(nungw.round(nungw.matmul(a, 3, 3, nungw.inv(a, 3), 3)), 0.0)))  ' A*inv(A) = I

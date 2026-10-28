@@ -479,6 +479,10 @@ pub enum Builtin {
     GridPow, GridAtan2, GridHypot, GridMod, GridMaximum, GridMinimum,
     // more statistics (reduce a nungw -> a number)
     GridProd, GridVar, GridStd, GridMedian, GridArgmax, GridArgmin, GridPtp,
+    // FFT on a nungw (complex = interleaved [re, im, re, im, ...])
+    GridFft, GridIfft, GridCabs,
+    // linear algebra on a flat row-major matrix (dimensions passed in)
+    GridSolve, GridInv, GridDet, GridTranspose,
     // module "counter" (tallies)
     CounterItems,
     CounterChars,
@@ -1509,6 +1513,13 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GridArgmax, "nungw.argmax", Sig::Flexible { function: true }),
     (GridArgmin, "nungw.argmin", Sig::Flexible { function: true }),
     (GridPtp, "nungw.ptp", Sig::Flexible { function: true }),
+    (GridFft, "nungw.fft", Sig::Flexible { function: true }),
+    (GridIfft, "nungw.ifft", Sig::Flexible { function: true }),
+    (GridCabs, "nungw.cabs", Sig::Flexible { function: true }),
+    (GridSolve, "nungw.solve", Sig::Flexible { function: true }),
+    (GridInv, "nungw.inv", Sig::Flexible { function: true }),
+    (GridDet, "nungw.det", Sig::Flexible { function: true }),
+    (GridTranspose, "nungw.transpose", Sig::Flexible { function: true }),
     (CounterItems, "counter.items", Sig::Flexible { function: true }),
     (CounterChars, "counter.chars", Sig::Flexible { function: true }),
     (CounterWords, "counter.words", Sig::Flexible { function: true }),
