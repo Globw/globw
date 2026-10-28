@@ -27,8 +27,10 @@ pub enum Value {
     Func(u32),
     /// a set of simple values, kept as the keys of a dictionary
     Set(Rc<RefCell<Dict>>),
-    /// a grid: a contiguous array of floats (the `grid` engine)
-    Floats(Rc<RefCell<Vec<f64>>>),
+    /// a grid: a contiguous array of floats (the `nungw` engine), plus its
+    /// shape (the sizes along each dimension; `[n]` for a 1-D array). The data
+    /// is row-major. The shape is a cheap `Rc` so cloning the value is cheap.
+    Floats(Rc<RefCell<Vec<f64>>>, Rc<Vec<usize>>),
 }
 
 /// An object: its class id and the values of its fields, in slot order.
@@ -300,13 +302,21 @@ fn repr_at(v: &Value, depth: usize) -> String {
                 names.iter().zip(&o.fields).map(|(n, f)| format!("{}={}", n, repr_at(f, depth + 1))).collect();
             format!("{}({})", crate::tir::class_name(o.class), pairs.join(", "))
         }
-        Value::Floats(g) => {
+        Value::Floats(g, shape) => {
             let g = g.borrow();
-            if g.len() <= 8 {
+            let body = if g.len() <= 8 {
                 format!("nungw[{}]", g.iter().map(|x| format_real(*x)).collect::<Vec<_>>().join(", "))
             } else {
                 let head = g.iter().take(6).map(|x| format_real(*x)).collect::<Vec<_>>().join(", ");
                 format!("nungw[{}, ... {} floats]", head, g.len())
+            };
+            // Append the shape only for genuinely multi-dimensional arrays, so
+            // 1-D output stays exactly as before.
+            if shape.len() > 1 {
+                let dims = shape.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("x");
+                format!("{body} ({dims})")
+            } else {
+                body
             }
         }
     }

@@ -1,0 +1,16 @@
+' nungw N-dimensional: shape, reshape and NumPy-style broadcasting.
+import nungw
+variables:
+    a, b, c as nungw of float
+a = nungw.reshape(nungw.range(6), [2, 3])              ' [[0,1,2],[3,4,5]]
+output(nungw.shape(a))
+output(nungw.ndim(a), " ", nungw.size(a))
+b = nungw.reshape(nungw.of([10.0, 20.0, 30.0]), [1, 3])
+c = nungw.reshape(nungw.of([100.0, 200.0]), [2, 1])
+output(nungw.to_list(a + b))                           ' broadcast over rows
+output(nungw.to_list(a + c))                           ' broadcast over columns
+output(nungw.to_list(b + c))                           ' outer broadcast -> 2x3
+output(nungw.shape(b + c))
+output(nungw.to_list(nungw.transpose(a, 2, 3)))        ' -> 3x2
+output(nungw.shape(nungw.transpose(a, 2, 3)))
+output(nungw.shape(nungw.matmul(a, 2, 3, nungw.transpose(a, 2, 3), 2)))  ' 2x2

@@ -551,6 +551,30 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(3), Type::Grid)
         }
+        GridShape => {
+            arity(1)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            ok(none(1), Type::List(Some(Int)))
+        }
+        GridNdim => {
+            arity(1)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            ok(none(1), Type::Base(Int))
+        }
+        GridReshape => {
+            arity(2)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            match collection(a[1]) {
+                Some(e) if numeric(e) => ok(none(2), Type::Grid),
+                _ => other("nungw.reshape needs a nungw and a list of sizes"),
+            }
+        }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
 }
@@ -2097,7 +2121,7 @@ fn to_json_value(v: &Value) -> Result<Json, String> {
         Value::Bool(b) => Json::Bool(*b),
         Value::Str(s) => Json::String(s.to_string()),
         Value::Seq(items) => Json::Array(items.borrow().iter().map(to_json_value).collect::<Result<_, _>>()?),
-        Value::Floats(g) => Json::Array(
+        Value::Floats(g, _) => Json::Array(
             g.borrow()
                 .iter()
                 .map(|&x| serde_json::Number::from_f64(x).map(Json::Number).ok_or_else(|| "a nungw value has no JSON form".to_string()))
@@ -3518,25 +3542,121 @@ fn quadratic_root(a: f64, b: f64, c: f64, plus: bool) -> Result<f64, String> {
 
 fn floats(v: &Value) -> &Rc<RefCell<Vec<f64>>> {
     match v {
-        Value::Floats(g) => g,
+        Value::Floats(g, _) => g,
         other => panic!("internal error: expected a nungw, found {:?}", other),
     }
 }
 
-fn grid_val(data: Vec<f64>) -> Value {
-    Value::Floats(Rc::new(RefCell::new(data)))
+/// The shape (sizes along each dimension) of a nungw value.
+fn shape_of(v: &Value) -> Rc<Vec<usize>> {
+    match v {
+        Value::Floats(_, shape) => shape.clone(),
+        other => panic!("internal error: expected a nungw, found {:?}", other),
+    }
 }
 
+/// Build a 1-D nungw from a flat buffer.
+fn grid_val(data: Vec<f64>) -> Value {
+    let shape = Rc::new(vec![data.len()]);
+    Value::Floats(Rc::new(RefCell::new(data)), shape)
+}
+
+/// Build a nungw from a flat buffer with a given shape. The caller guarantees
+/// the shape's product equals the buffer length.
+fn grid_val_shaped(data: Vec<f64>, shape: Vec<usize>) -> Value {
+    Value::Floats(Rc::new(RefCell::new(data)), Rc::new(shape))
+}
+
+/// An element-wise map keeps the input's shape.
 fn grid_map(v: &Value, f: impl Fn(f64) -> f64 + Sync + Send) -> Value {
-    grid_val(floats(v).borrow().par_iter().map(|&x| f(x)).collect())
+    let data: Vec<f64> = floats(v).borrow().par_iter().map(|&x| f(x)).collect();
+    grid_val_shaped(data, (*shape_of(v)).clone())
 }
 
 fn grid_zip(a: &Value, b: &Value, f: impl Fn(f64, f64) -> f64 + Sync + Send) -> Result<Value, String> {
-    let (va, vb) = (floats(a).borrow(), floats(b).borrow());
-    if va.len() != vb.len() {
-        return Err(format!("nungw: the sizes differ ({} and {})", va.len(), vb.len()));
+    let (sa, sb) = (shape_of(a), shape_of(b));
+    // Equal shapes: element-wise, keeping the shape. Differing shapes:
+    // broadcast (NumPy rules).
+    if *sa == *sb {
+        let (va, vb) = (floats(a).borrow(), floats(b).borrow());
+        let data: Vec<f64> = va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| f(x, y)).collect();
+        return Ok(grid_val_shaped(data, (*sa).clone()));
     }
-    Ok(grid_val(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| f(x, y)).collect()))
+    broadcast_zip(a, b, &sa, &sb, f)
+}
+
+/// The broadcast of two shapes (NumPy rules: align from the right, each pair of
+/// sizes must be equal or one of them 1), or an error if they do not broadcast.
+fn broadcast_shape(sa: &[usize], sb: &[usize]) -> Result<Vec<usize>, String> {
+    let n = sa.len().max(sb.len());
+    let mut out = vec![0usize; n];
+    for i in 0..n {
+        let da = if i < n - sa.len() { 1 } else { sa[i - (n - sa.len())] };
+        let db = if i < n - sb.len() { 1 } else { sb[i - (n - sb.len())] };
+        out[i] = if da == db || db == 1 {
+            da
+        } else if da == 1 {
+            db
+        } else {
+            return Err(format!("nungw: shapes do not broadcast ({sa:?} and {sb:?})"));
+        };
+    }
+    Ok(out)
+}
+
+/// The strides (in elements) of a row-major array of this shape, as a value
+/// moving by one along each dimension; a dimension of size 1 gets stride 0 so
+/// it repeats (broadcasting).
+fn broadcast_strides(shape: &[usize], full: &[usize]) -> Vec<usize> {
+    // row-major strides of `shape`, then mapped onto `full` (right-aligned)
+    let mut stride = vec![0usize; shape.len()];
+    let mut acc = 1usize;
+    for i in (0..shape.len()).rev() {
+        stride[i] = if shape[i] == 1 { 0 } else { acc };
+        acc *= shape[i];
+    }
+    let mut out = vec![0usize; full.len()];
+    let off = full.len() - shape.len();
+    for i in 0..shape.len() {
+        out[off + i] = stride[i];
+    }
+    out
+}
+
+fn broadcast_zip(
+    a: &Value,
+    b: &Value,
+    sa: &[usize],
+    sb: &[usize],
+    f: impl Fn(f64, f64) -> f64 + Sync + Send,
+) -> Result<Value, String> {
+    let out_shape = broadcast_shape(sa, sb)?;
+    let total: usize = out_shape.iter().product();
+    let stride_a = broadcast_strides(sa, &out_shape);
+    let stride_b = broadcast_strides(sb, &out_shape);
+    let (va, vb) = (floats(a).borrow(), floats(b).borrow());
+    let n = out_shape.len();
+    let mut out = vec![0.0; total];
+    // iterate over the multi-index; compute flat offsets into a and b
+    let mut idx = vec![0usize; n];
+    for slot in out.iter_mut() {
+        let mut oa = 0usize;
+        let mut ob = 0usize;
+        for d in 0..n {
+            oa += idx[d] * stride_a[d];
+            ob += idx[d] * stride_b[d];
+        }
+        *slot = f(va[oa], vb[ob]);
+        // increment the multi-index (row-major)
+        for d in (0..n).rev() {
+            idx[d] += 1;
+            if idx[d] < out_shape[d] {
+                break;
+            }
+            idx[d] = 0;
+        }
+    }
+    Ok(grid_val_shaped(out, out_shape))
 }
 
 /// LU decomposition with partial pivoting, in place on `m` (an n x n row-major
@@ -3738,14 +3858,20 @@ fn run_program(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize) 
 fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
     let program = parse_program(text(program))?;
     let borrows: Vec<std::cell::Ref<Vec<f64>>> =
-        rest.iter().filter(|v| matches!(v, Value::Floats(_))).map(|v| floats(v).borrow()).collect();
+        rest.iter().filter(|v| matches!(v, Value::Floats(..))).map(|v| floats(v).borrow()).collect();
     let leaves: Vec<&[f64]> = borrows.iter().map(|r| r.as_slice()).collect();
-    let scalars: Vec<f64> = rest.iter().filter(|v| !matches!(v, Value::Floats(_))).map(real).collect();
+    let scalars: Vec<f64> = rest.iter().filter(|v| !matches!(v, Value::Floats(..))).map(real).collect();
     let n = leaves.first().map_or(0, |l| l.len());
     if leaves.iter().any(|l| l.len() != n) {
         return Err("nungw: the arrays in an expression must have the same size".to_string());
     }
-    Ok(grid_val((0..n).into_par_iter().map(|i| run_program(&program, &leaves, &scalars, i)).collect()))
+    // Keep the shape of the first grid operand (element-wise preserves shape).
+    let shape = rest
+        .iter()
+        .find(|v| matches!(v, Value::Floats(..)))
+        .map_or_else(|| vec![n], |v| (*shape_of(v)).clone());
+    let data: Vec<f64> = (0..n).into_par_iter().map(|i| run_program(&program, &leaves, &scalars, i)).collect();
+    Ok(grid_val_shaped(data, shape))
 }
 
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";
@@ -8714,7 +8840,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                             out[i * n + col] = x[i];
                         }
                     }
-                    grid_val(out)
+                    grid_val_shaped(out, vec![n, n])
                 }
             }
         }
@@ -8734,7 +8860,30 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                     out[c * rows + r] = v[r * cols + c];
                 }
             }
-            grid_val(out)
+            grid_val_shaped(out, vec![cols, rows])
+        }
+        GridShape => {
+            let shape = shape_of(&args[0]);
+            Value::Seq(Rc::new(RefCell::new(shape.iter().map(|&d| Value::Int(d as i64)).collect())))
+        }
+        GridNdim => Value::Int(shape_of(&args[0]).len() as i64),
+        GridReshape => {
+            let dims: Vec<usize> = seq(&args[1])
+                .borrow()
+                .iter()
+                .map(|v| match v {
+                    Value::Int(n) => (*n).max(0) as usize,
+                    Value::Real(r) => r.max(0.0) as usize,
+                    _ => 0,
+                })
+                .collect();
+            let total: usize = dims.iter().product();
+            let data = floats(&args[0]);
+            let len = data.borrow().len();
+            if total != len {
+                return Err(format!("nungw.reshape: {len} values cannot form a shape with {total} cells"));
+            }
+            Value::Floats(data.clone(), Rc::new(dims))
         }
         GridEval => grid_eval(&args[0], &args[1..])?,
         GridMatmul => {
@@ -8757,7 +8906,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             // SAFETY: matmul_into writes all rows*cols elements before they are read.
             unsafe { out.set_len(rows * cols) };
             matmul_into(&mut out, &va, &vb, rows, inner, cols);
-            grid_val(out)
+            grid_val_shaped(out, vec![rows, cols])
         }
         CounterItems => count_into(seq(&args[0]).borrow().iter().map(|v| text(v).to_string())),
         CounterChars => count_into(text(&args[0]).chars().map(|c| c.to_string())),

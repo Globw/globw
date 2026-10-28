@@ -483,6 +483,8 @@ pub enum Builtin {
     GridFft, GridIfft, GridCabs,
     // linear algebra on a flat row-major matrix (dimensions passed in)
     GridSolve, GridInv, GridDet, GridTranspose,
+    // N-dimensional shape
+    GridShape, GridNdim, GridReshape,
     // module "counter" (tallies)
     CounterItems,
     CounterChars,
@@ -1520,6 +1522,9 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GridInv, "nungw.inv", Sig::Flexible { function: true }),
     (GridDet, "nungw.det", Sig::Flexible { function: true }),
     (GridTranspose, "nungw.transpose", Sig::Flexible { function: true }),
+    (GridShape, "nungw.shape", Sig::Flexible { function: true }),
+    (GridNdim, "nungw.ndim", Sig::Flexible { function: true }),
+    (GridReshape, "nungw.reshape", Sig::Flexible { function: true }),
     (CounterItems, "counter.items", Sig::Flexible { function: true }),
     (CounterChars, "counter.chars", Sig::Flexible { function: true }),
     (CounterWords, "counter.words", Sig::Flexible { function: true }),
