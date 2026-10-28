@@ -1,0 +1,13 @@
+' nungw: reductions along one axis, and N-dimensional element access (1-based).
+import nungw
+variables:
+    a as nungw of float
+a = nungw.reshape(nungw.range(12), [3, 4])        ' 3x4 matrix, values 0..11
+output(nungw.to_list(nungw.sum_axis(a, 0)))       ' sum down the columns -> 4
+output(nungw.shape(nungw.sum_axis(a, 0)))
+output(nungw.to_list(nungw.sum_axis(a, 1)))       ' sum across the rows -> 3
+output(nungw.to_list(nungw.mean_axis(a, 0)))
+output(nungw.to_list(nungw.max_axis(a, 1)))
+output(nungw.to_list(nungw.min_axis(a, 0)))
+output(nungw.to_list(nungw.prod_axis(nungw.offset(a, 1.0), 1)))
+output(nungw.at(a, 1, 1), " ", nungw.at(a, 3, 4), " ", nungw.at(a, 2, 3))

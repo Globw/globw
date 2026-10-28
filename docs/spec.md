@@ -660,7 +660,7 @@ Most of these are plain functions whose errors (a bad number, a missing file, a 
 And a further 150 small modules (one function family each), among them: more unit conversions (`acceleration`, `lux`, `radiation`, `turn`, `flow`, `typography`, `oven`, `glucose`); activation and special functions (`sigmoid`, `relu`, `softsign`, `gauss`, `erf`, `gammaf`, `sinc`, `smoothstep`); string tools (`nospaces`, `digitsonly`, `disemvowel`, `screaming`, `dotcase`, `pathcase`, `sentencecase`, `dedup`, `rotstr`, `zfill`, `soundex`, `hamming`, `levenshtein`, `syllables`); physics (`kinematics`, `projectile`, `pendulum`, `spring`, `lens`, `resistors`, `capacitors`, `doppler`, `escape`, `orbit`, `lorentz`, `freefall`, `gforce`); finance (`annuity`, `breakeven`, `profit`, `commission`, `wage`, `inflation`, `rule72`, `splitbill`); health (`idealweight`, `tdee`, `water`, `dosage`); geometry (`tetrahedron`, `octahedron`, `parallelogram`, `rhombus`, `sector`, `ellipsoid`, `ngon`, `frustum`); number theory and sequences (`lucas`, `tribonacci`, `padovan`, `pentagonal`, `hexagonal`, `star`, `pronic`, `polygonal`, `primorial`, `primecount`, `prevprime`, `coprime`, `amicable`, `happy`, `aliquot`, `collatzmax`); bits (`nibble`, `byteops`, `endian`, `nextpow2`, `ispow2`, `align`, `graycode`, `revbits`); and checks/formatting (`approx`, `bankers`, `plural`, `abbreviate`, `gpa`, `zscore`, `ean`, `cardtype`, `a1z26`, `luminance`, `contrast`, `note`, `prob`, `odds`, `ph`, `humidex`, `sound`). Each follows the same `module.function(...)` shape.
 
 **The array engine (`nungw`).** For heavy number crunching, `nungw of float` is a
-first-class type: a one-dimensional array of floats kept in contiguous memory and
+first-class type: an N-dimensional array of floats kept in contiguous memory and
 worked on across every CPU core. `import nungw` to use it. The usual operators
 work element-wise, and `g[i]` reads an element (1-based). (The name is Globw's own
 take on the idea a tool like NumPy covers.)
@@ -692,6 +692,13 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.matmul(a, rows, inner, b, cols)` | matrix product: `a` is `rows`×`inner`, `b` is `inner`×`cols` (row-major), result `rows`×`cols` |
 | `nungw.solve(a, n, b)`, `nungw.inv(a, n)`, `nungw.det(a, n)`, `nungw.transpose(a, rows, cols)` | linear algebra on a flat row-major matrix (LU with partial pivoting): solve `A x = b`, inverse, determinant, transpose |
 | `nungw.fft(a)`, `nungw.ifft(c)`, `nungw.cabs(c)` | FFT of a real array → complex, inverse FFT, and magnitudes; a complex array is interleaved `[re, im, re, im, ...]` |
+| `nungw.shape(g)`, `nungw.ndim(g)`, `nungw.reshape(g, [dims])` | a nungw is N-dimensional: read its shape, its number of dimensions, or give it a new shape |
+| `nungw.at(g, i, j, ...)` | read one element by N-dimensional index (1-based) |
+| `nungw.sum_axis / mean_axis / max_axis / min_axis / prod_axis(g, axis)` | reduce along one dimension (0-based `axis`), removing it |
+
+A nungw is **N-dimensional**: it carries a shape, and element-wise binary operators
+**broadcast** like NumPy (shapes align from the right; a size-1 dimension repeats).
+`matmul` and `transpose` give 2-D results.
 
 The linear algebra and FFT are pure Rust (no LAPACK), so they run everywhere Globw
 does, the WebAssembly playground included.

@@ -485,6 +485,8 @@ pub enum Builtin {
     GridSolve, GridInv, GridDet, GridTranspose,
     // N-dimensional shape
     GridShape, GridNdim, GridReshape,
+    // reductions along one axis, and N-d element access
+    GridSumAxis, GridMeanAxis, GridMaxAxis, GridMinAxis, GridProdAxis, GridAt,
     // module "counter" (tallies)
     CounterItems,
     CounterChars,
@@ -1525,6 +1527,12 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GridShape, "nungw.shape", Sig::Flexible { function: true }),
     (GridNdim, "nungw.ndim", Sig::Flexible { function: true }),
     (GridReshape, "nungw.reshape", Sig::Flexible { function: true }),
+    (GridSumAxis, "nungw.sum_axis", Sig::Flexible { function: true }),
+    (GridMeanAxis, "nungw.mean_axis", Sig::Flexible { function: true }),
+    (GridMaxAxis, "nungw.max_axis", Sig::Flexible { function: true }),
+    (GridMinAxis, "nungw.min_axis", Sig::Flexible { function: true }),
+    (GridProdAxis, "nungw.prod_axis", Sig::Flexible { function: true }),
+    (GridAt, "nungw.at", Sig::Flexible { function: true }),
     (CounterItems, "counter.items", Sig::Flexible { function: true }),
     (CounterChars, "counter.chars", Sig::Flexible { function: true }),
     (CounterWords, "counter.words", Sig::Flexible { function: true }),

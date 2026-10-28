@@ -575,6 +575,30 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => other("nungw.reshape needs a nungw and a list of sizes"),
             }
         }
+        GridSumAxis | GridMeanAxis | GridMaxAxis | GridMinAxis | GridProdAxis => {
+            arity(2)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            if a[1] != Type::Base(Int) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(Int) });
+            }
+            ok(none(2), Type::Grid)
+        }
+        GridAt => {
+            if a.len() < 2 {
+                return Err(CheckError::Arity(2));
+            }
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            for index in 1..a.len() {
+                if a[index] != Type::Base(Int) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Int) });
+                }
+            }
+            ok(none(a.len()), Type::Base(Real))
+        }
         other_builtin => panic!("internal error: {:?} has a fixed signature", other_builtin),
     }
 }
@@ -3717,6 +3741,46 @@ fn lu_solve(lu: &[f64], n: usize, perm: &[usize], b: &[f64]) -> Vec<f64> {
         x[i] /= lu[i * n + i];
     }
     x
+}
+
+/// Reduce an N-d array along one axis (0-based). `combine` folds the values,
+/// `finish` post-processes each cell with the count (for mean). Returns a new
+/// nungw whose shape has that axis removed (`[1]` if nothing is left).
+fn axis_reduce(
+    v: &Value,
+    axis: i64,
+    init: f64,
+    combine: impl Fn(f64, f64) -> f64,
+    finish: impl Fn(f64, usize) -> f64,
+) -> Result<Value, String> {
+    let shape = shape_of(v);
+    let ndim = shape.len();
+    if axis < 0 || axis as usize >= ndim {
+        return Err(format!("nungw: axis {axis} is out of range for a {ndim}-D nungw"));
+    }
+    let axis = axis as usize;
+    let data = floats(v).borrow();
+    let outer: usize = shape[..axis].iter().product();
+    let mid = shape[axis];
+    let inner: usize = shape[axis + 1..].iter().product();
+    let mut out = vec![init; outer * inner];
+    for o in 0..outer {
+        for k in 0..mid {
+            for i in 0..inner {
+                let dst = o * inner + i;
+                out[dst] = combine(out[dst], data[(o * mid + k) * inner + i]);
+            }
+        }
+    }
+    for cell in out.iter_mut() {
+        *cell = finish(*cell, mid);
+    }
+    let mut out_shape: Vec<usize> = shape[..axis].to_vec();
+    out_shape.extend_from_slice(&shape[axis + 1..]);
+    if out_shape.is_empty() {
+        out_shape.push(1);
+    }
+    Ok(grid_val_shaped(out, out_shape))
 }
 
 /// The optimized BLAS, loaded once at run time if one can be found. Globw uses
@@ -8884,6 +8948,31 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 return Err(format!("nungw.reshape: {len} values cannot form a shape with {total} cells"));
             }
             Value::Floats(data.clone(), Rc::new(dims))
+        }
+        GridSumAxis => axis_reduce(&args[0], int(&args[1]), 0.0, |acc, x| acc + x, |v, _| v)?,
+        GridProdAxis => axis_reduce(&args[0], int(&args[1]), 1.0, |acc, x| acc * x, |v, _| v)?,
+        GridMeanAxis => axis_reduce(&args[0], int(&args[1]), 0.0, |acc, x| acc + x, |v, m| v / m as f64)?,
+        GridMaxAxis => axis_reduce(&args[0], int(&args[1]), f64::NEG_INFINITY, f64::max, |v, _| v)?,
+        GridMinAxis => axis_reduce(&args[0], int(&args[1]), f64::INFINITY, f64::min, |v, _| v)?,
+        GridAt => {
+            let shape = shape_of(&args[0]);
+            let idx = &args[1..];
+            if idx.len() != shape.len() {
+                return Err(format!("nungw.at: the nungw is {}-D but got {} indices", shape.len(), idx.len()));
+            }
+            let mut strides = vec![1usize; shape.len()];
+            for d in (0..shape.len()).rev().skip(1) {
+                strides[d] = strides[d + 1] * shape[d + 1];
+            }
+            let mut off = 0usize;
+            for d in 0..shape.len() {
+                let i = int(&idx[d]);
+                if i < 1 || i as usize > shape[d] {
+                    return Err(format!("nungw.at: index {i} is out of range 1..{} on dimension {}", shape[d], d + 1));
+                }
+                off += (i as usize - 1) * strides[d];
+            }
+            Value::Real(floats(&args[0]).borrow()[off])
         }
         GridEval => grid_eval(&args[0], &args[1..])?,
         GridMatmul => {
