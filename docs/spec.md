@@ -697,7 +697,9 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.sum_axis / mean_axis / max_axis / min_axis / prod_axis(g, axis)` | reduce along one dimension (0-based `axis`), removing it |
 | `nungw.rand(n)`, `nungw.randn(n)`, `nungw.eye(n)` | random uniform `[0, 1)`, standard-normal, and the n×n identity |
 | `nungw.cumsum(g)`, `nungw.cumprod(g)`, `nungw.sort(g)`, `nungw.argsort(g)` | running sum/product, sorted values, and the 1-based sort order (all flattened) |
-| `nungw.clip(g, lo, hi)`, `nungw.concat(a, b)`, `nungw.where(cond, a, b)` | clamp to a range; join two arrays; pick from `a` where `cond` ≠ 0, else `b` |
+| `nungw.clip(g, lo, hi)`, `nungw.concat(a, b)`, `nungw.where(cond, a, b)` | clamp to a range; join two arrays (flat); pick from `a` where `cond` ≠ 0, else `b` |
+| `nungw.concat_axis(a, b, axis)`, `nungw.slice(g, start, stop)` | join two arrays along a dimension (vstack/hstack); take a 1-based inclusive flat slice |
+| `nungw.eigvals_sym(a, n)`, `nungw.singular_values(a, m, n)`, `nungw.lstsq(a, m, n, b)` | eigenvalues of a symmetric matrix, singular values, and the least-squares solution of `A x ≈ b` |
 
 A nungw is **N-dimensional**: it carries a shape, and element-wise binary operators
 **broadcast** like NumPy (shapes align from the right; a size-1 dimension repeats).

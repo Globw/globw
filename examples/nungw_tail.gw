@@ -1,0 +1,20 @@
+' nungw: N-d concatenation, slicing, and heavier linear algebra. vs NumPy.
+' The iterative results (eig/svd/lstsq) are rounded to 6 decimals for a
+' platform-stable expected output.
+import nungw
+variables:
+    a, b, m, sym, s, al, bl as nungw of float
+a = nungw.reshape(nungw.range(6), [2, 3])
+b = nungw.reshape(nungw.of([10.0, 11.0, 12.0]), [1, 3])
+output(nungw.to_list(nungw.concat_axis(a, b, 0)))            ' vstack -> 3x3
+output(nungw.shape(nungw.concat_axis(a, b, 0)))
+m = nungw.reshape(nungw.of([100.0, 200.0]), [2, 1])
+output(nungw.to_list(nungw.concat_axis(a, m, 1)))            ' hstack -> 2x4
+output(nungw.to_list(nungw.slice(nungw.range(10), 3, 6)))    ' 1-based inclusive
+sym = nungw.of([2.0, 1.0, 1.0, 2.0])                         ' symmetric 2x2
+output(nungw.to_list(nungw.round(nungw.scale(nungw.eigvals_sym(sym, 2), 1000000.0))))
+s = nungw.of([3.0, 0.0, 0.0, 0.0, 4.0, 0.0])                 ' 2x3
+output(nungw.to_list(nungw.round(nungw.scale(nungw.singular_values(s, 2, 3), 1000000.0))))
+al = nungw.of([1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0])      ' 4x2
+bl = nungw.of([1.0, 3.0, 5.0, 7.0])                          ' y = 1 + 2x
+output(nungw.to_list(nungw.round(nungw.scale(nungw.lstsq(al, 4, 2, bl), 1000000.0))))

@@ -518,7 +518,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(5), Type::Grid)
         }
-        GridInv | GridDet => {
+        GridInv | GridDet | GridEigvalsSym => {
             arity(2)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -541,7 +541,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(3), Type::Grid)
         }
-        GridTranspose => {
+        GridTranspose | GridSingularValues | GridSlice => {
             arity(3)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -552,6 +552,34 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 }
             }
             ok(none(3), Type::Grid)
+        }
+        GridConcatAxis => {
+            arity(3)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            if a[1] != Type::Grid {
+                return Err(CheckError::Arg { index: 1, expected: Type::Grid });
+            }
+            if a[2] != Type::Base(Int) {
+                return Err(CheckError::Arg { index: 2, expected: Type::Base(Int) });
+            }
+            ok(none(3), Type::Grid)
+        }
+        GridLstsq => {
+            arity(4)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            for index in [1usize, 2] {
+                if a[index] != Type::Base(Int) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Int) });
+                }
+            }
+            if a[3] != Type::Grid {
+                return Err(CheckError::Arg { index: 3, expected: Type::Grid });
+            }
+            ok(none(4), Type::Grid)
         }
         GridShape => {
             arity(1)?;
@@ -3804,6 +3832,51 @@ fn axis_reduce(
         out_shape.push(1);
     }
     Ok(grid_val_shaped(out, out_shape))
+}
+
+/// Eigenvalues of a symmetric n x n matrix, by the classic cyclic Jacobi
+/// rotations. Pure Rust (works on wasm). The input is assumed symmetric; the
+/// returned values are unsorted (callers sort).
+fn jacobi_eigenvalues(mat: &[f64], n: usize) -> Vec<f64> {
+    let mut a = mat.to_vec();
+    for _sweep in 0..100 {
+        let mut off = 0.0;
+        for p in 0..n {
+            for q in (p + 1)..n {
+                off += a[p * n + q] * a[p * n + q];
+            }
+        }
+        if off <= 1e-28 {
+            break;
+        }
+        for p in 0..n {
+            for q in (p + 1)..n {
+                let apq = a[p * n + q];
+                if apq.abs() < 1e-300 {
+                    continue;
+                }
+                let theta = (a[q * n + q] - a[p * n + p]) / (2.0 * apq);
+                let sgn = if theta >= 0.0 { 1.0 } else { -1.0 };
+                let t = sgn / (theta.abs() + (theta * theta + 1.0).sqrt());
+                let c = 1.0 / (t * t + 1.0).sqrt();
+                let s = t * c;
+                // A <- J^T A J : rotate columns p,q then rows p,q
+                for i in 0..n {
+                    let aip = a[i * n + p];
+                    let aiq = a[i * n + q];
+                    a[i * n + p] = c * aip - s * aiq;
+                    a[i * n + q] = s * aip + c * aiq;
+                }
+                for i in 0..n {
+                    let api = a[p * n + i];
+                    let aqi = a[q * n + i];
+                    a[p * n + i] = c * api - s * aqi;
+                    a[q * n + i] = s * api + c * aqi;
+                }
+            }
+        }
+    }
+    (0..n).map(|i| a[i * n + i]).collect()
 }
 
 /// The optimized BLAS, loaded once at run time if one can be found. Globw uses
@@ -9131,6 +9204,118 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
             let data: Vec<f64> = (0..c.len()).map(|i| if c[i] != 0.0 { a1[i] } else { b1[i] }).collect();
             grid_val_shaped(data, (*shape_of(&args[0])).clone())
+        }
+        GridConcatAxis => {
+            let axis = int(&args[2]);
+            let (sa, sb) = (shape_of(&args[0]), shape_of(&args[1]));
+            if sa.len() != sb.len() {
+                return Err("nungw.concat_axis: the arrays have different numbers of dimensions".to_string());
+            }
+            if axis < 0 || axis as usize >= sa.len() {
+                return Err(format!("nungw.concat_axis: axis {axis} is out of range for a {}-D nungw", sa.len()));
+            }
+            let axis = axis as usize;
+            for d in 0..sa.len() {
+                if d != axis && sa[d] != sb[d] {
+                    return Err(format!("nungw.concat_axis: shapes {:?} and {:?} differ away from axis {axis}", *sa, *sb));
+                }
+            }
+            let inner: usize = sa[axis + 1..].iter().product();
+            let outer: usize = sa[..axis].iter().product();
+            let (va, vb) = (floats(&args[0]).borrow(), floats(&args[1]).borrow());
+            let (ba, bb) = (sa[axis] * inner, sb[axis] * inner);
+            let mut out = Vec::with_capacity(va.len() + vb.len());
+            for o in 0..outer {
+                out.extend_from_slice(&va[o * ba..(o + 1) * ba]);
+                out.extend_from_slice(&vb[o * bb..(o + 1) * bb]);
+            }
+            let mut out_shape = (*sa).clone();
+            out_shape[axis] = sa[axis] + sb[axis];
+            grid_val_shaped(out, out_shape)
+        }
+        GridSlice => {
+            let (start, stop) = (int(&args[1]), int(&args[2]));
+            let v = floats(&args[0]).borrow();
+            let len = v.len() as i64;
+            if start < 1 || stop > len || start > stop {
+                return Err(format!("nungw.slice: range {start}..{stop} is invalid for {len} values (1-based, inclusive)"));
+            }
+            grid_val(v[(start as usize - 1)..(stop as usize)].to_vec())
+        }
+        GridEigvalsSym => {
+            let n = int(&args[1]);
+            if n < 0 {
+                return Err("nungw.eigvals_sym: the dimension cannot be negative".to_string());
+            }
+            let n = n as usize;
+            let v = floats(&args[0]).borrow();
+            if v.len() != n * n {
+                return Err(format!("nungw.eigvals_sym: a {n}x{n} matrix needs {} values, it has {}", n * n, v.len()));
+            }
+            let mut vals = jacobi_eigenvalues(&v[..], n);
+            vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+            grid_val(vals)
+        }
+        GridSingularValues => {
+            let (m, n) = (int(&args[1]), int(&args[2]));
+            if m < 0 || n < 0 {
+                return Err("nungw.singular_values: the dimensions cannot be negative".to_string());
+            }
+            let (m, n) = (m as usize, n as usize);
+            let v = floats(&args[0]).borrow();
+            if v.len() != m * n {
+                return Err(format!("nungw.singular_values: a {m}x{n} matrix needs {} values, it has {}", m * n, v.len()));
+            }
+            // singular values of A = sqrt of the eigenvalues of A^T A (n x n, symmetric)
+            let mut ata = vec![0.0; n * n];
+            for i in 0..n {
+                for j in 0..n {
+                    let mut s = 0.0;
+                    for k in 0..m {
+                        s += v[k * n + i] * v[k * n + j];
+                    }
+                    ata[i * n + j] = s;
+                }
+            }
+            let mut sv: Vec<f64> = jacobi_eigenvalues(&ata, n).iter().map(|&x| x.max(0.0).sqrt()).collect();
+            sv.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Ordering::Equal));
+            sv.truncate(m.min(n));
+            grid_val(sv)
+        }
+        GridLstsq => {
+            let (m, n) = (int(&args[1]), int(&args[2]));
+            if m < 0 || n < 0 {
+                return Err("nungw.lstsq: the dimensions cannot be negative".to_string());
+            }
+            let (m, n) = (m as usize, n as usize);
+            let a0 = floats(&args[0]).borrow();
+            let b0 = floats(&args[3]).borrow();
+            if a0.len() != m * n {
+                return Err(format!("nungw.lstsq: a {m}x{n} matrix needs {} values, it has {}", m * n, a0.len()));
+            }
+            if b0.len() != m {
+                return Err(format!("nungw.lstsq: the right-hand side needs {m} values, it has {}", b0.len()));
+            }
+            // normal equations: (A^T A) x = A^T b
+            let mut ata = vec![0.0; n * n];
+            let mut atb = vec![0.0; n];
+            for i in 0..n {
+                for k in 0..m {
+                    atb[i] += a0[k * n + i] * b0[k];
+                }
+                for j in 0..n {
+                    let mut s = 0.0;
+                    for k in 0..m {
+                        s += a0[k * n + i] * a0[k * n + j];
+                    }
+                    ata[i * n + j] = s;
+                }
+            }
+            let mut perm = vec![0usize; n];
+            match lu_in_place(&mut ata, n, &mut perm) {
+                None => return Err("nungw.lstsq: the system is rank-deficient".to_string()),
+                Some(_) => grid_val(lu_solve(&ata, n, &perm, &atb)),
+            }
         }
         GridEval => grid_eval(&args[0], &args[1..])?,
         GridMatmul => {
