@@ -712,17 +712,17 @@ are **fused** — one pass over memory, no temporary array.
 
 **Fusion.** An element-wise expression assigned to a nungw, like
 `c = nungw.sqrt(a) * 1.5 - a / 3.0`, is compiled into **one** kernel that runs in a
-single parallel pass with no temporary arrays — not one pass per operator.
+single parallel pass with no temporary arrays — not one pass per operator. The
+kernel is **SIMD-vectorized** (four lanes at a time), across every core.
 
 **Speed.** On a 10-million element array, against NumPy (16 cores):
 - `nungw.sum_squares(a)` runs in ~0.36 ms, vs NumPy `np.sum(a**2)` ~14 ms and `np.einsum` ~2 ms.
 - the fused expression `nungw.sqrt(a) * 1.5 - a / 3.0` runs in ~13 ms, vs ~41 ms for the same NumPy expression (~3x).
 
-Globw wins because the arrays are contiguous unboxed floats worked on across every
-core, while NumPy's element-wise operations are single-threaded (and build
-temporaries). The fused expression is still interpreted per element; compiling
-each kernel to machine code (a JIT) would take it close to the memory-bandwidth
-limit.
+Globw wins because the arrays are contiguous unboxed floats, the expression is
+fused and SIMD-vectorized across every core, while NumPy's element-wise operations
+are single-threaded and build temporaries. Compiling each kernel to machine code
+(a JIT) could take it further still, close to the memory-bandwidth limit.
 
 For **matrix multiplication** (`nungw.matmul`), Globw uses an optimized BLAS when
 one is available — exactly as NumPy does — and otherwise a cache-blocked,
