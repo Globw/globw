@@ -9,6 +9,7 @@ use std::rc::Rc;
 use rayon::prelude::*;
 use rustfft::{num_complex::Complex, FftPlanner};
 use serde_json::Value as Json;
+use wide::f64x4;
 
 use crate::builtins::{Builtin, CheckError, Checked};
 use crate::tir::BaseType::{Bool, Int, Real, Str};
@@ -3939,6 +3940,47 @@ fn run_program(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize) 
     st[0]
 }
 
+/// The same fused kernel, four lanes at a time with SIMD. `i` is the start of a
+/// block of four contiguous elements (so `i + 3` must be in range). Every opcode
+/// has a direct `f64x4` form, so the whole program vectorizes with no fallback.
+fn run_program_simd(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize) -> f64x4 {
+    let mut st = [f64x4::ZERO; 32];
+    let mut sp = 0usize;
+    for m in program {
+        match m {
+            Micro::Leaf(k) => {
+                let s = leaves[*k];
+                st[sp] = f64x4::from([s[i], s[i + 1], s[i + 2], s[i + 3]]);
+                sp += 1;
+            }
+            Micro::Scalar(k) => {
+                st[sp] = f64x4::splat(scalars[*k]);
+                sp += 1;
+            }
+            Micro::Add => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] + st[sp];
+            }
+            Micro::Sub => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] - st[sp];
+            }
+            Micro::Mul => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] * st[sp];
+            }
+            Micro::Div => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] / st[sp];
+            }
+            Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
+            Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
+            Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+        }
+    }
+    st[0]
+}
+
 /// Runs a fused element-wise kernel: one parallel pass over the leaf grids,
 /// with no temporary arrays. `rest` holds the leaf grids then the scalars.
 fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
@@ -3956,7 +3998,22 @@ fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
         .iter()
         .find(|v| matches!(v, Value::Floats(..)))
         .map_or_else(|| vec![n], |v| (*shape_of(v)).clone());
-    let data: Vec<f64> = (0..n).into_par_iter().map(|i| run_program(&program, &leaves, &scalars, i)).collect();
+    // SIMD: four contiguous elements per step, written in place into one buffer
+    // (across the cores on native), then a short scalar tail for the last n % 4.
+    let full = n / 4;
+    let mut data = vec![0.0f64; n];
+    #[cfg(feature = "native")]
+    data[..full * 4].par_chunks_mut(4).enumerate().for_each(|(ci, dst)| {
+        dst.copy_from_slice(&run_program_simd(&program, &leaves, &scalars, ci * 4).to_array());
+    });
+    #[cfg(not(feature = "native"))]
+    for ci in 0..full {
+        let r = run_program_simd(&program, &leaves, &scalars, ci * 4).to_array();
+        data[ci * 4..ci * 4 + 4].copy_from_slice(&r);
+    }
+    for i in (full * 4)..n {
+        data[i] = run_program(&program, &leaves, &scalars, i);
+    }
     Ok(grid_val_shaped(data, shape))
 }
 
