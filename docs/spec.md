@@ -710,7 +710,9 @@ does, the WebAssembly playground included.
 
 A nungw is a value: a temporary made by an operator frees itself when it is no
 longer used, so loops do not leak. The reductions `sum_squares`, `norm` and `dot`
-are **fused** — one pass over memory, no temporary array.
+are **fused** — one pass over memory, no temporary array. Being a value, a nungw
+can be a function parameter or a return type, and a `list of nungw of float` holds
+several — handy for the weight matrices of a neural network, say.
 
 **Fusion.** An element-wise expression assigned to a nungw, like
 `c = nungw.sqrt(a) * 1.5 - a / 3.0`, is compiled into **one** kernel that runs in a
