@@ -1,0 +1,67 @@
+' nn: a tiny neural-network library built on nungw.
+' A 2-layer MLP (one hidden layer with tanh, sigmoid output, MSE loss).
+' The network is the module's state, so you train one at a time. After
+' nn.forward(x, rows) the result is in nn.out.
+import nungw
+
+global variables:
+    w1, b1, w2, b2, out as nungw of float
+    nin, nhid, nout as int
+
+' Create a fresh network: ni inputs, nh hidden units, no outputs.
+procedure mlp(ni as int, nh as int, no as int)
+    nin = ni
+    nhid = nh
+    nout = no
+    w1 = nungw.reshape(nungw.scale(nungw.randn(ni * nh), 0.7), [ni, nh])
+    b1 = nungw.zeros(nh)
+    w2 = nungw.reshape(nungw.scale(nungw.randn(nh * no), 0.7), [nh, no])
+    b2 = nungw.zeros(no)
+end procedure
+
+' Forward pass over a batch x (rows x nin). The output (rows x nout) lands in nn.out.
+procedure forward(x as nungw of float, rows as int)
+    variables:
+        z1, h, z2 as nungw of float
+    z1 = nungw.matmul(x, rows, nin, w1, nhid) + b1
+    h = nungw.tanh(z1)
+    z2 = nungw.matmul(h, rows, nhid, w2, nout) + b2
+    out = nungw.recip(nungw.offset(nungw.exp(nungw.neg(z2)), 1.0))
+end procedure
+
+' Mean-squared-error loss of the current network on (x, y).
+function loss(x as nungw of float, y as nungw of float, rows as int) as float
+    forward(x, rows)
+    return nungw.mean(nungw.square(nungw.sub(out, y)))
+end function
+
+' Train with full-batch gradient descent (backpropagation).
+procedure train(x as nungw of float, y as nungw of float, rows as int, epochs as int, lr as float)
+    variables:
+        epoch as int
+        z1, h, z2, o, diff as nungw of float
+        sigd, dz2, dw2, db2, dh, tanhd, dz1, dw1, db1, xt, ht, w2t as nungw of float
+    xt = nungw.transpose(x, rows, nin)
+    for(epoch from 1 to epochs)
+        z1 = nungw.matmul(x, rows, nin, w1, nhid) + b1
+        h = nungw.tanh(z1)
+        z2 = nungw.matmul(h, rows, nhid, w2, nout) + b2
+        o = nungw.recip(nungw.offset(nungw.exp(nungw.neg(z2)), 1.0))
+        diff = nungw.sub(o, y)
+        sigd = nungw.mul(o, nungw.scalar_sub(o, 1.0))
+        dz2 = nungw.mul(diff, sigd)
+        ht = nungw.transpose(h, rows, nhid)
+        dw2 = nungw.matmul(ht, nhid, rows, dz2, nout)
+        db2 = nungw.sum_axis(dz2, 0)
+        w2t = nungw.transpose(w2, nhid, nout)
+        dh = nungw.matmul(dz2, rows, nout, w2t, nhid)
+        tanhd = nungw.scalar_sub(nungw.square(h), 1.0)
+        dz1 = nungw.mul(dh, tanhd)
+        dw1 = nungw.matmul(xt, nin, rows, dz1, nhid)
+        db1 = nungw.sum_axis(dz1, 0)
+        w1 = nungw.sub(w1, nungw.scale(dw1, lr))
+        b1 = nungw.sub(b1, nungw.scale(db1, lr))
+        w2 = nungw.sub(w2, nungw.scale(dw2, lr))
+        b2 = nungw.sub(b2, nungw.scale(db2, lr))
+    end loop
+end procedure

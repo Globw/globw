@@ -1,0 +1,12 @@
+' Learn XOR with the nn library.
+import nungw
+import nn
+variables:
+    x, y as nungw of float
+x = nungw.reshape(nungw.of([0.0,0.0, 0.0,1.0, 1.0,0.0, 1.0,1.0]), [4, 2])
+y = nungw.reshape(nungw.of([0.0, 1.0, 1.0, 0.0]), [4, 1])
+nn.mlp(2, 8, 1)
+nn.train(x, y, 4, 5000, 0.5)
+output("loss: ", nn.loss(x, y, 4))
+nn.forward(x, 4)
+output("predictions (want 0, 1, 1, 0): ", nungw.to_list(nn.out))
