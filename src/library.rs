@@ -4056,38 +4056,102 @@ fn run_program_simd(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: us
 
 /// Runs a fused element-wise kernel: one parallel pass over the leaf grids,
 /// with no temporary arrays. `rest` holds the leaf grids then the scalars.
+/// The fused kernel with broadcasting: each leaf is read through its broadcast
+/// strides at the current multi-index `idx` (a size-1 dimension has stride 0, so
+/// it repeats). Used when the arrays have different shapes; the equal-shape case
+/// takes the faster contiguous/SIMD kernel instead.
+fn run_program_bcast(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], strides: &[Vec<usize>], idx: &[usize]) -> f64 {
+    let mut st = [0f64; 32];
+    let mut sp = 0usize;
+    for m in program {
+        match m {
+            Micro::Leaf(k) => {
+                let off: usize = idx.iter().zip(&strides[*k]).map(|(i, s)| i * s).sum();
+                st[sp] = leaves[*k][off];
+                sp += 1;
+            }
+            Micro::Scalar(k) => {
+                st[sp] = scalars[*k];
+                sp += 1;
+            }
+            Micro::Add => {
+                sp -= 1;
+                st[sp - 1] += st[sp];
+            }
+            Micro::Sub => {
+                sp -= 1;
+                st[sp - 1] -= st[sp];
+            }
+            Micro::Mul => {
+                sp -= 1;
+                st[sp - 1] *= st[sp];
+            }
+            Micro::Div => {
+                sp -= 1;
+                st[sp - 1] /= st[sp];
+            }
+            Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
+            Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
+            Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+        }
+    }
+    st[0]
+}
+
 fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
     let program = parse_program(text(program))?;
-    let borrows: Vec<std::cell::Ref<Vec<f64>>> =
-        rest.iter().filter(|v| matches!(v, Value::Floats(..))).map(|v| floats(v).borrow()).collect();
+    let grid_vals: Vec<&Value> = rest.iter().filter(|v| matches!(v, Value::Floats(..))).collect();
+    let borrows: Vec<std::cell::Ref<Vec<f64>>> = grid_vals.iter().map(|v| floats(v).borrow()).collect();
     let leaves: Vec<&[f64]> = borrows.iter().map(|r| r.as_slice()).collect();
     let scalars: Vec<f64> = rest.iter().filter(|v| !matches!(v, Value::Floats(..))).map(real).collect();
     let n = leaves.first().map_or(0, |l| l.len());
-    if leaves.iter().any(|l| l.len() != n) {
-        return Err("nungw: the arrays in an expression must have the same size".to_string());
+
+    if leaves.iter().all(|l| l.len() == n) {
+        // Fast path: every array has the same size, so it is a plain element-wise
+        // pass. SIMD: four contiguous elements per step across the cores, then a
+        // short scalar tail for the last n % 4. The result keeps the first shape.
+        let shape = grid_vals.first().map_or_else(|| vec![n], |v| (*shape_of(v)).clone());
+        let full = n / 4;
+        let mut data = vec![0.0f64; n];
+        #[cfg(feature = "native")]
+        data[..full * 4].par_chunks_mut(4).enumerate().for_each(|(ci, dst)| {
+            dst.copy_from_slice(&run_program_simd(&program, &leaves, &scalars, ci * 4).to_array());
+        });
+        #[cfg(not(feature = "native"))]
+        for ci in 0..full {
+            let r = run_program_simd(&program, &leaves, &scalars, ci * 4).to_array();
+            data[ci * 4..ci * 4 + 4].copy_from_slice(&r);
+        }
+        for i in (full * 4)..n {
+            data[i] = run_program(&program, &leaves, &scalars, i);
+        }
+        return Ok(grid_val_shaped(data, shape));
     }
-    // Keep the shape of the first grid operand (element-wise preserves shape).
-    let shape = rest
-        .iter()
-        .find(|v| matches!(v, Value::Floats(..)))
-        .map_or_else(|| vec![n], |v| (*shape_of(v)).clone());
-    // SIMD: four contiguous elements per step, written in place into one buffer
-    // (across the cores on native), then a short scalar tail for the last n % 4.
-    let full = n / 4;
-    let mut data = vec![0.0f64; n];
-    #[cfg(feature = "native")]
-    data[..full * 4].par_chunks_mut(4).enumerate().for_each(|(ci, dst)| {
-        dst.copy_from_slice(&run_program_simd(&program, &leaves, &scalars, ci * 4).to_array());
-    });
-    #[cfg(not(feature = "native"))]
-    for ci in 0..full {
-        let r = run_program_simd(&program, &leaves, &scalars, ci * 4).to_array();
-        data[ci * 4..ci * 4 + 4].copy_from_slice(&r);
+
+    // Broadcast path: the arrays have different shapes. Align them from the right
+    // (NumPy rules); a dimension of size 1 repeats. Each output element reads each
+    // leaf through its broadcast strides. Parallel, one pass, no temporaries.
+    let shapes: Vec<Rc<Vec<usize>>> = grid_vals.iter().map(|v| shape_of(v)).collect();
+    let mut out_shape = (*shapes[0]).clone();
+    for s in &shapes[1..] {
+        out_shape = broadcast_shape(&out_shape, s)?;
     }
-    for i in (full * 4)..n {
-        data[i] = run_program(&program, &leaves, &scalars, i);
-    }
-    Ok(grid_val_shaped(data, shape))
+    let total: usize = out_shape.iter().product();
+    let strides: Vec<Vec<usize>> = shapes.iter().map(|s| broadcast_strides(s, &out_shape)).collect();
+    let ndim = out_shape.len();
+    let data: Vec<f64> = (0..total)
+        .into_par_iter()
+        .map(|out_i| {
+            let mut idx = vec![0usize; ndim];
+            let mut rem = out_i;
+            for d in (0..ndim).rev() {
+                idx[d] = rem % out_shape[d];
+                rem /= out_shape[d];
+            }
+            run_program_bcast(&program, &leaves, &scalars, &strides, &idx)
+        })
+        .collect();
+    Ok(grid_val_shaped(data, out_shape))
 }
 
 const OVERFLOW: &str = "number too large: the result exceeds the integer limits";

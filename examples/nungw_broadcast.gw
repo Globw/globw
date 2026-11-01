@@ -1,0 +1,14 @@
+' nungw broadcasting inside fused expressions (the bias-add case). vs NumPy.
+import nungw
+variables:
+    z, b, c, r as nungw of float
+z = nungw.reshape(nungw.range(12), [3, 4])
+b = nungw.of([10.0, 20.0, 30.0, 40.0])        ' [4] -> broadcasts over rows
+r = z + b                                      ' fused assignment + broadcast
+output(nungw.to_list(r))
+output(nungw.shape(r))
+c = nungw.reshape(nungw.of([100.0, 200.0, 300.0]), [3, 1])   ' over columns
+r = z + c
+output(nungw.to_list(r))
+r = nungw.sqrt(z * z) + b                       ' multi-op fused + broadcast
+output(nungw.to_list(r))
