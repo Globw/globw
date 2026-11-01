@@ -1,67 +1,129 @@
-' nn: a tiny neural-network library built on nungw.
-' A 2-layer MLP (one hidden layer with tanh, sigmoid output, MSE loss).
-' The network is the module's state, so you train one at a time. After
-' nn.forward(x, rows) the result is in nn.out.
+' nn: a small neural-network library in Globw, built on the nungw array engine.
+' A sequential MLP of any depth: ReLU on the hidden layers, sigmoid on the
+' output, mean-squared-error loss, trained with the Adam optimizer.
+' A network is a value -- the list [W1, b1, W2, b2, ...] -- so you can keep many.
 import nungw
 
-global variables:
-    w1, b1, w2, b2, out as nungw of float
-    nin, nhid, nout as int
-
-' Create a fresh network: ni inputs, nh hidden units, no outputs.
-procedure mlp(ni as int, nh as int, no as int)
-    nin = ni
-    nhid = nh
-    nout = no
-    w1 = nungw.reshape(nungw.scale(nungw.randn(ni * nh), 0.7), [ni, nh])
-    b1 = nungw.zeros(nh)
-    w2 = nungw.reshape(nungw.scale(nungw.randn(nh * no), 0.7), [nh, no])
-    b2 = nungw.zeros(no)
-end procedure
-
-' Forward pass over a batch x (rows x nin). The output (rows x nout) lands in nn.out.
-procedure forward(x as nungw of float, rows as int)
-    variables:
-        z1, h, z2 as nungw of float
-    z1 = nungw.matmul(x, rows, nin, w1, nhid) + b1
-    h = nungw.tanh(z1)
-    z2 = nungw.matmul(h, rows, nhid, w2, nout) + b2
-    out = nungw.recip(nungw.offset(nungw.exp(nungw.neg(z2)), 1.0))
-end procedure
-
-' Mean-squared-error loss of the current network on (x, y).
-function loss(x as nungw of float, y as nungw of float, rows as int) as float
-    forward(x, rows)
-    return nungw.mean(nungw.square(nungw.sub(out, y)))
+function relu(z as nungw of float) as nungw of float
+    return nungw.scale(nungw.add(z, nungw.abs(z)), 0.5)        ' (z + |z|)/2 = max(z, 0)
+end function
+function sigmoid(z as nungw of float) as nungw of float
+    return nungw.recip(nungw.offset(nungw.exp(nungw.neg(z)), 1.0))
 end function
 
-' Train with full-batch gradient descent (backpropagation).
-procedure train(x as nungw of float, y as nungw of float, rows as int, epochs as int, lr as float)
+' Build a network. sizes is e.g. [2, 8, 8, 1] (inputs, hidden..., outputs).
+function mlp(sizes as list of int) as list of nungw of float
     variables:
-        epoch as int
-        z1, h, z2, o, diff as nungw of float
-        sigd, dz2, dw2, db2, dh, tanhd, dz1, dw1, db1, xt, ht, w2t as nungw of float
-    xt = nungw.transpose(x, rows, nin)
+        net as list of nungw of float
+        l, ni, no as int
+    for(l from 1 to length(sizes) - 1)
+        ni = sizes[l]
+        no = sizes[l + 1]
+        append(net, nungw.reshape(nungw.scale(nungw.randn(ni * no), 0.5), [ni, no]))
+        append(net, nungw.zeros(no))
+    end loop
+    return net
+end function
+
+' Forward pass over a batch x (rows x inputs). Returns the output (rows x outputs).
+function predict(net as list of nungw of float, x as nungw of float, rows as int) as nungw of float
+    variables:
+        a, w, b, z as nungw of float
+        l, layers, ni, no as int
+        shp as list of int
+    layers = length(net) div 2
+    a = x
+    for(l from 1 to layers)
+        w = net[2 * l - 1]
+        b = net[2 * l]
+        shp = nungw.shape(w)
+        ni = shp[1]
+        no = shp[2]
+        z = nungw.matmul(a, rows, ni, w, no) + b
+        if(l < layers)
+            a = relu(z)
+        else
+            a = sigmoid(z)
+        end if
+    end loop
+    return a
+end function
+
+function loss(net as list of nungw of float, x as nungw of float, y as nungw of float, rows as int) as float
+    return nungw.mean(nungw.square(nungw.sub(predict(net, x, rows), y)))
+end function
+
+' Train in place with Adam (full-batch backpropagation).
+procedure train(net as list of nungw of float, x as nungw of float, y as nungw of float, rows as int, epochs as int, lr as float)
+    variables:
+        acts, grads, mm, vv as list of nungw of float
+        w, b, a, z, dcur, ad, dz, g, mhat, vhat as nungw of float
+        shp as list of int
+        epoch, l, layers, i, np, ni, no as int
+        beta1, beta2, eps, bp1, bp2, bc1, bc2 as float
+    layers = length(net) div 2
+    np = length(net)
+    beta1 = 0.9
+    beta2 = 0.999
+    eps = 0.00000001
+    bp1 = 1.0
+    bp2 = 1.0
+    for(i from 1 to np)
+        append(mm, nungw.scale(net[i], 0.0))
+        append(vv, nungw.scale(net[i], 0.0))
+        append(grads, net[i])
+    end loop
+    for(i from 1 to layers + 1)
+        append(acts, x)
+    end loop
     for(epoch from 1 to epochs)
-        z1 = nungw.matmul(x, rows, nin, w1, nhid) + b1
-        h = nungw.tanh(z1)
-        z2 = nungw.matmul(h, rows, nhid, w2, nout) + b2
-        o = nungw.recip(nungw.offset(nungw.exp(nungw.neg(z2)), 1.0))
-        diff = nungw.sub(o, y)
-        sigd = nungw.mul(o, nungw.scalar_sub(o, 1.0))
-        dz2 = nungw.mul(diff, sigd)
-        ht = nungw.transpose(h, rows, nhid)
-        dw2 = nungw.matmul(ht, nhid, rows, dz2, nout)
-        db2 = nungw.sum_axis(dz2, 0)
-        w2t = nungw.transpose(w2, nhid, nout)
-        dh = nungw.matmul(dz2, rows, nout, w2t, nhid)
-        tanhd = nungw.scalar_sub(nungw.square(h), 1.0)
-        dz1 = nungw.mul(dh, tanhd)
-        dw1 = nungw.matmul(xt, nin, rows, dz1, nhid)
-        db1 = nungw.sum_axis(dz1, 0)
-        w1 = nungw.sub(w1, nungw.scale(dw1, lr))
-        b1 = nungw.sub(b1, nungw.scale(db1, lr))
-        w2 = nungw.sub(w2, nungw.scale(dw2, lr))
-        b2 = nungw.sub(b2, nungw.scale(db2, lr))
+        ' forward, storing activations
+        acts[1] = x
+        a = x
+        for(l from 1 to layers)
+            w = net[2 * l - 1]
+            b = net[2 * l]
+            shp = nungw.shape(w)
+            ni = shp[1]
+            no = shp[2]
+            z = nungw.matmul(a, rows, ni, w, no) + b
+            if(l < layers)
+                a = relu(z)
+            else
+                a = sigmoid(z)
+            end if
+            acts[l + 1] = a
+        end loop
+        ' backward
+        dcur = nungw.sub(acts[layers + 1], y)
+        for(l from layers to 1 step -1)
+            shp = nungw.shape(net[2 * l - 1])
+            ni = shp[1]
+            no = shp[2]
+            if(l == layers)
+                ad = nungw.mul(acts[l + 1], nungw.scalar_sub(acts[l + 1], 1.0))
+            else
+                ad = nungw.sign(acts[l + 1])
+            end if
+            dz = nungw.mul(dcur, ad)
+            grads[2 * l - 1] = nungw.matmul(nungw.transpose(acts[l], rows, ni), ni, rows, dz, no)
+            grads[2 * l] = nungw.sum_axis(dz, 0)
+            if(l > 1)
+                dcur = nungw.matmul(dz, rows, no, nungw.transpose(net[2 * l - 1], ni, no), ni)
+            end if
+        end loop
+        ' Adam update
+        bp1 = bp1 * beta1
+        bp2 = bp2 * beta2
+        bc1 = 1.0 - bp1
+        bc2 = 1.0 - bp2
+        for(i from 1 to np)
+            mm[i] = nungw.add(nungw.scale(mm[i], beta1), nungw.scale(grads[i], 1.0 - beta1))
+            vv[i] = nungw.add(nungw.scale(vv[i], beta2), nungw.scale(nungw.square(grads[i]), 1.0 - beta2))
+            mhat = nungw.scale(mm[i], 1.0 / bc1)
+            vhat = nungw.scale(vv[i], 1.0 / bc2)
+            g = nungw.div(mhat, nungw.offset(nungw.sqrt(vhat), eps))
+            net[i] = nungw.sub(net[i], nungw.scale(g, lr))
+        end loop
     end loop
 end procedure
