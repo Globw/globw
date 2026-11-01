@@ -1,0 +1,12 @@
+' Functions can return a nungw, and a list can hold nungws.
+import nungw
+variables:
+    ws as list of nungw of float
+function doubled(a as nungw of float) as nungw of float
+    return nungw.scale(a, 2.0)
+end function
+append(ws, nungw.of([1.0, 2.0, 3.0]))
+append(ws, doubled(nungw.of([4.0, 5.0])))
+output(nungw.to_list(ws[1]))
+output(nungw.to_list(ws[2]))
+output(length(ws), " ", nungw.size(ws[1]), " ", nungw.size(ws[2]))

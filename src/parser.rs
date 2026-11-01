@@ -492,6 +492,17 @@ impl Parser {
             self.func_type_spec()
         } else if self.is_name("tuple") {
             self.tuple_type_spec()
+        } else if self.is_name("nungw") {
+            self.advance();
+            if !self.is_name("of") {
+                return self.fail("expected \"of\", like nungw of float");
+            }
+            self.advance();
+            let p = self.pos();
+            if self.base_type()? != crate::tir::BaseType::Real {
+                return Err(Error::new(p, "a nungw holds floats: write nungw of float"));
+            }
+            Ok(Type::Grid)
         } else if self.is_name("list") || self.is_name("dict") || self.is_name("set") {
             self.collection_type()
         } else if let Tok::Name(n) = self.tok() {
