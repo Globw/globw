@@ -30,8 +30,6 @@ jobs:
             pkg_arch: arm64
           - os: macos-latest
             asset: globw-macos-aarch64.tar.gz
-          - os: macos-13
-            asset: globw-macos-x86_64.tar.gz
           - os: windows-latest
             asset: globw-windows-x86_64.zip
 
