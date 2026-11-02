@@ -1,0 +1,19 @@
+Globw
+
+A statically-typed language with its own syntax and a fast Rust engine, in a single
+file. Graphics, databases, networking, audio, AI and an array engine are already built
+in -- you install nothing else.
+
+This installer will:
+
+  - copy gw.exe (the interpreter) and gwget.exe (the package manager) to your computer
+  - optionally add Globw to your PATH, so you can run "gw" from any terminal
+    (you choose on the next step -- it is just a checkbox)
+  - add Start-menu shortcuts and a clean uninstaller
+
+After installing, open a new terminal and run:
+
+  gw examples\hello.gw      run the example program
+  gwget install <name>      add a library from the catalogue
+
+Documentation: https://globw.org/docs.html

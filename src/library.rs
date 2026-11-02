@@ -111,6 +111,17 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => other("task.spawn needs a function to run, like task.spawn(worker)"),
             }
         }
+        AiEmbed => {
+            arity(1)?;
+            match a[0] {
+                Type::Base(Str) => ok(none(1), Type::Grid),
+                _ => other("ai.embed needs a text, like ai.embed(\"hello world\")"),
+            }
+        }
+        AiModels => {
+            arity(0)?;
+            ok(none(0), Type::List(Some(Str)))
+        }
         Absolute => {
             arity(1)?;
             match a[0] {
@@ -765,6 +776,13 @@ struct AiConfig {
     system: String,
     temperature: f64,
     history: Vec<(String, String)>,
+    max_tokens: Option<i64>,
+    top_p: Option<f64>,
+    seed: Option<i64>,
+    stop: Option<String>,
+    timeout: u64,
+    last: String,
+    last_tokens: i64,
 }
 
 impl Default for AiConfig {
@@ -776,6 +794,13 @@ impl Default for AiConfig {
             system: String::new(),
             temperature: 0.7,
             history: Vec::new(),
+            max_tokens: None,
+            top_p: None,
+            seed: None,
+            stop: None,
+            timeout: 180,
+            last: String::new(),
+            last_tokens: 0,
         }
     }
 }
@@ -785,16 +810,26 @@ thread_local! {
 }
 
 #[cfg(not(feature = "native"))]
-fn ai_send(_cfg: &AiConfig, _messages: Vec<Json>) -> Result<String, String> {
+fn ai_send(_cfg: &AiConfig, _messages: Vec<Json>, _json_mode: bool) -> Result<(String, i64), String> {
+    Err(NET_OFF.to_string())
+}
+#[cfg(not(feature = "native"))]
+fn ai_embed(_cfg: &AiConfig, _input: &str) -> Result<Vec<f64>, String> {
+    Err(NET_OFF.to_string())
+}
+#[cfg(not(feature = "native"))]
+fn ai_models(_cfg: &AiConfig) -> Result<Vec<String>, String> {
     Err(NET_OFF.to_string())
 }
 
+// One POST to an OpenAI-compatible endpoint; returns the parsed JSON reply.
 #[cfg(feature = "native")]
-fn ai_send(cfg: &AiConfig, messages: Vec<Json>) -> Result<String, String> {
-    let url = format!("{}/chat/completions", cfg.endpoint.trim_end_matches('/'));
-    let body = serde_json::json!({ "model": cfg.model, "messages": messages, "temperature": cfg.temperature });
-    let body = serde_json::to_string(&body).map_err(|e| format!("ai: cannot build the request: {}", e))?;
-    let mut req = ureq::post(&url).timeout(std::time::Duration::from_secs(180)).set("Content-Type", "application/json");
+fn ai_post(cfg: &AiConfig, path: &str, body: &Json) -> Result<Json, String> {
+    let url = format!("{}/{}", cfg.endpoint.trim_end_matches('/'), path);
+    let body = serde_json::to_string(body).map_err(|e| format!("ai: cannot build the request: {}", e))?;
+    let mut req = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(cfg.timeout))
+        .set("Content-Type", "application/json");
     if !cfg.key.is_empty() {
         req = req.set("Authorization", &format!("Bearer {}", cfg.key));
     }
@@ -805,11 +840,71 @@ fn ai_send(cfg: &AiConfig, messages: Vec<Json>) -> Result<String, String> {
         ureq::Error::Transport(t) => format!("ai: cannot reach {}: {}", url, t),
     })?;
     let text = resp.into_string().map_err(|e| format!("ai: cannot read the reply: {}", e))?;
-    let json: Json = serde_json::from_str(&text).map_err(|e| format!("ai: the reply is not JSON: {}", e))?;
-    json["choices"][0]["message"]["content"]
+    serde_json::from_str(&text).map_err(|e| format!("ai: the reply is not JSON: {}", e))
+}
+
+// Chat completion. Returns (answer, total_tokens). json_mode asks for a JSON object.
+#[cfg(feature = "native")]
+fn ai_send(cfg: &AiConfig, messages: Vec<Json>, json_mode: bool) -> Result<(String, i64), String> {
+    let mut body = serde_json::json!({
+        "model": cfg.model,
+        "messages": messages,
+        "temperature": cfg.temperature,
+    });
+    let m = body.as_object_mut().unwrap();
+    if let Some(n) = cfg.max_tokens {
+        m.insert("max_tokens".into(), serde_json::json!(n));
+    }
+    if let Some(p) = cfg.top_p {
+        m.insert("top_p".into(), serde_json::json!(p));
+    }
+    if let Some(s) = cfg.seed {
+        m.insert("seed".into(), serde_json::json!(s));
+    }
+    if let Some(stop) = &cfg.stop {
+        m.insert("stop".into(), serde_json::json!(stop));
+    }
+    if json_mode {
+        m.insert("response_format".into(), serde_json::json!({ "type": "json_object" }));
+    }
+    let json = ai_post(cfg, "chat/completions", &body)?;
+    let content = json["choices"][0]["message"]["content"]
         .as_str()
         .map(str::to_string)
-        .ok_or_else(|| format!("ai: no answer in the reply: {}", text))
+        .ok_or_else(|| format!("ai: no answer in the reply: {}", json))?;
+    let tokens = json["usage"]["total_tokens"].as_i64().unwrap_or(0);
+    Ok((content, tokens))
+}
+
+// Embed one text into a vector (the /embeddings endpoint).
+#[cfg(feature = "native")]
+fn ai_embed(cfg: &AiConfig, input: &str) -> Result<Vec<f64>, String> {
+    let body = serde_json::json!({ "model": cfg.model, "input": input });
+    let json = ai_post(cfg, "embeddings", &body)?;
+    let arr = json["data"][0]["embedding"]
+        .as_array()
+        .ok_or_else(|| format!("ai: no embedding in the reply: {}", json))?;
+    Ok(arr.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect())
+}
+
+// List the models the endpoint offers (the /models endpoint).
+#[cfg(feature = "native")]
+fn ai_models(cfg: &AiConfig) -> Result<Vec<String>, String> {
+    let url = format!("{}/models", cfg.endpoint.trim_end_matches('/'));
+    let mut req = ureq::get(&url).timeout(std::time::Duration::from_secs(cfg.timeout));
+    if !cfg.key.is_empty() {
+        req = req.set("Authorization", &format!("Bearer {}", cfg.key));
+    }
+    let resp = req.call().map_err(|e| match e {
+        ureq::Error::Status(code, r) => {
+            format!("ai: the server answered with status {} - {}", code, r.into_string().unwrap_or_default())
+        }
+        ureq::Error::Transport(t) => format!("ai: cannot reach {}: {}", url, t),
+    })?;
+    let text = resp.into_string().map_err(|e| format!("ai: cannot read the reply: {}", e))?;
+    let json: Json = serde_json::from_str(&text).map_err(|e| format!("ai: the reply is not JSON: {}", e))?;
+    let arr = json["data"].as_array().ok_or_else(|| format!("ai: no models in the reply: {}", json))?;
+    Ok(arr.iter().filter_map(|m| m["id"].as_str().map(str::to_string)).collect())
 }
 
 fn ai_messages(cfg: &AiConfig, extra: Option<&str>) -> Vec<Json> {
@@ -5058,8 +5153,11 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         AiAsk => {
             let prompt = text(&args[0]).to_string();
             let answer = AI.with(|c| {
-                let cfg = c.borrow();
-                ai_send(&cfg, ai_messages(&cfg, Some(&prompt)))
+                let mut cfg = c.borrow_mut();
+                let (ans, tok) = ai_send(&cfg, ai_messages(&cfg, Some(&prompt)), false)?;
+                cfg.last = ans.clone();
+                cfg.last_tokens = tok;
+                Ok::<String, String>(ans)
             })?;
             string(answer)
         }
@@ -5068,9 +5166,11 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             let answer = AI.with(|c| {
                 let mut cfg = c.borrow_mut();
                 let messages = ai_messages(&cfg, Some(&prompt));
-                let ans = ai_send(&cfg, messages)?;
+                let (ans, tok) = ai_send(&cfg, messages, false)?;
                 cfg.history.push(("user".to_string(), prompt));
                 cfg.history.push(("assistant".to_string(), ans.clone()));
+                cfg.last = ans.clone();
+                cfg.last_tokens = tok;
                 Ok::<String, String>(ans)
             })?;
             string(answer)
@@ -5078,6 +5178,75 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         AiReset => {
             AI.with(|c| c.borrow_mut().history.clear());
             Value::Null
+        }
+        AiMaxTokens => {
+            let v = int(&args[0]);
+            AI.with(|c| c.borrow_mut().max_tokens = if v > 0 { Some(v) } else { None });
+            Value::Null
+        }
+        AiTopP => {
+            let v = real(&args[0]);
+            AI.with(|c| c.borrow_mut().top_p = Some(v));
+            Value::Null
+        }
+        AiSeed => {
+            let v = int(&args[0]);
+            AI.with(|c| c.borrow_mut().seed = Some(v));
+            Value::Null
+        }
+        AiStop => {
+            let v = text(&args[0]).to_string();
+            AI.with(|c| c.borrow_mut().stop = if v.is_empty() { None } else { Some(v) });
+            Value::Null
+        }
+        AiTimeout => {
+            let v = int(&args[0]);
+            AI.with(|c| c.borrow_mut().timeout = if v > 0 { v as u64 } else { 1 });
+            Value::Null
+        }
+        AiAddSystem => {
+            let v = text(&args[0]).to_string();
+            AI.with(|c| c.borrow_mut().history.push(("system".to_string(), v)));
+            Value::Null
+        }
+        AiAddUser => {
+            let v = text(&args[0]).to_string();
+            AI.with(|c| c.borrow_mut().history.push(("user".to_string(), v)));
+            Value::Null
+        }
+        AiAddAssistant => {
+            let v = text(&args[0]).to_string();
+            AI.with(|c| c.borrow_mut().history.push(("assistant".to_string(), v)));
+            Value::Null
+        }
+        AiHistory => {
+            let s = AI.with(|c| {
+                let cfg = c.borrow();
+                cfg.history.iter().map(|(r, t)| format!("{}: {}", r, t)).collect::<Vec<_>>().join("\n")
+            });
+            string(s)
+        }
+        AiLast => string(AI.with(|c| c.borrow().last.clone())),
+        AiTokens => Value::Int(AI.with(|c| c.borrow().last_tokens)),
+        AiJson => {
+            let prompt = text(&args[0]).to_string();
+            let answer = AI.with(|c| {
+                let mut cfg = c.borrow_mut();
+                let (ans, tok) = ai_send(&cfg, ai_messages(&cfg, Some(&prompt)), true)?;
+                cfg.last = ans.clone();
+                cfg.last_tokens = tok;
+                Ok::<String, String>(ans)
+            })?;
+            string(answer)
+        }
+        AiEmbed => {
+            let input = text(&args[0]).to_string();
+            let v = AI.with(|c| ai_embed(&c.borrow(), &input))?;
+            grid_val(v)
+        }
+        AiModels => {
+            let list = AI.with(|c| ai_models(&c.borrow()))?;
+            Value::Seq(Rc::new(RefCell::new(list.into_iter().map(string).collect())))
         }
 
         // ======== module "symbol": symbolic mathematics ========

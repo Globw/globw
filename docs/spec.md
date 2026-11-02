@@ -940,6 +940,13 @@ sets a system prompt and `ai.temperature(t)` the randomness. Then `ai.ask(prompt
 returns a one-shot answer, while `ai.say(prompt)` keeps the conversation (it remembers
 the previous turns) and `ai.reset()` clears that history. Example (fully local): 
 `ai.use_ollama("llama3")` then `ai.ask("Capital of Italy?")`.
+Sampling and limits: `ai.max_tokens(n)`, `ai.top_p(p)`, `ai.seed(n)`, `ai.stop(text)`
+and `ai.timeout(seconds)`. Build a conversation by hand with `ai.add_system(text)`,
+`ai.add_user(text)` and `ai.add_assistant(text)`; read it back with `ai.history()`,
+get the previous answer with `ai.last()` and the tokens it cost with `ai.tokens()`.
+`ai.json(prompt)` forces the reply to be a JSON object (returns its text). `ai.embed(text)`
+returns the text's embedding as a **nungw** vector — so you can rank by similarity with
+the array engine. `ai.models()` lists the model names the endpoint offers.
 
 **`symbol` — symbolic mathematics.** Build an expression tree from `symbol.var("x")`,
 `symbol.const(c)` and the ops `add`, `sub`, `mul`, `div`, `pow`, `neg`, `sin`, `cos`,

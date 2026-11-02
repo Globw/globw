@@ -1,3 +1,4 @@
 /target
 *.vsix
 .superpowers/
+/installer/output/

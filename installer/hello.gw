@@ -1,0 +1,14 @@
+' Welcome to Globw!
+' Run this file from a terminal with:   gw hello.gw
+' Then edit it and run it again to see your changes.
+
+variables:
+    i as int
+
+output("Hello from Globw!")
+
+for(i from 1 to 5)
+    output("Globw counts: " + to_text(i))
+end loop
+
+output("You are ready. Try:  gwget install vec2")
