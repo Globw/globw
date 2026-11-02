@@ -1,0 +1,23 @@
+# nfpm config: builds the Linux .deb and .rpm packages for Globw.
+# PKG_ARCH (amd64|arm64) and PKG_VERSION are set by the CI from the matrix/tag.
+# Build locally with:  nfpm package -f nfpm.yaml -p deb   (needs the release binaries)
+name: globw
+arch: ${PKG_ARCH}
+platform: linux
+version: ${PKG_VERSION}
+section: devel
+priority: optional
+maintainer: Globw <60625041+Globw@users.noreply.github.com>
+description: |
+  Globw is a statically-typed language with its own syntax and a fast Rust
+  engine, in a single file. Graphics, databases, networking, audio, an AI
+  client and an array engine are built in. Ships the interpreter (gw) and
+  the package manager (gwget).
+vendor: Globw
+homepage: https://globw.org
+license: Apache-2.0
+contents:
+  - src: ./target/release/gw
+    dst: /usr/bin/gw
+  - src: ./target/release/gwget
+    dst: /usr/bin/gwget
