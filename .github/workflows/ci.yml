@@ -85,8 +85,10 @@ jobs:
           REF="${{ github.ref_name }}"
           if [[ "$REF" =~ ^v[0-9] ]]; then export PKG_VERSION="${REF#v}"; else export PKG_VERSION="0.0.0"; fi
           export PKG_ARCH="${{ matrix.pkg_arch }}"
-          nfpm package -f nfpm.yaml -p deb
-          nfpm package -f nfpm.yaml -p rpm
+          if [ "$PKG_ARCH" = "amd64" ]; then RPM_ARCH=x86_64; else RPM_ARCH=aarch64; fi
+          # stable filenames (no version) so the website can link releases/latest/download/<file>
+          nfpm package -f nfpm.yaml -p deb -t "globw-linux-${PKG_ARCH}.deb"
+          nfpm package -f nfpm.yaml -p rpm -t "globw-linux-${RPM_ARCH}.rpm"
           ls -1 *.deb *.rpm
 
       - name: Upload Linux packages
