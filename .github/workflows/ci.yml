@@ -11,6 +11,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# When a new run starts for the same branch/tag, cancel the older in-progress
+# one so stale runs don't linger waiting for (scarce) macOS runners.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write   # needed to create the release and upload assets
 
