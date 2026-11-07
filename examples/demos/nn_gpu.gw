@@ -1,0 +1,61 @@
+' A tiny MLP (one hidden layer, ReLU, MSE) trained end-to-end on the GPU, with
+' every array kept RESIDENT in VRAM: the forward pass (matmul + broadcast bias +
+' fused ReLU), the loss (mean of squares), the backward pass (matmul_ta / matmul_tb
+' and sum_axis for the bias gradient) and the SGD weight update all run on the
+' device with no round-trips. Build with the `gpu` feature and set GLOBW_GPU=1 to
+' use the GPU; without them nungw.to_gpu is a no-op and it trains on the CPU, with
+' the same result (the GPU is f32, so its numbers differ by ~1e-7).
+'
+' It fits y = x1 + x2, so plain SGD drives the loss down steadily.
+import nungw
+variables:
+    x, y, w1, b1, w2, b2 as nungw of float
+    z1, a1, z2, pred, diff, dz2, dw2, db2, da1, step1, dz1, dw1, db1 as nungw of float
+    loss as float
+    epoch as int
+
+x = nungw.reshape(nungw.of([0.1, 0.9, 0.4, 0.2, 0.7, 0.5, 0.9, 0.1, 0.2, 0.6, 0.6, 0.3]), [6, 2])
+y = nungw.reshape(nungw.of([1.0, 0.6, 1.2, 1.0, 0.8, 0.9]), [6, 1])
+
+' weights to the GPU (f32), and the data too, so the whole loop stays resident
+w1 = nungw.to_gpu(nungw.reshape(nungw.randn(16), [2, 8]) * 0.3)
+b1 = nungw.to_gpu(nungw.reshape(nungw.randn(8), [8]) * 0.0)
+w2 = nungw.to_gpu(nungw.reshape(nungw.randn(8), [8, 1]) * 0.3)
+b2 = nungw.to_gpu(nungw.reshape(nungw.randn(1), [1]) * 0.0)
+x = nungw.to_gpu(x)
+y = nungw.to_gpu(y)
+
+for(epoch from 1 to 400)
+    ' forward
+    z1 = nungw.matmul(x, w1) + b1
+    a1 = (z1 + nungw.abs(z1)) * 0.5          ' relu(z) = (z + |z|) / 2, fused
+    z2 = nungw.matmul(a1, w2) + b2
+    pred = z2
+    ' backward (MSE, linear output; N = 6 so 2/N = 0.3333)
+    diff = pred - y
+    dz2 = diff * 0.33333333
+    dw2 = nungw.matmul_ta(a1, dz2)           ' a1^T * dz2
+    db2 = nungw.sum_axis(dz2, 0)
+    da1 = nungw.matmul_tb(dz2, w2)           ' dz2 * w2^T
+    step1 = (nungw.sign(z1) + 1.0) * 0.5     ' relu'(z) as a step, fused
+    dz1 = da1 * step1
+    dw1 = nungw.matmul_ta(x, dz1)
+    db1 = nungw.sum_axis(dz1, 0)
+    ' SGD update (fused, resident)
+    w1 = w1 - dw1 * 0.1
+    b1 = b1 - db1 * 0.1
+    w2 = w2 - dw2 * 0.1
+    b2 = b2 - db2 * 0.1
+    if(epoch == 1)
+        loss = nungw.mean(nungw.square(diff))
+        output("epoch   1  loss ", loss)
+    end if
+end loop
+
+' final loss
+z1 = nungw.matmul(x, w1) + b1
+a1 = (z1 + nungw.abs(z1)) * 0.5
+z2 = nungw.matmul(a1, w2) + b2
+diff = z2 - y
+loss = nungw.mean(nungw.square(diff))
+output("epoch 400  loss ", loss)

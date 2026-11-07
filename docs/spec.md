@@ -510,7 +510,7 @@ A file that cannot be read or written is a run-time error that names it.
 | `now()` | `string` | the time, like `"16:05:09"` |
 | `stop()` | procedure | ends the program at once (the window, if any, closes) |
 
-All these names are reserved like the other built-ins. Python features that need types Globw does not have (sets, tuples), functions as values (`map`, `filter`, `lambda`) or classes are not part of Globw.
+All these names are reserved like the other built-ins. Globw does not provide Python's `map` and `filter` under those names — use a comprehension or a lambda (§6.15). Sets (§6.11), tuples (§6.16), classes (§6.13) and functions as values, including lambdas (§6.15), are all part of Globw.
 
 ### 6.12 Modules and imports
 
@@ -689,8 +689,10 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.pow(a, b)`, `nungw.atan2(a, b)`, `nungw.hypot(a, b)`, `nungw.mod(a, b)`, `nungw.maximum(a, b)`, `nungw.minimum(a, b)` | binary element-wise between two nungws |
 | `nungw.sum/mean/max/min(g)`, `nungw.dot(a, b)`, `nungw.sum_squares(g)`, `nungw.norm(g)` | reductions to a single number |
 | `nungw.prod/var/std/median/ptp(g)`, `nungw.argmax(g)`, `nungw.argmin(g)` | more statistics (`var`/`std` are population; `argmax`/`argmin` give the 1-based position) |
-| `nungw.matmul(a, rows, inner, b, cols)` | matrix product: `a` is `rows`×`inner`, `b` is `inner`×`cols` (row-major), result `rows`×`cols` |
-| `nungw.solve(a, n, b)`, `nungw.inv(a, n)`, `nungw.det(a, n)`, `nungw.transpose(a, rows, cols)` | linear algebra on a flat row-major matrix (LU with partial pivoting): solve `A x = b`, inverse, determinant, transpose |
+| `nungw.matmul(a, b)` | matrix product using the arrays' 2-D shapes: `a` is `m`×`k`, `b` is `k`×`n`, result `m`×`n`. The explicit form `nungw.matmul(a, rows, inner, b, cols)` is still there for flat arrays |
+| `nungw.matmul_ta(a, b)` | product with the first matrix transposed: `aᵀ · b` (no explicit transpose). Explicit form: `nungw.matmul_ta(a, a_rows, a_cols, b, b_cols)` |
+| `nungw.matmul_tb(a, b)` | product with the second matrix transposed: `a · bᵀ` (no explicit transpose). Explicit form: `nungw.matmul_tb(a, a_rows, inner, b, b_rows)` |
+| `nungw.solve(a, n, b)`, `nungw.inv(a, n)`, `nungw.det(a, n)`, `nungw.transpose(a, rows, cols)` | linear algebra on a flat row-major matrix (LU with partial pivoting): solve `A x = b`, inverse, determinant, transpose. Each also has a shape-aware form that drops the dimensions: `nungw.solve(a, b)`, `nungw.inv(a)`, `nungw.det(a)`, `nungw.transpose(a)` (likewise `eigvals_sym`, `singular_values`, `lstsq`) |
 | `nungw.fft(a)`, `nungw.ifft(c)`, `nungw.cabs(c)` | FFT of a real array → complex, inverse FFT, and magnitudes; a complex array is interleaved `[re, im, re, im, ...]` |
 | `nungw.shape(g)`, `nungw.ndim(g)`, `nungw.reshape(g, [dims])` | a nungw is N-dimensional: read its shape, its number of dimensions, or give it a new shape |
 | `nungw.at(g, i, j, ...)` | read one element by N-dimensional index (1-based) |
@@ -717,7 +719,10 @@ several — handy for the weight matrices of a neural network, say.
 **Fusion.** An element-wise expression assigned to a nungw, like
 `c = nungw.sqrt(a) * 1.5 - a / 3.0`, is compiled into **one** kernel that runs in a
 single parallel pass with no temporary arrays — not one pass per operator. The
-kernel is **SIMD-vectorized** (four lanes at a time), across every core.
+kernel is **SIMD-vectorized** (four lanes at a time), across every core. Fusion
+covers the arithmetic operators, `sqrt`/`square`/`abs`, and the unary math and
+activation functions (`exp`, `log`, `sin`, `tanh`, `sign`, `neg`, `recip`, …), so a
+whole activation chain such as `nungw.tanh(h + b)` collapses into one pass.
 
 **Speed.** On a 10-million element array, against NumPy (16 cores):
 - `nungw.sum_squares(a)` runs in ~0.36 ms, vs NumPy `np.sum(a**2)` ~14 ms and `np.einsum` ~2 ms.
@@ -738,6 +743,34 @@ On a 2000×2000 product (f64): with the same OpenBLAS that NumPy ships, Globw
 runs in ~25 ms against NumPy's ~22 ms — **a tie**. Without a BLAS, the built-in
 kernel does it in ~39 ms. So on linear algebra Globw matches NumPy when it has the
 same library, and stays within ~2× on its own.
+
+**Reproducibility.** The figures here were measured on an **AMD Ryzen 7 9800X3D
+(8 cores / 16 threads), 32 GB RAM, Windows 11, Rust 1.99, Python 3.14 with NumPy
+2.5.4** (both current), with a release build, using the suite in `bench/bench.py`
+in the repo. On that machine the array suite runs element-wise ~4.2×, transpose
+~3.2× and reductions ~2.4× faster than NumPy, with matmul a tie; the scalar tests
+run ~1–2.6× faster than CPython. Results depend on the CPU, the core count, the
+Python/NumPy versions and the BLAS in use, so run `bench/bench.py` on your own
+machine to see your numbers.
+
+There is also an optional **GPU backend** (built with the `gpu` feature). Call
+`nungw.gpu(true)` to switch it on; it returns whether a usable GPU was found, and
+routes large matrix products to a WGSL compute shader (f32). It is off by default,
+and small work stays on the CPU, where it is faster.
+
+For heavier work you can keep arrays **resident** on the device: `nungw.to_gpu(a)`
+uploads an array, `nungw.to_cpu(g)` brings it back, and in between a chain of
+operations stays in GPU memory with no round-trips — matrix products (including the
+transposed forms used in backprop), the fused element-wise kernels (with
+broadcasting and activations), and the reductions (`sum`/`mean`/`max`/`min`/`prod`,
+both whole-array and along an axis). A neural-network layer like
+`nungw.tanh(nungw.matmul(x, w) + b)`, and a softmax built from `max_axis`, `exp` and
+`sum_axis`, run entirely on the GPU. The device uses f32,
+so results differ from the CPU's f64 by roughly one part in ten million; over very
+long chains that error compounds, so keep f64 on the CPU when you need the
+precision. On a resident chain of 1024² matrix products this backend measured
+~2–3× an OpenBLAS CPU; a single isolated operation is slower on the GPU than on the
+CPU, because moving the data costs more than the work saved.
 
 **Databases (`db`).** `import db` gives a real SQL database, backed by SQLite
 (the same engine behind Python's `sqlite3`). A connection is an `int` handle.
@@ -1195,6 +1228,37 @@ lo, hi = (hi, lo)              ' the right side is evaluated first, so this swap
 - **Unpacking:** `a, b = t` assigns the elements to the variables, which must be
   declared and match the element types; the counts must be equal.
 - A tuple is printed like a list (`[3, 7]`).
+
+### 6.17 Permissions (running untrusted code)
+
+A program's access to the system is **denied by default**. The `gw` command grants
+each kind of access only when you ask for it, so running a `.gw` file you did not
+write — or a library installed with `gwget` — cannot touch your shell, network or
+files unless you allow it.
+
+```
+gw program.gw                            ' no shell, no network, no files
+gw --allow-net program.gw                ' network allowed
+gw --allow-read --allow-write program.gw ' read and write files
+gw --allow-all program.gw                ' everything (use with care)
+```
+
+A flag can be **scoped** with `=`: `--allow-net=api.example.com` permits only that
+host (comma-separate several, e.g. `--allow-net=a.com,b.com`), and
+`--allow-read=./data` / `--allow-write=./out` permit only paths under those
+directories. A bare flag (no `=`) grants the whole category.
+
+| Flag | Permits |
+|---|---|
+| `--allow-run` | `shell.run` and the `proc` module |
+| `--allow-net` | the `web`, `serve` and `net` modules, and `ai` requests |
+| `--allow-read` | reading files, and `db.open` / `db.value` / `db.query` |
+| `--allow-write` | `write_file`, the `chart` module, and `db.run` |
+| `--allow-all` | all of the above |
+
+Without the matching flag the call fails with a clear error that names the flag to
+add. Pure computation — maths, strings, collections, `nungw`, graphics windows —
+needs no permission.
 
 ## 7. Errors
 

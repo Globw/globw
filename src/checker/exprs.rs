@@ -77,7 +77,7 @@ impl Fuser {
     fn walk(&mut self, e: TExpr) {
         use Builtin::*;
         let TExprKind::Builtin(b, mut args) = e.kind else {
-            self.leaf(e);
+            self.leaf(fuse_children(e));
             return;
         };
         match b {
@@ -116,22 +116,63 @@ impl Fuser {
                     _ => "ab",
                 }.to_string());
             }
-            _ => self.leaf(TExpr { kind: TExprKind::Builtin(b, args), ty: e.ty, pos: e.pos }),
+            _ if crate::library::grid_unary_token(b).is_some() => {
+                // tanh, exp, sin, sign, recip, ... fuse as one-arg ops, so a whole
+                // activation chain collapses into a single kernel (resident on GPU).
+                let g = args.pop().expect("grid");
+                self.walk(g);
+                self.prog.push(crate::library::grid_unary_token(b).expect("unary").to_string());
+            }
+            _ if crate::library::grid_binary_token(b).is_some() => {
+                // pow, atan2, hypot, mod, maximum, minimum between two arrays fuse
+                // as two-arg ops (so they compose and stay resident on the GPU).
+                let rhs = args.pop().expect("binary");
+                let lhs = args.pop().expect("binary");
+                self.walk(lhs);
+                self.walk(rhs);
+                self.prog.push(crate::library::grid_binary_token(b).expect("binary").to_string());
+            }
+            _ => self.leaf(fuse_children(TExpr { kind: TExprKind::Builtin(b, args), ty: e.ty, pos: e.pos })),
         }
     }
+}
+
+/// Fuses the element-wise grid sub-expressions sitting in the arguments of a node
+/// that is NOT itself a fuseable grid operator (a matmul, an append, a reduction,
+/// a user function, ...). Without this, a grid expression in argument position --
+/// e.g. `nungw.matmul(nungw.scale(a, 2.0), w)` or `append(xs, nungw.exp(g))` --
+/// would run op by op and, on the GPU, download instead of staying resident.
+fn fuse_children(mut e: TExpr) -> TExpr {
+    use TExprKind::*;
+    e.kind = match e.kind {
+        Builtin(b, args) => Builtin(b, args.into_iter().map(fuse).collect()),
+        Call(i, args) => Call(i, args.into_iter().map(fuse).collect()),
+        VCall { slot, args } => VCall { slot, args: args.into_iter().map(fuse).collect() },
+        New { class, ctor, args } => New { class, ctor, args: args.into_iter().map(fuse).collect() },
+        Elem(p, idx) => Elem(p, idx.into_iter().map(fuse).collect()),
+        Index(a, k) => Index(Box::new(fuse(*a)), Box::new(fuse(*k))),
+        Length(a) => Length(Box::new(fuse(*a))),
+        ListLit(items) => ListLit(items.into_iter().map(fuse).collect()),
+        other => other,
+    };
+    e
 }
 
 fn is_fuseable_root(e: &TExpr) -> bool {
     use Builtin::*;
     matches!(&e.kind, TExprKind::Builtin(b, _) if matches!(b,
         GridAdd | GridSub | GridMul | GridDiv | GridScale | GridOffset | GridSubScalar
-        | GridScalarSub | GridDivScalar | GridScalarDiv | GridSqrt | GridSquare | GridAbs))
+        | GridScalarSub | GridDivScalar | GridScalarDiv | GridSqrt | GridSquare | GridAbs)
+        || crate::library::grid_unary_token(*b).is_some()
+        || crate::library::grid_binary_token(*b).is_some())
 }
 
 /// Collapses an element-wise grid expression into one fused `grid.eval` call.
 pub(crate) fn fuse(e: TExpr) -> TExpr {
     if e.ty != Type::Grid || !is_fuseable_root(&e) {
-        return e;
+        // not a fuseable grid op itself, but it may hold grid expressions in its
+        // arguments (matmul, append, a reduction, a user call): fuse those.
+        return fuse_children(e);
     }
     let pos = e.pos;
     let mut f = Fuser::default();

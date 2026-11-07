@@ -1,0 +1,18 @@
+' XOR trained with the nn library, entirely RESIDENT on the GPU. nn.gpu(net)
+' moves the weights to VRAM, and with the data on the GPU too the whole training
+' loop (forward, backward, Adam update) runs on the device -- no round-trips.
+' Build with the `gpu` feature and set GLOBW_GPU=1 to use the GPU; otherwise
+' nungw.to_gpu is a no-op and it trains on the CPU, with the same result.
+import nn
+import nungw
+variables:
+    net as list of nungw of float
+    x, y, xg, yg as nungw of float
+x = nungw.reshape(nungw.of([0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]), [4, 2])
+y = nungw.reshape(nungw.of([0.0, 1.0, 1.0, 0.0]), [4, 1])
+net = nn.gpu(nn.mlp([2, 8, 1]))     ' weights to the GPU
+xg = nungw.to_gpu(x)                ' data to the GPU
+yg = nungw.to_gpu(y)
+nn.train(net, xg, yg, 4, 2000, 0.05)
+output("loss: ", nn.loss(net, xg, yg, 4))
+output("predictions (want 0, 1, 1, 0): ", nungw.to_list(nungw.to_cpu(nn.predict(net, xg, 4))))
