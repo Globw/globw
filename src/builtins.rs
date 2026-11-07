@@ -468,6 +468,12 @@ pub enum Builtin {
     /// the fused element-wise kernel (compiler-generated from a grid expression)
     GridEval,
     GridMatmul,
+    /// GPU backend switch: nungw.gpu(on) returns whether the GPU is active now
+    GridGpu,
+    /// move a nungw to / from GPU-resident memory
+    GridToGpu, GridToCpu,
+    /// transposed matmuls that avoid materializing a transpose: A^T*B and A*B^T
+    GridMatmulTA, GridMatmulTB,
     // more element-wise maths on a nungw (unary: nungw -> nungw)
     GridExp, GridExp2, GridExpm1,
     GridLog, GridLog2, GridLog10, GridLog1p,
@@ -1485,6 +1491,11 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GridNorm, "nungw.norm", Sig::Flexible { function: true }),
     (GridEval, "nungw.eval", Sig::Flexible { function: true }),
     (GridMatmul, "nungw.matmul", Sig::Flexible { function: true }),
+    (GridGpu, "nungw.gpu", Sig::Flexible { function: true }),
+    (GridToGpu, "nungw.to_gpu", Sig::Flexible { function: true }),
+    (GridToCpu, "nungw.to_cpu", Sig::Flexible { function: true }),
+    (GridMatmulTA, "nungw.matmul_ta", Sig::Flexible { function: true }),
+    (GridMatmulTB, "nungw.matmul_tb", Sig::Flexible { function: true }),
     (GridExp, "nungw.exp", Sig::Flexible { function: true }),
     (GridExp2, "nungw.exp2", Sig::Flexible { function: true }),
     (GridExpm1, "nungw.expm1", Sig::Flexible { function: true }),

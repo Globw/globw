@@ -515,7 +515,17 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(2), Type::List(Some(e)))
         }
-        GridMatmul => {
+        GridMatmul | GridMatmulTA | GridMatmulTB => {
+            // shape-aware form f(a, b): dimensions read from the 2-D shapes.
+            // Or the explicit form f(a, rows, inner, b, cols) for flat arrays.
+            if a.len() == 2 {
+                for index in [0usize, 1] {
+                    if a[index] != Type::Grid {
+                        return Err(CheckError::Arg { index, expected: Type::Grid });
+                    }
+                }
+                return ok(none(2), Type::Grid);
+            }
             arity(5)?;
             for (index, t) in [(0usize, a[0]), (3, a[3])] {
                 if t != Type::Grid {
@@ -529,7 +539,28 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(5), Type::Grid)
         }
+        GridGpu => {
+            arity(1)?;
+            if a[0] != Type::Base(Bool) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Bool) });
+            }
+            ok(none(1), Type::Base(Bool))
+        }
+        GridToGpu | GridToCpu => {
+            arity(1)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            ok(none(1), Type::Grid)
+        }
         GridInv | GridDet | GridEigvalsSym => {
+            // shape-aware form f(a) using a's square 2-D shape, or explicit f(a, n).
+            if a.len() == 1 {
+                if a[0] != Type::Grid {
+                    return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+                }
+                return ok(none(1), if b == GridDet { Type::Base(Real) } else { Type::Grid });
+            }
             arity(2)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -540,6 +571,15 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             ok(none(2), if b == GridDet { Type::Base(Real) } else { Type::Grid })
         }
         GridSolve => {
+            // shape-aware form solve(a, b) using a's shape, or explicit solve(a, n, b).
+            if a.len() == 2 {
+                for index in [0usize, 1] {
+                    if a[index] != Type::Grid {
+                        return Err(CheckError::Arg { index, expected: Type::Grid });
+                    }
+                }
+                return ok(none(2), Type::Grid);
+            }
             arity(3)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -552,7 +592,45 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(3), Type::Grid)
         }
-        GridTranspose | GridSingularValues | GridSlice => {
+        GridTranspose => {
+            // shape-aware form transpose(a), or explicit transpose(a, rows, cols).
+            if a.len() == 1 {
+                if a[0] != Type::Grid {
+                    return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+                }
+                return ok(none(1), Type::Grid);
+            }
+            arity(3)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            for index in [1usize, 2] {
+                if a[index] != Type::Base(Int) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Int) });
+                }
+            }
+            ok(none(3), Type::Grid)
+        }
+        GridSingularValues => {
+            // shape-aware form singular_values(a), or explicit (a, m, n).
+            if a.len() == 1 {
+                if a[0] != Type::Grid {
+                    return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+                }
+                return ok(none(1), Type::Grid);
+            }
+            arity(3)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            for index in [1usize, 2] {
+                if a[index] != Type::Base(Int) {
+                    return Err(CheckError::Arg { index, expected: Type::Base(Int) });
+                }
+            }
+            ok(none(3), Type::Grid)
+        }
+        GridSlice => {
             arity(3)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -578,6 +656,15 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             ok(none(3), Type::Grid)
         }
         GridLstsq => {
+            // shape-aware form lstsq(a, b) using a's shape, or explicit (a, m, n, b).
+            if a.len() == 2 {
+                for index in [0usize, 1] {
+                    if a[index] != Type::Grid {
+                        return Err(CheckError::Arg { index, expected: Type::Grid });
+                    }
+                }
+                return ok(none(2), Type::Grid);
+            }
             arity(4)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -2313,6 +2400,10 @@ fn to_json_value(v: &Value) -> Result<Json, String> {
         Value::Matrix(_) | Value::Object(_) | Value::Func(_) => {
             return Err("this value has no JSON form".to_string());
         }
+        #[cfg(feature = "gpu")]
+        Value::GpuFloats(..) => {
+            return Err("a GPU-resident nungw has no JSON form; bring it back with nungw.to_cpu first".to_string());
+        }
     })
 }
 
@@ -3721,6 +3812,8 @@ fn floats(v: &Value) -> &Rc<RefCell<Vec<f64>>> {
 fn shape_of(v: &Value) -> Rc<Vec<usize>> {
     match v {
         Value::Floats(_, shape) => shape.clone(),
+        #[cfg(feature = "gpu")]
+        Value::GpuFloats(_, shape) => shape.clone(),
         other => panic!("internal error: expected a nungw, found {:?}", other),
     }
 }
@@ -4009,21 +4102,66 @@ fn blas_lib() -> Option<&'static libloading::Library> {
     .as_ref()
 }
 
-/// C (rows x cols, row-major) = A (rows x inner) * B (inner x cols). Uses the
-/// optimized BLAS if present, otherwise a cache-blocked parallel Rust kernel.
-fn matmul_into(out: &mut [f64], a: &[f64], b: &[f64], rows: usize, inner: usize, cols: usize) {
-    #[cfg(feature = "native")]
-    if let Some(lib) = blas_lib() {
-        // SAFETY: the ILP64 cblas signature matches; strides describe the row-major matrices.
+/// The cblas dgemm entry point, resolved once (a `lib.get`/dlsym per matmul call
+/// is pure overhead on the many small products a neural network does). The BLAS
+/// library lives in a `'static` OnceLock, so the resolved function pointer stays
+/// valid forever.
+#[cfg(feature = "native")]
+fn blas_dgemm() -> Option<CblasDgemm> {
+    static DGEMM: std::sync::OnceLock<Option<CblasDgemm>> = std::sync::OnceLock::new();
+    *DGEMM.get_or_init(|| {
+        let lib = blas_lib()?;
+        // SAFETY: the symbol's ILP64 cblas signature matches CblasDgemm, and the
+        // library is never unloaded, so the pointer outlives every use.
         unsafe {
             for sym in [b"scipy_cblas_dgemm64_\0".as_slice(), b"cblas_dgemm64_\0", b"cblas_dgemm_64_\0"] {
                 if let Ok(f) = lib.get::<CblasDgemm>(sym) {
-                    // 101 = CblasRowMajor, 111 = CblasNoTrans
-                    (*f)(101, 111, 111, rows as i64, cols as i64, inner as i64, 1.0, a.as_ptr(), inner as i64, b.as_ptr(), cols as i64, 0.0, out.as_mut_ptr(), cols as i64);
-                    return;
+                    return Some(*f);
                 }
             }
+            None
         }
+    })
+}
+
+/// General C (m x n, row-major) = op(A) * op(B), where op transposes the operand
+/// iff its flag is set. A and B are stored row-major; a transposed operand is
+/// read through swapped strides / a BLAS trans flag, with no copy. op(A) is
+/// m x k, op(B) is k x n. This backs `nungw.matmul_ta`/`matmul_tb`, so a neural
+/// network's backward pass (A^T·B, A·B^T) needs no explicit transpose.
+fn matmul_trans(out: &mut [f64], a: &[f64], b: &[f64], m: usize, k: usize, n: usize, ta: bool, tb: bool) {
+    #[cfg(feature = "native")]
+    if let Some(f) = blas_dgemm() {
+        // row-major leading dimension = columns of the STORED matrix
+        let lda = if ta { m } else { k };
+        let ldb = if tb { k } else { n };
+        let (tra, trb) = (if ta { 112 } else { 111 }, if tb { 112 } else { 111 });
+        // SAFETY: the ILP64 cblas signature matches; lda/ldb describe the stored matrices.
+        unsafe {
+            f(101, tra, trb, m as i64, n as i64, k as i64, 1.0, a.as_ptr(), lda as i64, b.as_ptr(), ldb as i64, 0.0, out.as_mut_ptr(), n as i64);
+        }
+        return;
+    }
+    // matrixmultiply: a transposed operand swaps its (row stride, col stride).
+    let (rsa, csa) = if ta { (1isize, m as isize) } else { (k as isize, 1isize) };
+    let (rsb, csb) = if tb { (1isize, k as isize) } else { (n as isize, 1isize) };
+    // SAFETY: the strides describe the stored row-major matrices of the given lengths.
+    unsafe {
+        matrixmultiply::dgemm(m, k, n, 1.0, a.as_ptr(), rsa, csa, b.as_ptr(), rsb, csb, 0.0, out.as_mut_ptr(), n as isize, 1);
+    }
+}
+
+/// C (rows x cols, row-major) = A (rows x inner) * B (inner x cols). Uses the
+/// optimized BLAS if present, otherwise a cache-blocked parallel Rust kernel.
+pub(crate) fn matmul_into(out: &mut [f64], a: &[f64], b: &[f64], rows: usize, inner: usize, cols: usize) {
+    #[cfg(feature = "native")]
+    if let Some(f) = blas_dgemm() {
+        // 101 = CblasRowMajor, 111 = CblasNoTrans.
+        // SAFETY: the ILP64 cblas signature matches; strides describe the row-major matrices.
+        unsafe {
+            f(101, 111, 111, rows as i64, cols as i64, inner as i64, 1.0, a.as_ptr(), inner as i64, b.as_ptr(), cols as i64, 0.0, out.as_mut_ptr(), cols as i64);
+        }
+        return;
     }
     // SAFETY: the strides describe row-major matrices of exactly the given lengths.
     unsafe {
@@ -4045,6 +4183,181 @@ enum Micro {
     Sqrt,
     Square,
     Abs,
+    Un(UnOp),
+    Bin(BinOp),
+}
+
+/// Binary element-wise ops between two arrays that fuse into the kernel (so
+/// `maximum`/`minimum`/`pow`/… compose and, on the GPU, stay resident).
+#[derive(Clone, Copy, PartialEq)]
+enum BinOp {
+    Pow,
+    Atan2,
+    Hypot,
+    Mod,
+    Max,
+    Min,
+}
+
+#[inline]
+fn apply_bin(op: BinOp, a: f64, b: f64) -> f64 {
+    match op {
+        BinOp::Pow => a.powf(b),
+        BinOp::Atan2 => a.atan2(b),
+        BinOp::Hypot => a.hypot(b),
+        BinOp::Mod => a - (a / b).floor() * b,
+        BinOp::Max => a.max(b),
+        BinOp::Min => a.min(b),
+    }
+}
+
+/// SIMD form: `Max`/`Min` vectorize; the rest go lane by lane.
+#[inline]
+fn apply_bin_simd(op: BinOp, a: f64x4, b: f64x4) -> f64x4 {
+    match op {
+        BinOp::Max => a.max(b),
+        BinOp::Min => a.min(b),
+        _ => {
+            let (aa, bb) = (a.to_array(), b.to_array());
+            f64x4::from([
+                apply_bin(op, aa[0], bb[0]),
+                apply_bin(op, aa[1], bb[1]),
+                apply_bin(op, aa[2], bb[2]),
+                apply_bin(op, aa[3], bb[3]),
+            ])
+        }
+    }
+}
+
+fn bin_token(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Pow => "pow",
+        BinOp::Atan2 => "atan2",
+        BinOp::Hypot => "hypot",
+        BinOp::Mod => "mod",
+        BinOp::Max => "fmax",
+        BinOp::Min => "fmin",
+    }
+}
+
+fn bin_from_token(t: &str) -> Option<BinOp> {
+    Some(match t {
+        "pow" => BinOp::Pow,
+        "atan2" => BinOp::Atan2,
+        "hypot" => BinOp::Hypot,
+        "mod" => BinOp::Mod,
+        "fmax" => BinOp::Max,
+        "fmin" => BinOp::Min,
+        _ => return None,
+    })
+}
+
+fn grid_binary(b: Builtin) -> Option<BinOp> {
+    use Builtin::*;
+    Some(match b {
+        GridPow => BinOp::Pow,
+        GridAtan2 => BinOp::Atan2,
+        GridHypot => BinOp::Hypot,
+        GridMod => BinOp::Mod,
+        GridMaximum => BinOp::Max,
+        GridMinimum => BinOp::Min,
+        _ => return None,
+    })
+}
+
+pub(crate) fn grid_binary_token(b: Builtin) -> Option<&'static str> {
+    grid_binary(b).map(bin_token)
+}
+
+/// Unary transcendental/rounding ops that fuse into the element-wise kernel, so
+/// `tanh`, `exp`, `sigmoid` (= `1/(1+exp(-x))`), etc. compose into one pass and,
+/// on the GPU backend, stay resident (one dispatch, no round-trip).
+#[derive(Clone, Copy, PartialEq)]
+enum UnOp {
+    Exp, Exp2, Expm1, Ln, Log2, Log10, Log1p,
+    Sin, Cos, Tan, Asin, Acos, Atan,
+    Sinh, Cosh, Tanh, Asinh, Acosh, Atanh,
+    Floor, Ceil, Round, Trunc,
+    Sign, Cbrt, Recip, Neg, Degrees, Radians,
+}
+
+/// The CPU meaning of each unary op, matching the former `grid_map` closures
+/// exactly (so fusing one changes no result).
+#[inline]
+fn apply_un(op: UnOp, x: f64) -> f64 {
+    use UnOp::*;
+    match op {
+        Exp => x.exp(), Exp2 => x.exp2(), Expm1 => x.exp_m1(),
+        Ln => x.ln(), Log2 => x.log2(), Log10 => x.log10(), Log1p => x.ln_1p(),
+        Sin => x.sin(), Cos => x.cos(), Tan => x.tan(),
+        Asin => x.asin(), Acos => x.acos(), Atan => x.atan(),
+        Sinh => x.sinh(), Cosh => x.cosh(), Tanh => x.tanh(),
+        Asinh => x.asinh(), Acosh => x.acosh(), Atanh => x.atanh(),
+        Floor => x.floor(), Ceil => x.ceil(), Round => x.round_ties_even(), Trunc => x.trunc(),
+        Sign => if x.is_nan() { x } else if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 },
+        Cbrt => x.cbrt(), Recip => x.recip(), Neg => -x,
+        Degrees => x.to_degrees(), Radians => x.to_radians(),
+    }
+}
+
+/// SIMD form: `Neg` vectorizes; the transcendentals have no `f64x4` form, so they
+/// go lane by lane (still one fused pass, just not vectorized for that op).
+#[inline]
+fn apply_un_simd(op: UnOp, v: f64x4) -> f64x4 {
+    if op == UnOp::Neg {
+        return -v;
+    }
+    let a = v.to_array();
+    f64x4::from([apply_un(op, a[0]), apply_un(op, a[1]), apply_un(op, a[2]), apply_un(op, a[3])])
+}
+
+/// The `grid.eval` RPN token for a unary op (shared by the fuser and the parser).
+fn un_token(op: UnOp) -> &'static str {
+    use UnOp::*;
+    match op {
+        Exp => "exp", Exp2 => "exp2", Expm1 => "expm1", Ln => "ln", Log2 => "log2", Log10 => "log10", Log1p => "log1p",
+        Sin => "sin", Cos => "cos", Tan => "tan", Asin => "asin", Acos => "acos", Atan => "atan",
+        Sinh => "sinh", Cosh => "cosh", Tanh => "tanh", Asinh => "asinh", Acosh => "acosh", Atanh => "atanh",
+        Floor => "floor", Ceil => "ceil", Round => "round", Trunc => "trunc",
+        Sign => "sign", Cbrt => "cbrt", Recip => "recip", Neg => "neg", Degrees => "deg", Radians => "rad",
+    }
+}
+
+fn un_from_token(t: &str) -> Option<UnOp> {
+    use UnOp::*;
+    Some(match t {
+        "exp" => Exp, "exp2" => Exp2, "expm1" => Expm1, "ln" => Ln, "log2" => Log2, "log10" => Log10, "log1p" => Log1p,
+        "sin" => Sin, "cos" => Cos, "tan" => Tan, "asin" => Asin, "acos" => Acos, "atan" => Atan,
+        "sinh" => Sinh, "cosh" => Cosh, "tanh" => Tanh, "asinh" => Asinh, "acosh" => Acosh, "atanh" => Atanh,
+        "floor" => Floor, "ceil" => Ceil, "round" => Round, "trunc" => Trunc,
+        "sign" => Sign, "cbrt" => Cbrt, "recip" => Recip, "neg" => Neg, "deg" => Degrees, "rad" => Radians,
+        _ => return None,
+    })
+}
+
+/// The unary op a fuseable unary grid builtin maps to (None = not fuseable).
+/// Single source of truth for both the fuser (which emits the token) and the
+/// runtime (which executes it).
+fn grid_unary(b: Builtin) -> Option<UnOp> {
+    use Builtin::*;
+    use UnOp as U;
+    Some(match b {
+        GridExp => U::Exp, GridExp2 => U::Exp2, GridExpm1 => U::Expm1,
+        GridLog => U::Ln, GridLog2 => U::Log2, GridLog10 => U::Log10, GridLog1p => U::Log1p,
+        GridSin => U::Sin, GridCos => U::Cos, GridTan => U::Tan,
+        GridAsin => U::Asin, GridAcos => U::Acos, GridAtan => U::Atan,
+        GridSinh => U::Sinh, GridCosh => U::Cosh, GridTanh => U::Tanh,
+        GridAsinh => U::Asinh, GridAcosh => U::Acosh, GridAtanh => U::Atanh,
+        GridFloor => U::Floor, GridCeil => U::Ceil, GridRound => U::Round, GridTrunc => U::Trunc,
+        GridSign => U::Sign, GridCbrt => U::Cbrt, GridRecip => U::Recip, GridNeg => U::Neg,
+        GridDegrees => U::Degrees, GridRadians => U::Radians,
+        _ => return None,
+    })
+}
+
+/// The fuser reaches `un_token` through this (it has a `Builtin`, not a `UnOp`).
+pub(crate) fn grid_unary_token(b: Builtin) -> Option<&'static str> {
+    grid_unary(b).map(un_token)
 }
 
 fn parse_program(src: &str) -> Result<Vec<Micro>, String> {
@@ -4058,7 +4371,11 @@ fn parse_program(src: &str) -> Result<Vec<Micro>, String> {
             "sq" => Ok(Micro::Square),
             "ab" => Ok(Micro::Abs),
             _ => {
-                if let Some(k) = t.strip_prefix('l') {
+                if let Some(op) = un_from_token(t) {
+                    Ok(Micro::Un(op))
+                } else if let Some(op) = bin_from_token(t) {
+                    Ok(Micro::Bin(op))
+                } else if let Some(k) = t.strip_prefix('l') {
                     k.parse().map(Micro::Leaf).map_err(|_| "nungw: bad kernel".to_string())
                 } else if let Some(k) = t.strip_prefix('s') {
                     k.parse().map(Micro::Scalar).map_err(|_| "nungw: bad kernel".to_string())
@@ -4103,6 +4420,11 @@ fn run_program(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize) 
             Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
             Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
             Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+            Micro::Un(op) => st[sp - 1] = apply_un(*op, st[sp - 1]),
+            Micro::Bin(op) => {
+                sp -= 1;
+                st[sp - 1] = apply_bin(*op, st[sp - 1], st[sp]);
+            }
         }
     }
     st[0]
@@ -4144,24 +4466,407 @@ fn run_program_simd(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: us
             Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
             Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
             Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+            Micro::Un(op) => st[sp - 1] = apply_un_simd(*op, st[sp - 1]),
+            Micro::Bin(op) => {
+                sp -= 1;
+                st[sp - 1] = apply_bin_simd(*op, st[sp - 1], st[sp]);
+            }
         }
     }
     st[0]
 }
 
-/// Runs a fused element-wise kernel: one parallel pass over the leaf grids,
-/// with no temporary arrays. `rest` holds the leaf grids then the scalars.
-/// The fused kernel with broadcasting: each leaf is read through its broadcast
-/// strides at the current multi-index `idx` (a size-1 dimension has stride 0, so
-/// it repeats). Used when the arrays have different shapes; the equal-shape case
-/// takes the faster contiguous/SIMD kernel instead.
-fn run_program_bcast(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], strides: &[Vec<usize>], idx: &[usize]) -> f64 {
+/// Transpiles a fused element-wise kernel (the RPN `Micro` program) into a WGSL
+/// compute shader for the GPU backend: each invocation computes one output
+/// element in f32. Scalars are baked in as literals, one read-only storage
+/// buffer per leaf, one read_write output buffer. Returns None if a scalar is
+/// non-finite (no WGSL literal) or the program is malformed -- the caller then
+/// stays on the CPU. Compiled under the `gpu` feature (and under `test`, so the
+/// transpiler can be unit-tested without pulling in wgpu).
+/// The WGSL expression for a unary op applied to `a`. WGSL has most of these as
+/// built-ins; the few it lacks (expm1, log10, log1p, cbrt, recip, deg/rad) are
+/// composed. Matches `apply_un` up to f32 precision.
+#[cfg(any(feature = "gpu", test))]
+fn un_wgsl(op: UnOp, a: &str) -> String {
+    use UnOp::*;
+    match op {
+        Exp => format!("exp({a})"),
+        Exp2 => format!("exp2({a})"),
+        Expm1 => format!("(exp({a}) - 1.0)"),
+        Ln => format!("log({a})"),
+        Log2 => format!("log2({a})"),
+        Log10 => format!("(log({a}) * 0.4342944819032518)"),
+        Log1p => format!("log(1.0 + {a})"),
+        Sin => format!("sin({a})"),
+        Cos => format!("cos({a})"),
+        Tan => format!("tan({a})"),
+        Asin => format!("asin({a})"),
+        Acos => format!("acos({a})"),
+        Atan => format!("atan({a})"),
+        Sinh => format!("sinh({a})"),
+        Cosh => format!("cosh({a})"),
+        Tanh => format!("tanh({a})"),
+        Asinh => format!("asinh({a})"),
+        Acosh => format!("acosh({a})"),
+        Atanh => format!("atanh({a})"),
+        Floor => format!("floor({a})"),
+        Ceil => format!("ceil({a})"),
+        Round => format!("round({a})"),
+        Trunc => format!("trunc({a})"),
+        Sign => format!("sign({a})"),
+        Cbrt => format!("(sign({a}) * pow(abs({a}), 0.3333333333333333))"),
+        Recip => format!("(1.0 / {a})"),
+        Neg => format!("(-{a})"),
+        Degrees => format!("({a} * 57.29577951308232)"),
+        Radians => format!("({a} * 0.017453292519943295)"),
+    }
+}
+
+/// The WGSL expression for a binary op of `a` and `b`. Matches `apply_bin` up to
+/// f32 precision (pow of a negative base is NaN on the GPU, as in WGSL).
+#[cfg(any(feature = "gpu", test))]
+fn bin_wgsl(op: BinOp, a: &str, b: &str) -> String {
+    match op {
+        BinOp::Pow => format!("pow({a}, {b})"),
+        BinOp::Atan2 => format!("atan2({a}, {b})"),
+        BinOp::Hypot => format!("sqrt({a} * {a} + {b} * {b})"),
+        BinOp::Mod => format!("({a} - floor({a} / {b}) * {b})"),
+        BinOp::Max => format!("max({a}, {b})"),
+        BinOp::Min => format!("min({a}, {b})"),
+    }
+}
+
+#[cfg(any(feature = "gpu", test))]
+fn program_to_wgsl(program: &[Micro], scalars: &[f64], n: usize) -> Option<String> {
+    let n_leaves = program
+        .iter()
+        .filter_map(|m| if let Micro::Leaf(k) = m { Some(*k + 1) } else { None })
+        .max()
+        .unwrap_or(0);
+    let mut stack: Vec<String> = Vec::new();
+    for m in program {
+        match m {
+            Micro::Leaf(k) => stack.push(format!("in{}[i]", k)),
+            Micro::Scalar(k) => {
+                let v = *scalars.get(*k)?;
+                if !v.is_finite() {
+                    return None;
+                }
+                stack.push(format!("f32({:?})", v as f32));
+            }
+            Micro::Add => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(format!("({} + {})", a, b));
+            }
+            Micro::Sub => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(format!("({} - {})", a, b));
+            }
+            Micro::Mul => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(format!("({} * {})", a, b));
+            }
+            Micro::Div => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(format!("({} / {})", a, b));
+            }
+            Micro::Sqrt => {
+                let a = stack.pop()?;
+                stack.push(format!("sqrt({})", a));
+            }
+            Micro::Square => {
+                let a = stack.pop()?;
+                stack.push(format!("({0} * {0})", a));
+            }
+            Micro::Abs => {
+                let a = stack.pop()?;
+                stack.push(format!("abs({})", a));
+            }
+            Micro::Un(op) => {
+                let a = stack.pop()?;
+                stack.push(un_wgsl(*op, &a));
+            }
+            Micro::Bin(op) => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(bin_wgsl(*op, &a, &b));
+            }
+        }
+    }
+    let expr = stack.pop()?;
+    if !stack.is_empty() {
+        return None; // the program did not reduce to a single value
+    }
+    let mut src = String::new();
+    for k in 0..n_leaves {
+        src.push_str(&format!(
+            "@group(0) @binding({k}) var<storage, read> in{k}: array<f32>;\n"
+        ));
+    }
+    src.push_str(&format!(
+        "@group(0) @binding({n_leaves}) var<storage, read_write> outp: array<f32>;\n"
+    ));
+    src.push_str("@compute @workgroup_size(256)\n");
+    src.push_str("fn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n");
+    src.push_str("  let i = gid.x;\n");
+    src.push_str(&format!("  if (i >= {n}u) {{ return; }}\n"));
+    src.push_str(&format!("  outp[i] = {expr};\n"));
+    src.push_str("}\n");
+    Some(src)
+}
+
+/// Like `program_to_wgsl`, but with NumPy-style broadcasting: each leaf is read
+/// through its broadcast strides against `out_shape`. The output shape and each
+/// leaf's strides (a size-1 dimension has stride 0, so it repeats) are baked into
+/// the shader as literals, so the kernel decodes the multi-index and reads each
+/// leaf at its offset. Handles a bias add `z + b` where `b` repeats over rows.
+#[cfg(any(feature = "gpu", test))]
+fn program_to_wgsl_bcast(program: &[Micro], scalars: &[f64], out_shape: &[usize], strides: &[Vec<usize>]) -> Option<String> {
+    let n_leaves = program
+        .iter()
+        .filter_map(|m| if let Micro::Leaf(k) = m { Some(*k + 1) } else { None })
+        .max()
+        .unwrap_or(0);
+    if strides.len() < n_leaves {
+        return None;
+    }
+    let ndim = out_shape.len();
+    let total: usize = out_shape.iter().product();
+    let mut stack: Vec<String> = Vec::new();
+    for m in program {
+        match m {
+            Micro::Leaf(k) => stack.push(format!("in{}[off{}]", k, k)),
+            Micro::Scalar(k) => {
+                let v = *scalars.get(*k)?;
+                if !v.is_finite() {
+                    return None;
+                }
+                stack.push(format!("f32({:?})", v as f32));
+            }
+            Micro::Add => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(format!("({} + {})", a, b));
+            }
+            Micro::Sub => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(format!("({} - {})", a, b));
+            }
+            Micro::Mul => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(format!("({} * {})", a, b));
+            }
+            Micro::Div => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(format!("({} / {})", a, b));
+            }
+            Micro::Sqrt => {
+                let a = stack.pop()?;
+                stack.push(format!("sqrt({})", a));
+            }
+            Micro::Square => {
+                let a = stack.pop()?;
+                stack.push(format!("({0} * {0})", a));
+            }
+            Micro::Abs => {
+                let a = stack.pop()?;
+                stack.push(format!("abs({})", a));
+            }
+            Micro::Un(op) => {
+                let a = stack.pop()?;
+                stack.push(un_wgsl(*op, &a));
+            }
+            Micro::Bin(op) => {
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                stack.push(bin_wgsl(*op, &a, &b));
+            }
+        }
+    }
+    let expr = stack.pop()?;
+    if !stack.is_empty() {
+        return None;
+    }
+    let mut src = String::new();
+    for k in 0..n_leaves {
+        src.push_str(&format!("@group(0) @binding({k}) var<storage, read> in{k}: array<f32>;\n"));
+    }
+    src.push_str(&format!("@group(0) @binding({n_leaves}) var<storage, read_write> outp: array<f32>;\n"));
+    src.push_str("@compute @workgroup_size(256)\n");
+    src.push_str("fn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n");
+    src.push_str("  let i = gid.x;\n");
+    src.push_str(&format!("  if (i >= {total}u) {{ return; }}\n"));
+    src.push_str("  var rem = i;\n");
+    for d in (1..ndim).rev() {
+        src.push_str(&format!("  let idx{d} = rem % {0}u; rem = rem / {0}u;\n", out_shape[d]));
+    }
+    src.push_str("  let idx0 = rem;\n");
+    for k in 0..n_leaves {
+        let terms: Vec<String> = (0..ndim)
+            .filter(|&d| strides[k][d] != 0)
+            .map(|d| format!("idx{} * {}u", d, strides[k][d]))
+            .collect();
+        let off = if terms.is_empty() { "0u".to_string() } else { terms.join(" + ") };
+        src.push_str(&format!("  let off{k} = {off};\n"));
+    }
+    src.push_str(&format!("  outp[i] = {expr};\n"));
+    src.push_str("}\n");
+    Some(src)
+}
+
+// Set by `nungw.gpu(on)`; read by the GPU routing. Always compiled (the switch
+// exists whether or not the `gpu` feature is on; without it, it just reports the
+// GPU as unavailable).
+static GPU_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "gpu")]
+fn gpu_switched_on() -> bool {
+    GPU_REQUESTED.load(std::sync::atomic::Ordering::Relaxed)
+        || std::env::var("GLOBW_GPU").ok().as_deref() == Some("1")
+}
+
+// Tries a matrix multiply on the GPU (f32). The user-facing `nungw.gpu(true)`
+// switch turns this on; matmul is O(n^3) compute vs O(n^2) transfer, so it wins
+// at large sizes even re-uploading each call. Small products stay on the CPU
+// (BLAS/kernel). None -> CPU fallback.
+#[cfg(feature = "gpu")]
+fn try_gpu_matmul(va: &[f64], vb: &[f64], rows: usize, inner: usize, cols: usize) -> Option<Vec<f64>> {
+    if !gpu_switched_on() {
+        return None;
+    }
+    if rows.saturating_mul(inner).saturating_mul(cols) < (1 << 20) {
+        return None;
+    }
+    let a32: Vec<f32> = va.iter().map(|&x| x as f32).collect();
+    let b32: Vec<f32> = vb.iter().map(|&x| x as f32).collect();
+    let out = crate::gpu::run_matmul(&a32, &b32, rows, inner, cols)?;
+    Some(out.into_iter().map(|x| x as f64).collect())
+}
+
+// Resident matmul: if the operands are GPU-resident, multiply them on-device and
+// keep the result resident. `nungw.matmul(a, b)` (dims from shapes) or the
+// explicit `matmul(a, rows, inner, b, cols)`. Returns:
+//   Ok(None)        -> both operands are on the CPU (use the normal path)
+//   Ok(Some(gpu))   -> both resident, computed on the GPU
+//   Err(..)         -> one on the GPU and one on the CPU (ask to move them)
+#[cfg(feature = "gpu")]
+fn try_matmul_resident(args: &[Value]) -> Result<Option<Value>, String> {
+    let b_idx = if args.len() == 2 { 1 } else { 3 };
+    let a_gpu = matches!(&args[0], Value::GpuFloats(..));
+    let b_gpu = matches!(&args[b_idx], Value::GpuFloats(..));
+    if !a_gpu && !b_gpu {
+        return Ok(None);
+    }
+    let (Value::GpuFloats(ha, sa), Value::GpuFloats(hb, sb)) = (&args[0], &args[b_idx]) else {
+        return Err("nungw.matmul: one operand is on the GPU and the other on the CPU; move both with nungw.to_gpu / nungw.to_cpu".to_string());
+    };
+    let (rows, inner, cols) = if args.len() == 2 {
+        if sa.len() != 2 || sb.len() != 2 {
+            return Err("nungw.matmul: resident operands must be 2-D (or pass dimensions explicitly)".to_string());
+        }
+        if sb[0] != sa[1] {
+            return Err(format!("nungw.matmul: inner dimensions do not match ({}x{} times {}x{})", sa[0], sa[1], sb[0], sb[1]));
+        }
+        (sa[0], sa[1], sb[1])
+    } else {
+        let (r, i, c) = (int(&args[1]), int(&args[2]), int(&args[4]));
+        if r < 0 || i < 0 || c < 0 {
+            return Err("nungw.matmul: the dimensions cannot be negative".to_string());
+        }
+        (r as usize, i as usize, c as usize)
+    };
+    let h = crate::gpu::matmul_resident(ha, hb, rows, inner, cols).ok_or("nungw.matmul: the GPU multiply failed")?;
+    Ok(Some(Value::GpuFloats(h, Rc::new(vec![rows, cols]))))
+}
+
+// Resident matmul_ta (a^T·b) / matmul_tb (a·b^T). Same contract as
+// try_matmul_resident. `ta`/`tb` pick the transpose.
+#[cfg(feature = "gpu")]
+fn try_matmul_ta_tb_resident(args: &[Value], ta: bool, tb: bool) -> Result<Option<Value>, String> {
+    let b_idx = if args.len() == 2 { 1 } else { 3 };
+    let a_gpu = matches!(&args[0], Value::GpuFloats(..));
+    let b_gpu = matches!(&args[b_idx], Value::GpuFloats(..));
+    if !a_gpu && !b_gpu {
+        return Ok(None);
+    }
+    let (Value::GpuFloats(ha, sa), Value::GpuFloats(hb, sb)) = (&args[0], &args[b_idx]) else {
+        return Err("nungw: one operand is on the GPU and the other on the CPU; move both with nungw.to_gpu / nungw.to_cpu".to_string());
+    };
+    // result is rows×cols, with inner the summed dimension (op(A) rows×inner, op(B) inner×cols)
+    let (rows, inner, cols) = if ta {
+        // a^T·b : a stored [a_rows × a_cols], b [a_rows × b_cols] -> [a_cols × b_cols]
+        if args.len() == 2 {
+            if sa.len() != 2 || sb.len() != 2 {
+                return Err("nungw.matmul_ta: resident operands must be 2-D".to_string());
+            }
+            if sb[0] != sa[0] {
+                return Err("nungw.matmul_ta: the second matrix must have as many rows as the first".to_string());
+            }
+            (sa[1], sa[0], sb[1])
+        } else {
+            (int(&args[2]) as usize, int(&args[1]) as usize, int(&args[4]) as usize)
+        }
+    } else {
+        let _ = tb;
+        // a·b^T : a [a_rows × inner], b stored [b_rows × inner] -> [a_rows × b_rows]
+        if args.len() == 2 {
+            if sa.len() != 2 || sb.len() != 2 {
+                return Err("nungw.matmul_tb: resident operands must be 2-D".to_string());
+            }
+            if sb[1] != sa[1] {
+                return Err("nungw.matmul_tb: both matrices must have the same number of columns".to_string());
+            }
+            (sa[0], sa[1], sb[0])
+        } else {
+            (int(&args[1]) as usize, int(&args[2]) as usize, int(&args[4]) as usize)
+        }
+    };
+    let flags = (ta as u32) | ((tb as u32) << 1);
+    let h = crate::gpu::matmul_resident_t(ha, hb, rows, inner, cols, flags).ok_or("nungw: the GPU multiply failed")?;
+    Ok(Some(Value::GpuFloats(h, Rc::new(vec![rows, cols]))))
+}
+
+// Tries to run a fused equal-shape element-wise kernel on the GPU (f32). Opt-in
+// via GLOBW_GPU=1 and bounded to a size window: below ~1M the CPU wins (upload +
+// dispatch overhead), and above the one-dimensional dispatch limit we stay on
+// the CPU. Returns None whenever the GPU is unavailable or anything fails, so
+// the caller falls back to the SIMD CPU path.
+#[cfg(feature = "gpu")]
+fn try_gpu_fused(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], n: usize) -> Option<Vec<f64>> {
+    if std::env::var("GLOBW_GPU").ok().as_deref() != Some("1") {
+        return None;
+    }
+    const MAX_N: usize = 65535 * 256; // one-D workgroup dispatch limit at size 256
+    if n < (1 << 20) || n > MAX_N || leaves.is_empty() {
+        return None;
+    }
+    let wgsl = program_to_wgsl(program, scalars, n)?;
+    let inputs: Vec<Vec<f32>> = leaves.iter().map(|l| l.iter().map(|&x| x as f32).collect()).collect();
+    let out = crate::gpu::run_elementwise(&wgsl, &inputs, n)?;
+    Some(out.into_iter().map(|x| x as f64).collect())
+}
+
+// A fused kernel over one contiguous run along the last axis, for the broadcast
+// path. Within such a run every leaf's last-axis stride is either 1 (it varies
+// with the position -> read contiguously) or 0 (constant over the run -> splat);
+// `bases[k]` is leaf k's flat offset at the start of the run, `contig[k]` which
+// of the two it is. This lets the broadcast path vectorize too (e.g. a bias add
+// `z[n,m] + b[m]`), not just the equal-shape path.
+#[inline]
+fn run_row(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], bases: &[usize], contig: &[bool], j: usize) -> f64 {
     let mut st = [0f64; 32];
     let mut sp = 0usize;
     for m in program {
         match m {
             Micro::Leaf(k) => {
-                let off: usize = idx.iter().zip(&strides[*k]).map(|(i, s)| i * s).sum();
+                let off = bases[*k] + if contig[*k] { j } else { 0 };
                 st[sp] = leaves[*k][off];
                 sp += 1;
             }
@@ -4188,13 +4893,428 @@ fn run_program_bcast(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], stri
             Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
             Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
             Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+            Micro::Un(op) => st[sp - 1] = apply_un(*op, st[sp - 1]),
+            Micro::Bin(op) => {
+                sp -= 1;
+                st[sp - 1] = apply_bin(*op, st[sp - 1], st[sp]);
+            }
         }
     }
     st[0]
 }
 
+#[inline]
+fn run_row_simd(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], bases: &[usize], contig: &[bool], j: usize) -> f64x4 {
+    let mut st = [f64x4::ZERO; 32];
+    let mut sp = 0usize;
+    for m in program {
+        match m {
+            Micro::Leaf(k) => {
+                let b = bases[*k];
+                st[sp] = if contig[*k] {
+                    let s = leaves[*k];
+                    f64x4::from([s[b + j], s[b + j + 1], s[b + j + 2], s[b + j + 3]])
+                } else {
+                    f64x4::splat(leaves[*k][b])
+                };
+                sp += 1;
+            }
+            Micro::Scalar(k) => {
+                st[sp] = f64x4::splat(scalars[*k]);
+                sp += 1;
+            }
+            Micro::Add => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] + st[sp];
+            }
+            Micro::Sub => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] - st[sp];
+            }
+            Micro::Mul => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] * st[sp];
+            }
+            Micro::Div => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] / st[sp];
+            }
+            Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
+            Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
+            Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+            Micro::Un(op) => st[sp - 1] = apply_un_simd(*op, st[sp - 1]),
+            Micro::Bin(op) => {
+                sp -= 1;
+                st[sp - 1] = apply_bin_simd(*op, st[sp - 1], st[sp]);
+            }
+        }
+    }
+    st[0]
+}
+
+// ---- SIMD reductions -------------------------------------------------------
+// These reductions used to be scalar `par_iter().sum()` etc. They now fold four
+// lanes at a time (f64x4) with a short scalar tail; the `reduce_*` wrappers keep
+// the rayon parallelism by vectorizing each big chunk in parallel. The lane-wise
+// order can differ from a strict left-to-right scalar sum in the last ULP -- but
+// the previous reduction was already parallel (unordered), so nothing that was
+// exact becomes inexact.
+
+#[inline]
+fn simd_sum_seq(c: &[f64]) -> f64 {
+    let mut acc = f64x4::ZERO;
+    let mut it = c.chunks_exact(4);
+    for b in it.by_ref() {
+        acc = acc + f64x4::from([b[0], b[1], b[2], b[3]]);
+    }
+    let a = acc.to_array();
+    let mut s = a[0] + a[1] + a[2] + a[3];
+    for &x in it.remainder() {
+        s += x;
+    }
+    s
+}
+
+#[inline]
+fn simd_prod_seq(c: &[f64]) -> f64 {
+    let mut acc = f64x4::splat(1.0);
+    let mut it = c.chunks_exact(4);
+    for b in it.by_ref() {
+        acc = acc * f64x4::from([b[0], b[1], b[2], b[3]]);
+    }
+    let a = acc.to_array();
+    let mut p = a[0] * a[1] * a[2] * a[3];
+    for &x in it.remainder() {
+        p *= x;
+    }
+    p
+}
+
+#[inline]
+fn simd_sumsq_seq(c: &[f64]) -> f64 {
+    let mut acc = f64x4::ZERO;
+    let mut it = c.chunks_exact(4);
+    for b in it.by_ref() {
+        let v = f64x4::from([b[0], b[1], b[2], b[3]]);
+        acc = acc + v * v;
+    }
+    let a = acc.to_array();
+    let mut s = a[0] + a[1] + a[2] + a[3];
+    for &x in it.remainder() {
+        s += x * x;
+    }
+    s
+}
+
+#[inline]
+fn simd_sumsqdev_seq(c: &[f64], mean: f64) -> f64 {
+    let m = f64x4::splat(mean);
+    let mut acc = f64x4::ZERO;
+    let mut it = c.chunks_exact(4);
+    for b in it.by_ref() {
+        let d = f64x4::from([b[0], b[1], b[2], b[3]]) - m;
+        acc = acc + d * d;
+    }
+    let a = acc.to_array();
+    let mut s = a[0] + a[1] + a[2] + a[3];
+    for &x in it.remainder() {
+        let d = x - mean;
+        s += d * d;
+    }
+    s
+}
+
+#[inline]
+fn simd_dot_seq(a: &[f64], b: &[f64]) -> f64 {
+    let mut acc = f64x4::ZERO;
+    let mut ia = a.chunks_exact(4);
+    let mut ib = b.chunks_exact(4);
+    for (x, y) in ia.by_ref().zip(ib.by_ref()) {
+        acc = acc + f64x4::from([x[0], x[1], x[2], x[3]]) * f64x4::from([y[0], y[1], y[2], y[3]]);
+    }
+    let arr = acc.to_array();
+    let mut s = arr[0] + arr[1] + arr[2] + arr[3];
+    for (x, y) in ia.remainder().iter().zip(ib.remainder()) {
+        s += x * y;
+    }
+    s
+}
+
+// Chunk size for the parallel reductions: a multiple of 4 (so each chunk's SIMD
+// body leaves only a short scalar tail), large enough to amortize rayon's
+// per-task overhead.
+#[cfg(feature = "native")]
+const REDUCE_CHUNK: usize = 1 << 14;
+
+#[cfg(feature = "native")]
+fn reduce_sum(v: &[f64]) -> f64 {
+    v.par_chunks(REDUCE_CHUNK).map(simd_sum_seq).sum()
+}
+#[cfg(not(feature = "native"))]
+fn reduce_sum(v: &[f64]) -> f64 {
+    simd_sum_seq(v)
+}
+
+#[cfg(feature = "native")]
+fn reduce_prod(v: &[f64]) -> f64 {
+    v.par_chunks(REDUCE_CHUNK).map(simd_prod_seq).product()
+}
+#[cfg(not(feature = "native"))]
+fn reduce_prod(v: &[f64]) -> f64 {
+    simd_prod_seq(v)
+}
+
+#[cfg(feature = "native")]
+fn reduce_sumsq(v: &[f64]) -> f64 {
+    v.par_chunks(REDUCE_CHUNK).map(simd_sumsq_seq).sum()
+}
+#[cfg(not(feature = "native"))]
+fn reduce_sumsq(v: &[f64]) -> f64 {
+    simd_sumsq_seq(v)
+}
+
+#[cfg(feature = "native")]
+fn reduce_sumsqdev(v: &[f64], mean: f64) -> f64 {
+    v.par_chunks(REDUCE_CHUNK).map(|c| simd_sumsqdev_seq(c, mean)).sum()
+}
+#[cfg(not(feature = "native"))]
+fn reduce_sumsqdev(v: &[f64], mean: f64) -> f64 {
+    simd_sumsqdev_seq(v, mean)
+}
+
+#[cfg(feature = "native")]
+fn reduce_dot(a: &[f64], b: &[f64]) -> f64 {
+    a.par_chunks(REDUCE_CHUNK)
+        .zip(b.par_chunks(REDUCE_CHUNK))
+        .map(|(x, y)| simd_dot_seq(x, y))
+        .sum()
+}
+#[cfg(not(feature = "native"))]
+fn reduce_dot(a: &[f64], b: &[f64]) -> f64 {
+    simd_dot_seq(a, b)
+}
+
+// In-place variants of the fused kernel: leaf `self_leaf` is read from the output
+// buffer itself (its current value, passed in), the rest from `leaves`. This lets
+// the output reuse a dead input buffer (element-wise: out[i] = f(.., out[i], ..)
+// is safe because each element only reads its own position).
+#[inline]
+fn run_program_inplace(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize, self_leaf: usize, self_val: f64) -> f64 {
+    let mut st = [0f64; 32];
+    let mut sp = 0usize;
+    for m in program {
+        match m {
+            Micro::Leaf(k) => {
+                st[sp] = if *k == self_leaf { self_val } else { leaves[*k][i] };
+                sp += 1;
+            }
+            Micro::Scalar(k) => {
+                st[sp] = scalars[*k];
+                sp += 1;
+            }
+            Micro::Add => {
+                sp -= 1;
+                st[sp - 1] += st[sp];
+            }
+            Micro::Sub => {
+                sp -= 1;
+                st[sp - 1] -= st[sp];
+            }
+            Micro::Mul => {
+                sp -= 1;
+                st[sp - 1] *= st[sp];
+            }
+            Micro::Div => {
+                sp -= 1;
+                st[sp - 1] /= st[sp];
+            }
+            Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
+            Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
+            Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+            Micro::Un(op) => st[sp - 1] = apply_un(*op, st[sp - 1]),
+            Micro::Bin(op) => {
+                sp -= 1;
+                st[sp - 1] = apply_bin(*op, st[sp - 1], st[sp]);
+            }
+        }
+    }
+    st[0]
+}
+
+#[inline]
+fn run_program_simd_inplace(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize, self_leaf: usize, self_blk: f64x4) -> f64x4 {
+    let mut st = [f64x4::ZERO; 32];
+    let mut sp = 0usize;
+    for m in program {
+        match m {
+            Micro::Leaf(k) => {
+                st[sp] = if *k == self_leaf {
+                    self_blk
+                } else {
+                    let s = leaves[*k];
+                    f64x4::from([s[i], s[i + 1], s[i + 2], s[i + 3]])
+                };
+                sp += 1;
+            }
+            Micro::Scalar(k) => {
+                st[sp] = f64x4::splat(scalars[*k]);
+                sp += 1;
+            }
+            Micro::Add => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] + st[sp];
+            }
+            Micro::Sub => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] - st[sp];
+            }
+            Micro::Mul => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] * st[sp];
+            }
+            Micro::Div => {
+                sp -= 1;
+                st[sp - 1] = st[sp - 1] / st[sp];
+            }
+            Micro::Sqrt => st[sp - 1] = st[sp - 1].sqrt(),
+            Micro::Square => st[sp - 1] = st[sp - 1] * st[sp - 1],
+            Micro::Abs => st[sp - 1] = st[sp - 1].abs(),
+            Micro::Un(op) => st[sp - 1] = apply_un_simd(*op, st[sp - 1]),
+            Micro::Bin(op) => {
+                sp -= 1;
+                st[sp - 1] = apply_bin_simd(*op, st[sp - 1], st[sp]);
+            }
+        }
+    }
+    st[0]
+}
+
+// Fills `dst` in place with the fused kernel, where `dst` IS leaf `self_leaf`
+// (read from dst itself, before overwriting). Other leaves read at `base + local`.
+fn fill_fused_inplace(dst: &mut [f64], base: usize, program: &[Micro], leaves: &[&[f64]], scalars: &[f64], self_leaf: usize) {
+    let len = dst.len();
+    let full = len / 4;
+    for ci in 0..full {
+        let j = ci * 4;
+        let blk = f64x4::from([dst[j], dst[j + 1], dst[j + 2], dst[j + 3]]);
+        let r = run_program_simd_inplace(program, leaves, scalars, base + j, self_leaf, blk).to_array();
+        dst[j..j + 4].copy_from_slice(&r);
+    }
+    for j in (full * 4)..len {
+        let sv = dst[j];
+        dst[j] = run_program_inplace(program, leaves, scalars, base + j, self_leaf, sv);
+    }
+}
+
+// Fills `dst` with the fused element-wise kernel, where dst[j] is output element
+// `base + j`. SIMD four at a time plus a scalar tail.
+#[inline]
+fn fill_fused_range(dst: &mut [f64], base: usize, program: &[Micro], leaves: &[&[f64]], scalars: &[f64]) {
+    let len = dst.len();
+    let full = len / 4;
+    for ci in 0..full {
+        let r = run_program_simd(program, leaves, scalars, base + ci * 4).to_array();
+        dst[ci * 4..ci * 4 + 4].copy_from_slice(&r);
+    }
+    for j in (full * 4)..len {
+        dst[j] = run_program(program, leaves, scalars, base + j);
+    }
+}
+
+// Builtins that handle a GPU-resident array themselves (keep it on the GPU).
+// Every other builtin gets its GpuFloats arguments downloaded to the CPU first.
+#[cfg(feature = "gpu")]
+fn gpu_resident_aware(b: Builtin) -> bool {
+    use Builtin::*;
+    matches!(
+        b,
+        GridEval | GridMatmul | GridMatmulTA | GridMatmulTB | GridToGpu | GridToCpu | GridShape | GridNdim | GridReshape
+            | GridSumAxis | GridMeanAxis | GridMaxAxis | GridMinAxis | GridProdAxis
+            | GridSum | GridMean | GridMax | GridMin | GridProd
+    )
+}
+
+// A per-axis reduction of a 2-D resident array, staying resident.
+#[cfg(feature = "gpu")]
+fn gpu_axis_reduce(h: &crate::gpu::GpuHandle, shape: &[usize], axis: i64, op: crate::gpu::ReduceOp, name: &str) -> Result<Value, String> {
+    if shape.len() != 2 {
+        return Err(format!("nungw.{name}: a GPU-resident array must be 2-D here (use nungw.to_cpu)"));
+    }
+    if axis != 0 && axis != 1 {
+        return Err(format!("nungw.{name}: the axis must be 0 or 1 for a 2-D array"));
+    }
+    let (rows, cols) = (shape[0], shape[1]);
+    let out_h = crate::gpu::axis_reduce_resident(h, rows, cols, axis as usize, op)
+        .ok_or_else(|| format!("nungw.{name}: the GPU reduction failed"))?;
+    let out_shape = if axis == 0 { vec![cols] } else { vec![rows] };
+    Ok(Value::GpuFloats(out_h, Rc::new(out_shape)))
+}
+
+// Downloads every GpuFloats argument to a CPU `Floats`, leaving the rest as-is,
+// so a builtin that cannot run on the GPU still works (it just comes back to the
+// CPU first). Used for ops that are not resident-aware.
+#[cfg(feature = "gpu")]
+fn gpu_download_args(args: &[Value]) -> Result<Vec<Value>, String> {
+    let mut out = Vec::with_capacity(args.len());
+    for a in args {
+        match a {
+            Value::GpuFloats(h, shape) => {
+                let f32v = crate::gpu::download(h).ok_or("nungw: cannot bring a GPU array back to the CPU")?;
+                let f64v: Vec<f64> = f32v.iter().map(|&x| x as f64).collect();
+                out.push(grid_val_shaped(f64v, (**shape).clone()));
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    Ok(out)
+}
+
+// Resident fused element-wise: all grid operands are GPU-resident, so transpile
+// the fused program to WGSL and run it on their buffers, keeping the result
+// resident. Equal shapes use the fast contiguous kernel; broadcastable shapes
+// bake per-leaf strides into the kernel.
+#[cfg(feature = "gpu")]
+fn grid_eval_resident(program: &[Micro], rest: &[Value]) -> Result<Value, String> {
+    let is_grid = |v: &&Value| matches!(v, Value::Floats(..) | Value::GpuFloats(..));
+    let grid_vals: Vec<&Value> = rest.iter().filter(is_grid).collect();
+    if grid_vals.iter().any(|v| matches!(v, Value::Floats(..))) {
+        return Err("this nungw expression mixes CPU and GPU arrays; move them to the same device with nungw.to_gpu / nungw.to_cpu".to_string());
+    }
+    let scalars: Vec<f64> = rest.iter().filter(|v| !matches!(v, Value::Floats(..) | Value::GpuFloats(..))).map(real).collect();
+    let shapes: Vec<Rc<Vec<usize>>> = grid_vals.iter().map(|v| shape_of(v)).collect();
+    // the output shape is the broadcast of every operand's shape (NumPy rules)
+    let mut out_shape = (*shapes[0]).clone();
+    for s in &shapes[1..] {
+        out_shape = broadcast_shape(&out_shape, s)?;
+    }
+    let total: usize = out_shape.iter().product();
+    let handles: Vec<&crate::gpu::GpuHandle> = grid_vals
+        .iter()
+        .map(|v| match v {
+            Value::GpuFloats(h, _) => &**h,
+            _ => unreachable!(),
+        })
+        .collect();
+    // equal shapes: the fast contiguous kernel; otherwise bake per-leaf broadcast
+    // strides into the kernel so each leaf is read through them.
+    let equal = shapes.iter().all(|s| s.iter().product::<usize>() == total && **s == out_shape);
+    let wgsl = if equal {
+        program_to_wgsl(program, &scalars, total)
+    } else {
+        let strides: Vec<Vec<usize>> = shapes.iter().map(|s| broadcast_strides(s, &out_shape)).collect();
+        program_to_wgsl_bcast(program, &scalars, &out_shape, &strides)
+    }
+    .ok_or("nungw: cannot build the GPU kernel for this expression")?;
+    let out = crate::gpu::run_elementwise_resident(&wgsl, &handles, total).ok_or("nungw: the GPU element-wise kernel failed")?;
+    Ok(Value::GpuFloats(out, Rc::new(out_shape)))
+}
+
 fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
     let program = parse_program(text(program))?;
+    #[cfg(feature = "gpu")]
+    if rest.iter().any(|v| matches!(v, Value::GpuFloats(..))) {
+        return grid_eval_resident(&program, rest);
+    }
     let grid_vals: Vec<&Value> = rest.iter().filter(|v| matches!(v, Value::Floats(..))).collect();
     let borrows: Vec<std::cell::Ref<Vec<f64>>> = grid_vals.iter().map(|v| floats(v).borrow()).collect();
     let leaves: Vec<&[f64]> = borrows.iter().map(|r| r.as_slice()).collect();
@@ -4206,20 +5326,70 @@ fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
         // pass. SIMD: four contiguous elements per step across the cores, then a
         // short scalar tail for the last n % 4. The result keeps the first shape.
         let shape = grid_vals.first().map_or_else(|| vec![n], |v| (*shape_of(v)).clone());
-        let full = n / 4;
-        let mut data = vec![0.0f64; n];
+        #[cfg(feature = "gpu")]
+        if let Some(out) = try_gpu_fused(&program, &leaves, &scalars, n) {
+            return Ok(grid_val_shaped(out, shape));
+        }
+        // In-place reuse: if a leaf is uniquely owned, it is a dead temporary (call
+        // arguments live in fresh registers, so strong_count == 1 means only this
+        // argument holds it -- never a live variable). Write the result into its
+        // buffer instead of allocating. Element-wise, so aliasing the output with
+        // that leaf at each index is safe.
         #[cfg(feature = "native")]
-        data[..full * 4].par_chunks_mut(4).enumerate().for_each(|(ci, dst)| {
-            dst.copy_from_slice(&run_program_simd(&program, &leaves, &scalars, ci * 4).to_array());
-        });
+        if n > 0 {
+            if let Some(ri) = grid_vals.iter().position(|v| Rc::strong_count(floats(v)) == 1) {
+                let reuse_rc = floats(grid_vals[ri]).clone();
+                drop(leaves);
+                drop(borrows);
+                let others: Vec<std::cell::Ref<Vec<f64>>> = grid_vals
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != ri)
+                    .map(|(_, v)| floats(v).borrow())
+                    .collect();
+                let mut lv: Vec<&[f64]> = Vec::with_capacity(grid_vals.len());
+                let mut oi = 0;
+                for i in 0..grid_vals.len() {
+                    if i == ri {
+                        lv.push(&[]); // leaf ri is read from the output buffer, never here
+                    } else {
+                        lv.push(others[oi].as_slice());
+                        oi += 1;
+                    }
+                }
+                {
+                    let mut buf = reuse_rc.borrow_mut();
+                    const FUSE_CHUNK: usize = 1 << 14;
+                    const FUSE_PAR_MIN: usize = 1 << 16;
+                    if n >= FUSE_PAR_MIN {
+                        buf.par_chunks_mut(FUSE_CHUNK).enumerate().for_each(|(ci, chunk)| {
+                            fill_fused_inplace(chunk, ci * FUSE_CHUNK, &program, &lv, &scalars, ri);
+                        });
+                    } else {
+                        fill_fused_inplace(&mut buf, 0, &program, &lv, &scalars, ri);
+                    }
+                }
+                return Ok(Value::Floats(reuse_rc, Rc::new(shape)));
+            }
+        }
+        // No zero-fill: every element is written below. Rayon only pays off on big
+        // arrays; below the threshold a sequential SIMD pass avoids its overhead
+        // (this is where small per-op work, e.g. a neural net's layers, lives).
+        const FUSE_CHUNK: usize = 1 << 14; // multiple of 4
+        const FUSE_PAR_MIN: usize = 1 << 16;
+        let mut data: Vec<f64> = Vec::with_capacity(n);
+        // SAFETY: fill_fused_range writes every element of each chunk, covering 0..n.
+        unsafe { data.set_len(n) };
+        #[cfg(feature = "native")]
+        if n >= FUSE_PAR_MIN {
+            data.par_chunks_mut(FUSE_CHUNK).enumerate().for_each(|(ci, dst)| {
+                fill_fused_range(dst, ci * FUSE_CHUNK, &program, &leaves, &scalars);
+            });
+        } else {
+            fill_fused_range(&mut data, 0, &program, &leaves, &scalars);
+        }
         #[cfg(not(feature = "native"))]
-        for ci in 0..full {
-            let r = run_program_simd(&program, &leaves, &scalars, ci * 4).to_array();
-            data[ci * 4..ci * 4 + 4].copy_from_slice(&r);
-        }
-        for i in (full * 4)..n {
-            data[i] = run_program(&program, &leaves, &scalars, i);
-        }
+        fill_fused_range(&mut data, 0, &program, &leaves, &scalars);
         return Ok(grid_val_shaped(data, shape));
     }
 
@@ -4234,18 +5404,38 @@ fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
     let total: usize = out_shape.iter().product();
     let strides: Vec<Vec<usize>> = shapes.iter().map(|s| broadcast_strides(s, &out_shape)).collect();
     let ndim = out_shape.len();
-    let data: Vec<f64> = (0..total)
-        .into_par_iter()
-        .map(|out_i| {
-            let mut idx = vec![0usize; ndim];
-            let mut rem = out_i;
-            for d in (0..ndim).rev() {
-                idx[d] = rem % out_shape[d];
-                rem /= out_shape[d];
+    let last = ndim - 1;
+    let row_len = out_shape[last];
+    // Fill the output one last-axis run at a time, in parallel over runs and
+    // vectorized within each run. A leaf varies along the last axis (stride 1,
+    // read contiguously) or is constant over it (stride 0, splat).
+    let contig: Vec<bool> = strides.iter().map(|s| s[last] == 1).collect();
+    let fill_row = |row: usize, dst: &mut [f64]| {
+        // this run's position along the outer dimensions (all but the last)
+        let mut bases = vec![0usize; leaves.len()];
+        let mut rem = row;
+        for d in (0..last).rev() {
+            let i = rem % out_shape[d];
+            rem /= out_shape[d];
+            for (k, s) in strides.iter().enumerate() {
+                bases[k] += i * s[d];
             }
-            run_program_bcast(&program, &leaves, &scalars, &strides, &idx)
-        })
-        .collect();
+        }
+        let full = row_len / 4;
+        for cj in 0..full {
+            let r = run_row_simd(&program, &leaves, &scalars, &bases, &contig, cj * 4).to_array();
+            dst[cj * 4..cj * 4 + 4].copy_from_slice(&r);
+        }
+        for j in (full * 4)..row_len {
+            dst[j] = run_row(&program, &leaves, &scalars, &bases, &contig, j);
+        }
+    };
+    let mut data = vec![0.0f64; total];
+    let chunk = row_len.max(1);
+    #[cfg(feature = "native")]
+    data.par_chunks_mut(chunk).enumerate().for_each(|(row, dst)| fill_row(row, dst));
+    #[cfg(not(feature = "native"))]
+    data.chunks_mut(chunk).enumerate().for_each(|(row, dst)| fill_row(row, dst));
     Ok(grid_val_shaped(data, out_shape))
 }
 
@@ -4541,8 +5731,214 @@ fn easing(b: Builtin, t: f64) -> f64 {
     }
 }
 
+/// Runtime permissions for the dangerous builtins (filesystem, network, running
+/// programs). Secure-by-default is the `gw` binary's policy: it calls `set_caps`
+/// with everything denied unless the matching `--allow-*` flag is given. When
+/// `set_caps` is never called -- library embedding and the test suite -- every
+/// capability is allowed, so nothing that worked before changes.
+/// One permission: not granted, granted for anything, or granted only for a list
+/// of hosts (net) or path prefixes (read/write).
+#[cfg(feature = "native")]
+#[derive(Clone)]
+enum Allow {
+    No,
+    All,
+    Only(Vec<String>),
+}
+#[cfg(feature = "native")]
+impl Allow {
+    fn granted(&self) -> bool {
+        !matches!(self, Allow::No)
+    }
+}
+/// Extends a permission with another `--allow-X[=scope]` flag.
+#[cfg(feature = "native")]
+fn grant(cur: &Allow, scope: Option<&str>) -> Allow {
+    match scope {
+        None => Allow::All, // a bare --allow-X grants everything
+        Some(s) => {
+            let items: Vec<String> =
+                s.split(',').map(str::trim).filter(|x| !x.is_empty()).map(String::from).collect();
+            match cur {
+                Allow::All => Allow::All,
+                Allow::No => Allow::Only(items),
+                Allow::Only(v) => {
+                    let mut v = v.clone();
+                    v.extend(items);
+                    Allow::Only(v)
+                }
+            }
+        }
+    }
+}
+#[cfg(feature = "native")]
+#[derive(Clone)]
+pub struct Caps {
+    run: bool,
+    net: Allow,
+    read: Allow,
+    write: Allow,
+}
+#[cfg(feature = "native")]
+impl Caps {
+    pub fn all() -> Self {
+        Self { run: true, net: Allow::All, read: Allow::All, write: Allow::All }
+    }
+    pub fn none() -> Self {
+        Self { run: false, net: Allow::No, read: Allow::No, write: Allow::No }
+    }
+    pub fn allow_run(&mut self) {
+        self.run = true;
+    }
+    pub fn allow_net(&mut self, scope: Option<&str>) {
+        self.net = grant(&self.net, scope);
+    }
+    pub fn allow_read(&mut self, scope: Option<&str>) {
+        self.read = grant(&self.read, scope);
+    }
+    pub fn allow_write(&mut self, scope: Option<&str>) {
+        self.write = grant(&self.write, scope);
+    }
+    pub fn allow_all(&mut self) {
+        *self = Self::all();
+    }
+}
+#[cfg(feature = "native")]
+static CAPS: std::sync::OnceLock<Caps> = std::sync::OnceLock::new();
+/// Set the permissions once, before a program runs (a no-op if already set).
+#[cfg(feature = "native")]
+pub fn set_caps(c: Caps) {
+    let _ = CAPS.set(c);
+}
+#[cfg(feature = "native")]
+fn caps() -> &'static Caps {
+    CAPS.get_or_init(Caps::all)
+}
+#[cfg(feature = "native")]
+fn deny(what: &str, flag: &str) -> String {
+    format!("{what} is not permitted \u{2014} run gw with {flag}")
+}
+#[cfg(feature = "native")]
+fn path_norm(p: &str) -> String {
+    p.replace('\\', "/")
+}
+/// Checks a filesystem path against a read/write permission (prefix match).
+#[cfg(feature = "native")]
+fn check_path(a: &Allow, path: &str, what: &str, flag: &str) -> Result<(), String> {
+    match a {
+        Allow::No => Err(deny(what, flag)),
+        Allow::All => Ok(()),
+        Allow::Only(prefixes) => {
+            let p = path_norm(path);
+            let ok = prefixes.iter().any(|pre| {
+                let pre = path_norm(pre);
+                let pre = pre.trim_end_matches('/');
+                p == pre || p.starts_with(&format!("{pre}/"))
+            });
+            if ok {
+                Ok(())
+            } else {
+                Err(format!("{what} at \"{path}\" is not permitted \u{2014} run gw with {flag}=<path>"))
+            }
+        }
+    }
+}
+/// Checks a URL's host against a net permission.
+#[cfg(feature = "native")]
+fn check_host(a: &Allow, url: &str, what: &str) -> Result<(), String> {
+    match a {
+        Allow::No => Err(deny(what, "--allow-net")),
+        Allow::All => Ok(()),
+        Allow::Only(hosts) => {
+            let h = url_host(url);
+            if hosts.iter().any(|x| x.eq_ignore_ascii_case(&h)) {
+                Ok(())
+            } else {
+                Err(format!("{what} to \"{h}\" is not permitted \u{2014} run gw with --allow-net={h}"))
+            }
+        }
+    }
+}
+/// Refuses a dangerous builtin whose capability was not granted, or whose target
+/// host/path falls outside the granted scope.
+#[cfg(feature = "native")]
+fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
+    use Builtin::*;
+    let c = caps();
+    match b {
+        ShellRun => {
+            if !c.run {
+                return Err(deny("shell.run", "--allow-run"));
+            }
+        }
+        ProcStart | ProcDone | ProcWait | ProcKill => {
+            if !c.run {
+                return Err(deny("the proc module", "--allow-run"));
+            }
+        }
+        WebGet | WebPost | WebStatus | WebDownload => check_host(&c.net, text(&args[0]), "the web module")?,
+        ServeStart | ServeWait | ServeReply | ServeStop => {
+            if !c.net.granted() {
+                return Err(deny("the serve module", "--allow-net"));
+            }
+        }
+        NetRequest | NetSend | NetStatus | NetHeader | NetOk => {
+            if !c.net.granted() {
+                return Err(deny("the net module", "--allow-net"));
+            }
+        }
+        AiAsk | AiSay => {
+            if !c.net.granted() {
+                return Err(deny("ai requests", "--allow-net"));
+            }
+        }
+        WriteFile => check_path(&c.write, text(&args[0]), "writing files", "--allow-write")?,
+        ChartLine | ChartBars | ChartScatter => {
+            if let Some(p) = args.last() {
+                check_path(&c.write, text(p), "writing files", "--allow-write")?;
+            }
+        }
+        DbRun => {
+            if !c.write.granted() {
+                return Err(deny("db.run", "--allow-write"));
+            }
+        }
+        DbOpen => {
+            let p = text(&args[0]);
+            if p == ":memory:" {
+                if !c.read.granted() {
+                    return Err(deny("db.open", "--allow-read"));
+                }
+            } else {
+                check_path(&c.read, p, "opening a database", "--allow-read")?;
+            }
+        }
+        ReadFile => check_path(&c.read, text(&args[0]), "reading files", "--allow-read")?,
+        DbValue | DbQuery => {
+            if !c.read.granted() {
+                return Err(deny("the db module", "--allow-read"));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
     use Builtin::*;
+    #[cfg(feature = "native")]
+    cap_check(b, args)?;
+    // A GPU-resident array reaching a builtin that cannot run on the GPU is
+    // brought back to the CPU first (so it works instead of panicking).
+    #[cfg(feature = "gpu")]
+    let _dl;
+    #[cfg(feature = "gpu")]
+    let args: &[Value] = if !gpu_resident_aware(b) && args.iter().any(|v| matches!(v, Value::GpuFloats(..))) {
+        _dl = gpu_download_args(args)?;
+        &_dl
+    } else {
+        args
+    };
     Ok(match b {
         // ======== batch H1 ========
         EaseInQuad | EaseOutQuad | EaseInOutQuad | EaseInCubic | EaseOutCubic | EaseInOutCubic
@@ -9046,31 +10442,68 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         GridSqrt => grid_map(&args[0], |x| x.sqrt()),
         GridSquare => grid_map(&args[0], |x| x * x),
         GridAbs => grid_map(&args[0], |x| x.abs()),
-        GridSum => Value::Real(floats(&args[0]).borrow().par_iter().sum()),
+        GridSum => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, _) = &args[0] {
+                return Ok(Value::Real(crate::gpu::full_reduce_resident(h, crate::gpu::ReduceOp::Sum).ok_or("nungw.sum: the GPU reduction failed")?));
+            }
+            Value::Real(reduce_sum(floats(&args[0]).borrow().as_slice()))
+        }
         GridMean => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, shape) = &args[0] {
+                if shape.iter().product::<usize>() == 0 {
+                    return Err("nungw.mean: the nungw is empty".to_string());
+                }
+                return Ok(Value::Real(crate::gpu::full_reduce_resident(h, crate::gpu::ReduceOp::Mean).ok_or("nungw.mean: the GPU reduction failed")?));
+            }
             let g = floats(&args[0]).borrow();
             if g.is_empty() {
                 return Err("nungw.mean: the nungw is empty".to_string());
             }
-            Value::Real(g.par_iter().sum::<f64>() / g.len() as f64)
+            Value::Real(reduce_sum(g.as_slice()) / g.len() as f64)
         }
         #[cfg(feature = "native")]
-        GridMax => Value::Real(floats(&args[0]).borrow().par_iter().cloned().reduce(|| f64::NEG_INFINITY, f64::max)),
+        GridMax => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, _) = &args[0] {
+                return Ok(Value::Real(crate::gpu::full_reduce_resident(h, crate::gpu::ReduceOp::Max).ok_or("nungw.max: the GPU reduction failed")?));
+            }
+            Value::Real(floats(&args[0]).borrow().par_iter().cloned().reduce(|| f64::NEG_INFINITY, f64::max))
+        }
         #[cfg(not(feature = "native"))]
-        GridMax => Value::Real(floats(&args[0]).borrow().iter().cloned().fold(f64::NEG_INFINITY, f64::max)),
+        GridMax => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, _) = &args[0] {
+                return Ok(Value::Real(crate::gpu::full_reduce_resident(h, crate::gpu::ReduceOp::Max).ok_or("nungw.max: the GPU reduction failed")?));
+            }
+            Value::Real(floats(&args[0]).borrow().iter().cloned().fold(f64::NEG_INFINITY, f64::max))
+        }
         #[cfg(feature = "native")]
-        GridMin => Value::Real(floats(&args[0]).borrow().par_iter().cloned().reduce(|| f64::INFINITY, f64::min)),
+        GridMin => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, _) = &args[0] {
+                return Ok(Value::Real(crate::gpu::full_reduce_resident(h, crate::gpu::ReduceOp::Min).ok_or("nungw.min: the GPU reduction failed")?));
+            }
+            Value::Real(floats(&args[0]).borrow().par_iter().cloned().reduce(|| f64::INFINITY, f64::min))
+        }
         #[cfg(not(feature = "native"))]
-        GridMin => Value::Real(floats(&args[0]).borrow().iter().cloned().fold(f64::INFINITY, f64::min)),
+        GridMin => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, _) = &args[0] {
+                return Ok(Value::Real(crate::gpu::full_reduce_resident(h, crate::gpu::ReduceOp::Min).ok_or("nungw.min: the GPU reduction failed")?));
+            }
+            Value::Real(floats(&args[0]).borrow().iter().cloned().fold(f64::INFINITY, f64::min))
+        }
         GridDot => {
             let (va, vb) = (floats(&args[0]).borrow(), floats(&args[1]).borrow());
             if va.len() != vb.len() {
                 return Err(format!("nungw.dot: the sizes differ ({} and {})", va.len(), vb.len()));
             }
-            Value::Real(va.par_iter().zip(vb.par_iter()).map(|(&x, &y)| x * y).sum())
+            Value::Real(reduce_dot(va.as_slice(), vb.as_slice()))
         }
-        GridSumSquares => Value::Real(floats(&args[0]).borrow().par_iter().map(|&x| x * x).sum()),
-        GridNorm => Value::Real(floats(&args[0]).borrow().par_iter().map(|&x| x * x).sum::<f64>().sqrt()),
+        GridSumSquares => Value::Real(reduce_sumsq(floats(&args[0]).borrow().as_slice())),
+        GridNorm => Value::Real(reduce_sumsq(floats(&args[0]).borrow().as_slice()).sqrt()),
         GridExp => grid_map(&args[0], |x| x.exp()),
         GridExp2 => grid_map(&args[0], |x| x.exp2()),
         GridExpm1 => grid_map(&args[0], |x| x.exp_m1()),
@@ -9106,15 +10539,21 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         GridMod => grid_zip(&args[0], &args[1], |x, y| x - (x / y).floor() * y)?,
         GridMaximum => grid_zip(&args[0], &args[1], |x, y| x.max(y))?,
         GridMinimum => grid_zip(&args[0], &args[1], |x, y| x.min(y))?,
-        GridProd => Value::Real(floats(&args[0]).borrow().par_iter().product()),
+        GridProd => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, _) = &args[0] {
+                return Ok(Value::Real(crate::gpu::full_reduce_resident(h, crate::gpu::ReduceOp::Prod).ok_or("nungw.prod: the GPU reduction failed")?));
+            }
+            Value::Real(reduce_prod(floats(&args[0]).borrow().as_slice()))
+        }
         GridVar => {
             let g = floats(&args[0]).borrow();
             if g.is_empty() {
                 return Err("nungw.var: the nungw is empty".to_string());
             }
             let n = g.len() as f64;
-            let mean = g.par_iter().sum::<f64>() / n;
-            Value::Real(g.par_iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>() / n)
+            let mean = reduce_sum(g.as_slice()) / n;
+            Value::Real(reduce_sumsqdev(g.as_slice(), mean) / n)
         }
         GridStd => {
             let g = floats(&args[0]).borrow();
@@ -9122,8 +10561,8 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 return Err("nungw.std: the nungw is empty".to_string());
             }
             let n = g.len() as f64;
-            let mean = g.par_iter().sum::<f64>() / n;
-            let var = g.par_iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>() / n;
+            let mean = reduce_sum(g.as_slice()) / n;
+            let var = reduce_sumsqdev(g.as_slice(), mean) / n;
             Value::Real(var.sqrt())
         }
         GridMedian => {
@@ -9216,11 +10655,19 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             grid_val(out)
         }
         GridDet => {
-            let n = int(&args[1]);
-            if n < 0 {
-                return Err("nungw.det: the dimension cannot be negative".to_string());
-            }
-            let n = n as usize;
+            let n = if args.len() == 1 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 || s[0] != s[1] {
+                    return Err("nungw.det: the argument must be a square 2-D nungw (or pass n)".to_string());
+                }
+                s[0]
+            } else {
+                let n = int(&args[1]);
+                if n < 0 {
+                    return Err("nungw.det: the dimension cannot be negative".to_string());
+                }
+                n as usize
+            };
             let v = floats(&args[0]).borrow();
             if v.len() != n * n {
                 return Err(format!("nungw.det: a {n}x{n} matrix needs {} values, it has {}", n * n, v.len()));
@@ -9243,13 +10690,21 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
         }
         GridSolve => {
-            let n = int(&args[1]);
-            if n < 0 {
-                return Err("nungw.solve: the dimension cannot be negative".to_string());
-            }
-            let n = n as usize;
+            let (n, b_idx) = if args.len() == 2 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 || s[0] != s[1] {
+                    return Err("nungw.solve: the matrix must be square 2-D (or pass n)".to_string());
+                }
+                (s[0], 1usize)
+            } else {
+                let n = int(&args[1]);
+                if n < 0 {
+                    return Err("nungw.solve: the dimension cannot be negative".to_string());
+                }
+                (n as usize, 2usize)
+            };
             let a0 = floats(&args[0]).borrow();
-            let b0 = floats(&args[2]).borrow();
+            let b0 = floats(&args[b_idx]).borrow();
             if a0.len() != n * n {
                 return Err(format!("nungw.solve: a {n}x{n} matrix needs {} values, it has {}", n * n, a0.len()));
             }
@@ -9264,11 +10719,19 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
         }
         GridInv => {
-            let n = int(&args[1]);
-            if n < 0 {
-                return Err("nungw.inv: the dimension cannot be negative".to_string());
-            }
-            let n = n as usize;
+            let n = if args.len() == 1 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 || s[0] != s[1] {
+                    return Err("nungw.inv: the argument must be a square 2-D nungw (or pass n)".to_string());
+                }
+                s[0]
+            } else {
+                let n = int(&args[1]);
+                if n < 0 {
+                    return Err("nungw.inv: the dimension cannot be negative".to_string());
+                }
+                n as usize
+            };
             let a0 = floats(&args[0]).borrow();
             if a0.len() != n * n {
                 return Err(format!("nungw.inv: a {n}x{n} matrix needs {} values, it has {}", n * n, a0.len()));
@@ -9294,6 +10757,22 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
         }
         GridTranspose => {
+            // shape-aware form: transpose(a) using a's 2-D shape.
+            if args.len() == 1 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 {
+                    return Err("nungw.transpose: the argument must be a 2-D nungw (or pass rows and cols)".to_string());
+                }
+                let (rows, cols) = (s[0], s[1]);
+                let v = floats(&args[0]).borrow();
+                let mut out = vec![0.0; rows * cols];
+                for r in 0..rows {
+                    for c in 0..cols {
+                        out[c * rows + r] = v[r * cols + c];
+                    }
+                }
+                return Ok(grid_val_shaped(out, vec![cols, rows]));
+            }
             let (rows, cols) = (int(&args[1]), int(&args[2]));
             if rows < 0 || cols < 0 {
                 return Err("nungw.transpose: the dimensions cannot be negative".to_string());
@@ -9327,6 +10806,16 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 })
                 .collect();
             let total: usize = dims.iter().product();
+            // A resident array reshapes by metadata only: same VRAM buffer (shared
+            // Rc), new shape -- so a reshape stays on the GPU (needed for keepdims).
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, shape) = &args[0] {
+                let len: usize = shape.iter().product();
+                if total != len {
+                    return Err(format!("nungw.reshape: {len} values cannot form a shape with {total} cells"));
+                }
+                return Ok(Value::GpuFloats(Rc::clone(h), Rc::new(dims)));
+            }
             let data = floats(&args[0]);
             let len = data.borrow().len();
             if total != len {
@@ -9334,11 +10823,41 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
             Value::Floats(data.clone(), Rc::new(dims))
         }
-        GridSumAxis => axis_reduce(&args[0], int(&args[1]), 0.0, |acc, x| acc + x, |v, _| v)?,
-        GridProdAxis => axis_reduce(&args[0], int(&args[1]), 1.0, |acc, x| acc * x, |v, _| v)?,
-        GridMeanAxis => axis_reduce(&args[0], int(&args[1]), 0.0, |acc, x| acc + x, |v, m| v / m as f64)?,
-        GridMaxAxis => axis_reduce(&args[0], int(&args[1]), f64::NEG_INFINITY, f64::max, |v, _| v)?,
-        GridMinAxis => axis_reduce(&args[0], int(&args[1]), f64::INFINITY, f64::min, |v, _| v)?,
+        GridSumAxis => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, shape) = &args[0] {
+                return gpu_axis_reduce(h, shape, int(&args[1]), crate::gpu::ReduceOp::Sum, "sum_axis");
+            }
+            axis_reduce(&args[0], int(&args[1]), 0.0, |acc, x| acc + x, |v, _| v)?
+        }
+        GridProdAxis => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, shape) = &args[0] {
+                return gpu_axis_reduce(h, shape, int(&args[1]), crate::gpu::ReduceOp::Prod, "prod_axis");
+            }
+            axis_reduce(&args[0], int(&args[1]), 1.0, |acc, x| acc * x, |v, _| v)?
+        }
+        GridMeanAxis => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, shape) = &args[0] {
+                return gpu_axis_reduce(h, shape, int(&args[1]), crate::gpu::ReduceOp::Mean, "mean_axis");
+            }
+            axis_reduce(&args[0], int(&args[1]), 0.0, |acc, x| acc + x, |v, m| v / m as f64)?
+        }
+        GridMaxAxis => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, shape) = &args[0] {
+                return gpu_axis_reduce(h, shape, int(&args[1]), crate::gpu::ReduceOp::Max, "max_axis");
+            }
+            axis_reduce(&args[0], int(&args[1]), f64::NEG_INFINITY, f64::max, |v, _| v)?
+        }
+        GridMinAxis => {
+            #[cfg(feature = "gpu")]
+            if let Value::GpuFloats(h, shape) = &args[0] {
+                return gpu_axis_reduce(h, shape, int(&args[1]), crate::gpu::ReduceOp::Min, "min_axis");
+            }
+            axis_reduce(&args[0], int(&args[1]), f64::INFINITY, f64::min, |v, _| v)?
+        }
         GridAt => {
             let shape = shape_of(&args[0]);
             let idx = &args[1..];
@@ -9476,11 +10995,19 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             grid_val(v[(start as usize - 1)..(stop as usize)].to_vec())
         }
         GridEigvalsSym => {
-            let n = int(&args[1]);
-            if n < 0 {
-                return Err("nungw.eigvals_sym: the dimension cannot be negative".to_string());
-            }
-            let n = n as usize;
+            let n = if args.len() == 1 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 || s[0] != s[1] {
+                    return Err("nungw.eigvals_sym: the argument must be a square 2-D nungw (or pass n)".to_string());
+                }
+                s[0]
+            } else {
+                let n = int(&args[1]);
+                if n < 0 {
+                    return Err("nungw.eigvals_sym: the dimension cannot be negative".to_string());
+                }
+                n as usize
+            };
             let v = floats(&args[0]).borrow();
             if v.len() != n * n {
                 return Err(format!("nungw.eigvals_sym: a {n}x{n} matrix needs {} values, it has {}", n * n, v.len()));
@@ -9490,11 +11017,19 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             grid_val(vals)
         }
         GridSingularValues => {
-            let (m, n) = (int(&args[1]), int(&args[2]));
-            if m < 0 || n < 0 {
-                return Err("nungw.singular_values: the dimensions cannot be negative".to_string());
-            }
-            let (m, n) = (m as usize, n as usize);
+            let (m, n) = if args.len() == 1 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 {
+                    return Err("nungw.singular_values: the argument must be a 2-D nungw (or pass m and n)".to_string());
+                }
+                (s[0], s[1])
+            } else {
+                let (m, n) = (int(&args[1]), int(&args[2]));
+                if m < 0 || n < 0 {
+                    return Err("nungw.singular_values: the dimensions cannot be negative".to_string());
+                }
+                (m as usize, n as usize)
+            };
             let v = floats(&args[0]).borrow();
             if v.len() != m * n {
                 return Err(format!("nungw.singular_values: a {m}x{n} matrix needs {} values, it has {}", m * n, v.len()));
@@ -9516,13 +11051,21 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             grid_val(sv)
         }
         GridLstsq => {
-            let (m, n) = (int(&args[1]), int(&args[2]));
-            if m < 0 || n < 0 {
-                return Err("nungw.lstsq: the dimensions cannot be negative".to_string());
-            }
-            let (m, n) = (m as usize, n as usize);
+            let (m, n, b_idx) = if args.len() == 2 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 {
+                    return Err("nungw.lstsq: the matrix must be a 2-D nungw (or pass m and n)".to_string());
+                }
+                (s[0], s[1], 1usize)
+            } else {
+                let (m, n) = (int(&args[1]), int(&args[2]));
+                if m < 0 || n < 0 {
+                    return Err("nungw.lstsq: the dimensions cannot be negative".to_string());
+                }
+                (m as usize, n as usize, 3usize)
+            };
             let a0 = floats(&args[0]).borrow();
-            let b0 = floats(&args[3]).borrow();
+            let b0 = floats(&args[b_idx]).borrow();
             if a0.len() != m * n {
                 return Err(format!("nungw.lstsq: a {m}x{n} matrix needs {} values, it has {}", m * n, a0.len()));
             }
@@ -9551,7 +11094,69 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             }
         }
         GridEval => grid_eval(&args[0], &args[1..])?,
+        GridGpu => {
+            let on = matches!(&args[0], Value::Bool(true));
+            GPU_REQUESTED.store(on, std::sync::atomic::Ordering::Relaxed);
+            // report whether the GPU is actually usable now (feature on + adapter)
+            #[cfg(feature = "gpu")]
+            let active = on && crate::gpu::available();
+            #[cfg(not(feature = "gpu"))]
+            let active = false;
+            Value::Bool(active)
+        }
+        #[cfg(feature = "gpu")]
+        GridToGpu => match &args[0] {
+            Value::GpuFloats(..) => args[0].clone(), // already resident
+            _ => {
+                let f32v: Vec<f32> = floats(&args[0]).borrow().iter().map(|&x| x as f32).collect();
+                match crate::gpu::upload(&f32v) {
+                    Some(h) => Value::GpuFloats(h, shape_of(&args[0])),
+                    None => return Err("nungw.to_gpu: no GPU is available".to_string()),
+                }
+            }
+        },
+        #[cfg(not(feature = "gpu"))]
+        GridToGpu => args[0].clone(), // no GPU in this build: a no-op
+        #[cfg(feature = "gpu")]
+        GridToCpu => match &args[0] {
+            Value::GpuFloats(h, shape) => {
+                let f32v = crate::gpu::download(h).ok_or("nungw.to_cpu: the download failed")?;
+                let f64v: Vec<f64> = f32v.iter().map(|&x| x as f64).collect();
+                grid_val_shaped(f64v, (**shape).clone())
+            }
+            _ => args[0].clone(), // already on the CPU
+        },
+        #[cfg(not(feature = "gpu"))]
+        GridToCpu => args[0].clone(),
         GridMatmul => {
+            // resident path: operands already on the GPU -> compute on-device,
+            // result stays resident (no upload/download).
+            #[cfg(feature = "gpu")]
+            if let Some(out) = try_matmul_resident(args)? {
+                return Ok(out);
+            }
+            // shape-aware form: matmul(a, b) with dimensions from the 2-D shapes.
+            if args.len() == 2 {
+                let (sa, sb) = (shape_of(&args[0]), shape_of(&args[1]));
+                if sa.len() != 2 || sb.len() != 2 {
+                    return Err("nungw.matmul: both arguments must be 2-D nungws (or pass dimensions explicitly)".to_string());
+                }
+                let (rows, inner, cols) = (sa[0], sa[1], sb[1]);
+                if sb[0] != inner {
+                    return Err(format!("nungw.matmul: inner dimensions do not match ({}x{} times {}x{})", rows, inner, sb[0], cols));
+                }
+                let va = floats(&args[0]).borrow();
+                let vb = floats(&args[1]).borrow();
+                #[cfg(feature = "gpu")]
+                if let Some(out) = try_gpu_matmul(va.as_slice(), vb.as_slice(), rows, inner, cols) {
+                    return Ok(grid_val_shaped(out, vec![rows, cols]));
+                }
+                let mut out: Vec<f64> = Vec::with_capacity(rows * cols);
+                // SAFETY: matmul_into writes all rows*cols elements before they are read.
+                unsafe { out.set_len(rows * cols) };
+                matmul_into(&mut out, &va, &vb, rows, inner, cols);
+                return Ok(grid_val_shaped(out, vec![rows, cols]));
+            }
             // a is (rows x inner), b is (inner x cols), both row-major; result rows x cols
             let (rows, inner, cols) = (int(&args[1]), int(&args[2]), int(&args[4]));
             if rows < 0 || inner < 0 || cols < 0 {
@@ -9566,12 +11171,104 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             if vb.len() != inner * cols {
                 return Err(format!("nungw.matmul: the second matrix should have {} values ({}x{}), it has {}", inner * cols, inner, cols, vb.len()));
             }
+            #[cfg(feature = "gpu")]
+            if let Some(out) = try_gpu_matmul(va.as_slice(), vb.as_slice(), rows, inner, cols) {
+                return Ok(grid_val_shaped(out, vec![rows, cols]));
+            }
             // the kernel overwrites every element (beta = 0), so skip zero-filling
             let mut out: Vec<f64> = Vec::with_capacity(rows * cols);
             // SAFETY: matmul_into writes all rows*cols elements before they are read.
             unsafe { out.set_len(rows * cols) };
             matmul_into(&mut out, &va, &vb, rows, inner, cols);
             grid_val_shaped(out, vec![rows, cols])
+        }
+        GridMatmulTA => {
+            #[cfg(feature = "gpu")]
+            if let Some(out) = try_matmul_ta_tb_resident(args, true, false)? {
+                return Ok(out);
+            }
+            // shape-aware form: matmul_ta(a, b) with dimensions from the 2-D shapes.
+            if args.len() == 2 {
+                let (sa, sb) = (shape_of(&args[0]), shape_of(&args[1]));
+                if sa.len() != 2 || sb.len() != 2 {
+                    return Err("nungw.matmul_ta: both arguments must be 2-D nungws (or pass dimensions explicitly)".to_string());
+                }
+                let (a_rows, a_cols, b_cols) = (sa[0], sa[1], sb[1]);
+                if sb[0] != a_rows {
+                    return Err(format!("nungw.matmul_ta: the second matrix must have {} rows to match the first, it has {}", a_rows, sb[0]));
+                }
+                let va = floats(&args[0]).borrow();
+                let vb = floats(&args[1]).borrow();
+                let mut out: Vec<f64> = Vec::with_capacity(a_cols * b_cols);
+                // SAFETY: matmul_trans writes all a_cols*b_cols elements before they are read.
+                unsafe { out.set_len(a_cols * b_cols) };
+                matmul_trans(&mut out, &va, &vb, a_cols, a_rows, b_cols, true, false);
+                return Ok(grid_val_shaped(out, vec![a_cols, b_cols]));
+            }
+            // A^T * B, with A stored (a_rows x a_cols); B is (a_rows x b_cols);
+            // result is (a_cols x b_cols). No explicit transpose of A.
+            let (a_rows, a_cols, b_cols) = (int(&args[1]), int(&args[2]), int(&args[4]));
+            if a_rows < 0 || a_cols < 0 || b_cols < 0 {
+                return Err("nungw.matmul_ta: the dimensions cannot be negative".to_string());
+            }
+            let (a_rows, a_cols, b_cols) = (a_rows as usize, a_cols as usize, b_cols as usize);
+            let va = floats(&args[0]).borrow();
+            let vb = floats(&args[3]).borrow();
+            if va.len() != a_rows * a_cols {
+                return Err(format!("nungw.matmul_ta: the first matrix should have {} values ({}x{}), it has {}", a_rows * a_cols, a_rows, a_cols, va.len()));
+            }
+            if vb.len() != a_rows * b_cols {
+                return Err(format!("nungw.matmul_ta: the second matrix should have {} values ({}x{}), it has {}", a_rows * b_cols, a_rows, b_cols, vb.len()));
+            }
+            let mut out: Vec<f64> = Vec::with_capacity(a_cols * b_cols);
+            // SAFETY: matmul_trans writes all a_cols*b_cols elements before they are read.
+            unsafe { out.set_len(a_cols * b_cols) };
+            matmul_trans(&mut out, &va, &vb, a_cols, a_rows, b_cols, true, false);
+            grid_val_shaped(out, vec![a_cols, b_cols])
+        }
+        GridMatmulTB => {
+            #[cfg(feature = "gpu")]
+            if let Some(out) = try_matmul_ta_tb_resident(args, false, true)? {
+                return Ok(out);
+            }
+            // shape-aware form: matmul_tb(a, b) with dimensions from the 2-D shapes.
+            if args.len() == 2 {
+                let (sa, sb) = (shape_of(&args[0]), shape_of(&args[1]));
+                if sa.len() != 2 || sb.len() != 2 {
+                    return Err("nungw.matmul_tb: both arguments must be 2-D nungws (or pass dimensions explicitly)".to_string());
+                }
+                let (a_rows, inner, b_rows) = (sa[0], sa[1], sb[0]);
+                if sb[1] != inner {
+                    return Err(format!("nungw.matmul_tb: the second matrix must have {} columns to match the first, it has {}", inner, sb[1]));
+                }
+                let va = floats(&args[0]).borrow();
+                let vb = floats(&args[1]).borrow();
+                let mut out: Vec<f64> = Vec::with_capacity(a_rows * b_rows);
+                // SAFETY: matmul_trans writes all a_rows*b_rows elements before they are read.
+                unsafe { out.set_len(a_rows * b_rows) };
+                matmul_trans(&mut out, &va, &vb, a_rows, inner, b_rows, false, true);
+                return Ok(grid_val_shaped(out, vec![a_rows, b_rows]));
+            }
+            // A * B^T, with A (a_rows x inner) and B stored (b_rows x inner);
+            // result is (a_rows x b_rows). No explicit transpose of B.
+            let (a_rows, inner, b_rows) = (int(&args[1]), int(&args[2]), int(&args[4]));
+            if a_rows < 0 || inner < 0 || b_rows < 0 {
+                return Err("nungw.matmul_tb: the dimensions cannot be negative".to_string());
+            }
+            let (a_rows, inner, b_rows) = (a_rows as usize, inner as usize, b_rows as usize);
+            let va = floats(&args[0]).borrow();
+            let vb = floats(&args[3]).borrow();
+            if va.len() != a_rows * inner {
+                return Err(format!("nungw.matmul_tb: the first matrix should have {} values ({}x{}), it has {}", a_rows * inner, a_rows, inner, va.len()));
+            }
+            if vb.len() != b_rows * inner {
+                return Err(format!("nungw.matmul_tb: the second matrix should have {} values ({}x{}), it has {}", b_rows * inner, b_rows, inner, vb.len()));
+            }
+            let mut out: Vec<f64> = Vec::with_capacity(a_rows * b_rows);
+            // SAFETY: matmul_trans writes all a_rows*b_rows elements before they are read.
+            unsafe { out.set_len(a_rows * b_rows) };
+            matmul_trans(&mut out, &va, &vb, a_rows, inner, b_rows, false, true);
+            grid_val_shaped(out, vec![a_rows, b_rows])
         }
         CounterItems => count_into(seq(&args[0]).borrow().iter().map(|v| text(v).to_string())),
         CounterChars => count_into(text(&args[0]).chars().map(|c| c.to_string())),
@@ -9665,4 +11362,35 @@ fn local_time() -> (u16, u16, u16, u16, u16, u16) {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
     (year as u16, month as u16, day as u16, (rem / 3600) as u16, (rem % 3600 / 60) as u16, (rem % 60) as u16)
+}
+
+#[cfg(test)]
+mod gpu_transpile_tests {
+    use super::*;
+
+    #[test]
+    fn transpiles_a_fused_kernel_to_wgsl() {
+        // sqrt(in0^2 + in1^2)
+        let prog = parse_program("l0 sq l1 sq + q").unwrap();
+        let wgsl = program_to_wgsl(&prog, &[], 10).unwrap();
+        assert!(wgsl.contains("@group(0) @binding(0) var<storage, read> in0: array<f32>;"));
+        assert!(wgsl.contains("@group(0) @binding(1) var<storage, read> in1: array<f32>;"));
+        assert!(wgsl.contains("@group(0) @binding(2) var<storage, read_write> outp: array<f32>;"));
+        assert!(wgsl.contains("outp[i] = sqrt(((in0[i] * in0[i]) + (in1[i] * in1[i])));"));
+        assert!(wgsl.contains("if (i >= 10u)"));
+        assert!(wgsl.contains("@compute @workgroup_size(256)"));
+    }
+
+    #[test]
+    fn bakes_scalars_as_literals() {
+        let prog = parse_program("l0 s0 *").unwrap();
+        let wgsl = program_to_wgsl(&prog, &[2.0], 4).unwrap();
+        assert!(wgsl.contains("outp[i] = (in0[i] * f32(2.0));"));
+    }
+
+    #[test]
+    fn rejects_a_non_finite_scalar() {
+        let prog = parse_program("l0 s0 +").unwrap();
+        assert!(program_to_wgsl(&prog, &[f64::INFINITY], 4).is_none());
+    }
 }

@@ -44,17 +44,47 @@ fn main() -> ExitCode {
             return globw_add(url);
         }
     }
-    let (check_only, profile, file) = match args.as_slice() {
-        [f] if !f.starts_with("--") => (false, false, f),
-        [flag, f] if flag == "--check" => (true, false, f),
-        [flag, f] if flag == "--profile" => (false, true, f),
+    // Permissions are denied by default; each --allow-* flag grants one. This is
+    // the security boundary for running untrusted .gw files and gwget packages.
+    let mut check_only = false;
+    let mut profile = false;
+    let mut caps = globw::library::Caps::none();
+    let mut file: Option<&String> = None;
+    let mut bad = false;
+    for a in &args {
+        let (key, val) = match a.split_once('=') {
+            Some((k, v)) => (k, Some(v)),
+            None => (a.as_str(), None),
+        };
+        match key {
+            "--check" => check_only = true,
+            "--profile" => profile = true,
+            "--allow-run" => caps.allow_run(),
+            "--allow-net" => caps.allow_net(val),
+            "--allow-read" => caps.allow_read(val),
+            "--allow-write" => caps.allow_write(val),
+            "--allow-all" => caps.allow_all(),
+            s if s.starts_with("--") => {
+                eprintln!("unknown option: {}", a);
+                bad = true;
+            }
+            _ => {
+                if file.is_none() {
+                    file = Some(a);
+                }
+            }
+        }
+    }
+    let file = match (bad, file) {
+        (false, Some(f)) => f,
         _ => {
             eprintln!(
-                "Usage: gw program.gw\n       gw --check program.gw\n       gw --profile program.gw\n       gw add <url>   (download one .gw module into libs/)\n\nFor catalogue libraries use gwget, e.g. gwget install <name>."
+                "Usage: gw [options] program.gw\n\nOptions:\n  --check          type-check only, do not run\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
             );
             return ExitCode::from(3);
         }
     };
+    globw::library::set_caps(caps);
     let source = match std::fs::read_to_string(file) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {

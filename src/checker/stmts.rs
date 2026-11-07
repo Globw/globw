@@ -252,6 +252,9 @@ impl<'p> Checker<'p> {
     /// Sets an element inside a list, array or dictionary reached through
     /// `container` and the chain of index groups.
     fn set_in_container(&mut self, mut container: TExpr, groups: Vec<&Vec<Expr>>, v: TExpr, pos: Pos) -> Option<TStmt> {
+        // fuse an element-wise grid RHS stored into a list element / field
+        // (net[i] = sub(net[i], scale(g, lr))) so it stays one resident kernel.
+        let v = if v.ty == Type::Grid { super::exprs::fuse(v) } else { v };
         let t = Target { name: String::new(), indices: vec![], rest: vec![], pos };
         let (last, path) = groups.split_last().expect("at least one index group");
         for group in path {
@@ -343,6 +346,10 @@ impl<'p> Checker<'p> {
     }
 
     fn assign(&mut self, t: TTarget, v: TExpr) -> TStmt {
+        // fuse any element-wise grid RHS -- whole (c = a + b) OR indexed
+        // (net[i] = sub(net[i], scale(g, lr))) -- into one kernel, so it stays
+        // resident on the GPU instead of running op by op (which would download).
+        let v = if v.ty == Type::Grid { super::exprs::fuse(v) } else { v };
         let var = self.var(t.place);
         let whole = var.shape != Shape::Scalar
             || matches!(var.full_type(), Type::Object(_) | Type::Func(_) | Type::Tuple(_) | Type::Grid);
@@ -632,7 +639,7 @@ impl<'p> Checker<'p> {
                             format!("this list contains {}, here the value is {}", element.plural(), second.ty.full_name()),
                         ));
                     }
-                    return Some(TStmt::Append(list, convert(second, elem)));
+                    return Some(TStmt::Append(list, convert(super::exprs::fuse(second), elem)));
                 }
                 match (second.ty, &list.kind) {
                     (Type::Base(b), TExprKind::Load(p)) => self.widen(*p, b, second.pos),
@@ -651,7 +658,7 @@ impl<'p> Checker<'p> {
                     TExprKind::Load(p) => self.var(*p).ty,
                     _ => elem,
                 };
-                Some(TStmt::Append(list, convert(second, elem)))
+                Some(TStmt::Append(list, convert(super::exprs::fuse(second), elem)))
             }
             "length" => {
                 self.report_structural(Error::new(
@@ -664,16 +671,18 @@ impl<'p> Checker<'p> {
                 let b = crate::builtins::lookup(name).expect("checked above");
                 let call = self.builtin_call(b, args, pos, false);
                 match call.kind {
-                    TExprKind::Builtin(b, args) => Some(TStmt::Builtin(b, args, pos)),
+                    // fuse any grid expression in argument position (e.g. a reduction
+                    // or a scaled array passed to a call) so it stays resident.
+                    TExprKind::Builtin(b, args) => Some(TStmt::Builtin(b, args.into_iter().map(super::exprs::fuse).collect(), pos)),
                     _ => None,
                 }
             }
             _ => {
                 let call = self.call(name, args, pos, false);
                 match call.kind {
-                    TExprKind::Call(f, args) => Some(TStmt::Call(f, args, pos)),
-                    TExprKind::VCall { slot, args } => Some(TStmt::VCall(slot, args, pos)),
-                    TExprKind::CallVal { func, args } => Some(TStmt::CallVal(*func, args, pos)),
+                    TExprKind::Call(f, args) => Some(TStmt::Call(f, args.into_iter().map(super::exprs::fuse).collect(), pos)),
+                    TExprKind::VCall { slot, args } => Some(TStmt::VCall(slot, args.into_iter().map(super::exprs::fuse).collect(), pos)),
+                    TExprKind::CallVal { func, args } => Some(TStmt::CallVal(*func, args.into_iter().map(super::exprs::fuse).collect(), pos)),
                     _ => None,
                 }
             }
@@ -710,6 +719,9 @@ impl<'p> Checker<'p> {
                     );
                     self.report(super::calls::float_hint(e, declared, v.ty));
                 }
+                // fuse an element-wise grid result so a function like relu(z) stays
+                // one kernel (and resident on the GPU) instead of separate ops.
+                let v = if v.ty == Type::Grid { super::exprs::fuse(v) } else { v };
                 Some(TStmt::Return(Some(convert(v, declared.base())), pos))
             }
         };

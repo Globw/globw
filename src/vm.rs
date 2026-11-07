@@ -31,6 +31,10 @@ pub enum Value {
     /// shape (the sizes along each dimension; `[n]` for a 1-D array). The data
     /// is row-major. The shape is a cheap `Rc` so cloning the value is cheap.
     Floats(Rc<RefCell<Vec<f64>>>, Rc<Vec<usize>>),
+    /// a `nungw` array resident in GPU memory (the `gpu` module holds the buffer;
+    /// this keeps a handle that frees it on drop, plus the shape). Data is f32.
+    #[cfg(feature = "gpu")]
+    GpuFloats(Rc<crate::gpu::GpuHandle>, Rc<Vec<usize>>),
 }
 
 /// An object: its class id and the values of its fields, in slot order.
@@ -318,6 +322,15 @@ fn repr_at(v: &Value, depth: usize) -> String {
             } else {
                 body
             }
+        }
+        #[cfg(feature = "gpu")]
+        Value::GpuFloats(h, shape) => {
+            let dims = if shape.len() > 1 {
+                shape.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("x")
+            } else {
+                h.len.to_string()
+            };
+            format!("nungw[on GPU: {dims}]")
         }
     }
 }

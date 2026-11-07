@@ -292,7 +292,7 @@ fn ai_module_errors_cleanly_when_unreachable() {
     std::fs::create_dir_all(&dir).unwrap();
     let prog = dir.join("a.gw");
     std::fs::write(&prog, "import ai\nai.endpoint(\"http://127.0.0.1:1/v1\")\noutput(ai.ask(\"hi\"))\n").unwrap();
-    let (code, _, stderr) = globw(&[prog.to_str().unwrap()]);
+    let (code, _, stderr) = globw(&["--allow-net", prog.to_str().unwrap()]);
     assert_eq!(code, 2);
     assert!(stderr.contains("ai: cannot reach"), "{}", stderr);
 }
@@ -503,7 +503,7 @@ fn builtin_module_proc_background() {
     std::fs::create_dir_all(&dir).unwrap();
     let src = "import proc\nvariables:\n    h as int\nh = proc.start(\"echo globw\")\noutput(trim(proc.wait(h)))\n";
     std::fs::write(dir.join("p.gw"), src).unwrap();
-    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    let (code, stdout, stderr) = globw(&["--allow-run", dir.join("p.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "globw\n"), "{}", stderr);
 }
 
@@ -518,7 +518,7 @@ fn builtin_module_db_sqlite() {
                output(db.value(c, \"select sum(x) from t\"), \" \", db.query(c, \"select x from t where x > 1 order by x\"))\n\
                db.close(c)\n";
     std::fs::write(dir.join("p.gw"), src).unwrap();
-    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    let (code, stdout, stderr) = globw(&["--allow-read", "--allow-write", dir.join("p.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "6 [{\"x\":2},{\"x\":3}]\n"), "{}", stderr);
 }
 
@@ -551,10 +551,214 @@ fn builtin_module_chart_svg() {
     let svg = dir.join("c.svg").to_str().unwrap().replace('\\', "/");
     let src = format!("import chart\nchart.line([1.0, 4.0, 2.0, 5.0], \"{}\")\noutput(\"done\")\n", svg);
     std::fs::write(dir.join("p.gw"), src).unwrap();
-    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    let (code, stdout, stderr) = globw(&["--allow-write", dir.join("p.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "done\n"), "{}", stderr);
     let out = std::fs::read_to_string(dir.join("c.svg")).unwrap();
     assert!(out.contains("<svg") && out.contains("<polyline"), "{}", out);
+}
+
+#[test]
+fn permissions_are_denied_by_default() {
+    let dir = std::env::temp_dir().join("globw_perm_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("p.gw"), "import shell\noutput(trim(shell.run(\"echo hi\")))\n").unwrap();
+    let p = dir.join("p.gw");
+    // refused without the flag
+    let (code, _, stderr) = globw(&[p.to_str().unwrap()]);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("not permitted") && stderr.contains("--allow-run"), "{}", stderr);
+    // allowed with it
+    let (code, stdout, stderr) = globw(&["--allow-run", p.to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "hi\n"), "{}", stderr);
+}
+
+#[test]
+fn nungw_gpu_roundtrip_and_matmul() {
+    // Works in both builds: with the `gpu` feature these run GPU-resident; without
+    // it, to_gpu/to_cpu are no-ops and matmul runs on the CPU -- same answer.
+    let dir = std::env::temp_dir().join("globw_gpu_rt_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    e, b, eg, bg, rg, r as nungw of float\n\
+               e = nungw.eye(4)\n\
+               b = nungw.reshape(nungw.range(16), [4, 4])\n\
+               eg = nungw.to_gpu(e)\n\
+               bg = nungw.to_gpu(b)\n\
+               rg = nungw.matmul(eg, bg)\n\
+               r = nungw.to_cpu(rg)\n\
+               output(nungw.to_list(r))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    // eye(4) * reshape(0..15, 4x4) == the matrix itself
+    assert_eq!(
+        (code, stdout.as_str()),
+        (0, "[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]\n"),
+        "{}",
+        stderr
+    );
+}
+
+#[test]
+fn nungw_gpu_resident_matmul_ta() {
+    // a^T·b on resident arrays (gpu) or on the CPU (no feature) -- same answer.
+    let dir = std::env::temp_dir().join("globw_gpu_ta_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    a, b, ag, bg, r as nungw of float\n\
+               a = nungw.reshape(nungw.range(6), [2, 3])\n\
+               b = nungw.reshape(nungw.range(8), [2, 4])\n\
+               ag = nungw.to_gpu(a)\n\
+               bg = nungw.to_gpu(b)\n\
+               r = nungw.to_cpu(nungw.matmul_ta(ag, bg))\n\
+               output(nungw.to_list(r))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (0, "[12.0, 15.0, 18.0, 21.0, 16.0, 21.0, 26.0, 31.0, 20.0, 27.0, 34.0, 41.0]\n"),
+        "{}",
+        stderr
+    );
+}
+
+#[test]
+fn nungw_gpu_resident_elementwise() {
+    // fused element-wise on a resident array stays resident (gpu build) or runs on
+    // the CPU (no-op to_gpu without the feature) -- same answer either way.
+    let dir = std::env::temp_dir().join("globw_gpu_ew_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    a, g, r as nungw of float\n\
+               a = nungw.of([1.0, 2.0, 3.0, 4.0])\n\
+               g = nungw.to_gpu(a)\n\
+               g = g * 2.0 + g\n\
+               r = nungw.to_cpu(g)\n\
+               output(nungw.to_list(r))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[3.0, 6.0, 9.0, 12.0]\n"), "{}", stderr);
+}
+
+#[test]
+fn nungw_gpu_resident_broadcast_bias() {
+    // a bias add z + b broadcasts a row vector over the rows of a resident matrix;
+    // the result must match the CPU broadcast (gpu build: resident, else CPU).
+    let dir = std::env::temp_dir().join("globw_gpu_bcast_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    z, b, zg, bg, r as nungw of float\n\
+               z = nungw.reshape(nungw.range(6), [2, 3])\n\
+               b = nungw.of([10.0, 20.0, 30.0])\n\
+               zg = nungw.to_gpu(z)\n\
+               bg = nungw.to_gpu(b)\n\
+               r = zg + bg\n\
+               output(nungw.to_list(nungw.to_cpu(r)))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (0, "[10.0, 21.0, 32.0, 13.0, 24.0, 35.0]\n"),
+        "{}",
+        stderr
+    );
+}
+
+#[test]
+fn nungw_gpu_resident_activation() {
+    // a fused activation chain (here sign(neg(x)), both unary ops) runs as ONE
+    // resident kernel on the GPU; sign is exact in f32, so the result matches the
+    // CPU bit-for-bit either way. Proves unary transcendentals/activations fuse.
+    let dir = std::env::temp_dir().join("globw_gpu_act_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    x, g, r as nungw of float\n\
+               x = nungw.of([-2.0, 1.0, 3.0, -5.0])\n\
+               g = nungw.to_gpu(x)\n\
+               g = nungw.sign(nungw.neg(g))\n\
+               r = nungw.to_cpu(g)\n\
+               output(nungw.to_list(r))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[1.0, -1.0, -1.0, 1.0]\n"), "{}", stderr);
+}
+
+#[test]
+fn nungw_gpu_resident_axis_reduce() {
+    // max/mean/prod along an axis stay resident; integer inputs are exact in f32,
+    // so the result matches the CPU either way.
+    let dir = std::env::temp_dir().join("globw_gpu_axisred_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    z, g as nungw of float\n\
+               z = nungw.reshape(nungw.of([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), [2, 3])\n\
+               g = nungw.to_gpu(z)\n\
+               output(nungw.to_list(nungw.to_cpu(nungw.max_axis(g, 0))))\n\
+               output(nungw.to_list(nungw.to_cpu(nungw.prod_axis(g, 1))))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[4.0, 5.0, 6.0]\n[6.0, 120.0]\n"), "{}", stderr);
+}
+
+#[test]
+fn nungw_gpu_resident_full_reduce() {
+    // whole-array sum/max/prod of a resident array: the array stays on the device,
+    // only the scalar comes back. Integer values are exact in f32.
+    let dir = std::env::temp_dir().join("globw_gpu_fullred_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    a, g as nungw of float\n\
+               a = nungw.of([1.0, 2.0, 3.0, 4.0])\n\
+               g = nungw.to_gpu(a)\n\
+               output(nungw.sum(g), \" \", nungw.max(g), \" \", nungw.prod(g))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "10.0 4.0 24.0\n"), "{}", stderr);
+}
+
+#[test]
+fn nungw_gpu_resident_binary() {
+    // a binary element-wise op between two arrays (maximum) fuses and stays
+    // resident; integer inputs are exact in f32. Also exercises resident reshape.
+    let dir = std::env::temp_dir().join("globw_gpu_bin_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    a, b, ga, gb, r as nungw of float\n\
+               a = nungw.of([1.0, 5.0, 2.0, 7.0])\n\
+               b = nungw.of([3.0, 4.0, 6.0, 1.0])\n\
+               ga = nungw.to_gpu(a)\n\
+               gb = nungw.to_gpu(b)\n\
+               r = nungw.reshape(nungw.maximum(ga, gb), [2, 2])\n\
+               output(nungw.to_list(nungw.to_cpu(r)))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[3.0, 5.0, 6.0, 7.0]\n"), "{}", stderr);
+}
+
+#[test]
+fn nungw_inplace_reuse_is_correct() {
+    // a fused expression reuses a dead temporary's buffer in place; it must give
+    // the right result AND must never clobber a live variable (here x).
+    let dir = std::env::temp_dir().join("globw_reuse_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    x, y, r as nungw of float\n\
+               x = nungw.of([1.0, 4.0, 9.0, 16.0])\n\
+               y = nungw.of([25.0, 36.0, 49.0, 64.0])\n\
+               r = nungw.sqrt(x) + nungw.sqrt(y)\n\
+               output(nungw.to_list(r))\n\
+               output(nungw.to_list(x))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[6.0, 8.0, 10.0, 12.0]\n[1.0, 4.0, 9.0, 16.0]\n"), "{}", stderr);
+}
+
+#[test]
+fn permission_scopes_limit_paths() {
+    let dir = std::env::temp_dir().join("globw_scope_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dirs = dir.to_str().unwrap().replace('\\', "/");
+    let target = format!("{}/out.txt", dirs);
+    std::fs::write(dir.join("p.gw"), format!("write_file(\"{}\", \"hi\")\noutput(\"ok\")\n", target)).unwrap();
+    let prog = dir.join("p.gw");
+    let prog = prog.to_str().unwrap();
+    // granted directory -> allowed
+    let (code, stdout, stderr) = globw(&[&format!("--allow-write={}", dirs), prog]);
+    assert_eq!((code, stdout.as_str()), (0, "ok\n"), "{}", stderr);
+    // a different directory granted -> refused
+    let (code, _, stderr) = globw(&["--allow-write=/some/other/dir", prog]);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("not permitted") && stderr.contains("--allow-write"), "{}", stderr);
 }
 
 #[test]
@@ -562,13 +766,21 @@ fn builtin_module_nungw_matmul() {
     let dir = std::env::temp_dir().join("globw_nungw_matmul_test");
     std::fs::create_dir_all(&dir).unwrap();
     // [[1,2,3],[4,5,6]] x [[7,8],[9,10],[11,12]] = [[58,64],[139,154]]
+    // both the explicit form and the shape-aware form must give the same result
     let src = "import nungw\nvariables:\n    a, b as nungw of float\n\
-               a = nungw.of([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])\n\
-               b = nungw.of([7.0, 8.0, 9.0, 10.0, 11.0, 12.0])\n\
-               output(nungw.to_list(nungw.matmul(a, 2, 3, b, 2)))\n";
+               a = nungw.reshape(nungw.of([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), [2, 3])\n\
+               b = nungw.reshape(nungw.of([7.0, 8.0, 9.0, 10.0, 11.0, 12.0]), [3, 2])\n\
+               output(nungw.to_list(nungw.matmul(a, 2, 3, b, 2)))\n\
+               output(nungw.to_list(nungw.matmul(a, b)))\n\
+               output(nungw.shape(nungw.transpose(a)))\n";
     std::fs::write(dir.join("p.gw"), src).unwrap();
     let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
-    assert_eq!((code, stdout.as_str()), (0, "[58.0, 64.0, 139.0, 154.0]\n"), "{}", stderr);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (0, "[58.0, 64.0, 139.0, 154.0]\n[58.0, 64.0, 139.0, 154.0]\n[3, 2]\n"),
+        "{}",
+        stderr
+    );
 }
 
 #[test]
