@@ -25,6 +25,19 @@ function mlp(sizes as list of int) as list of nungw of float
     return net
 end function
 
+' Move every weight to the GPU so train/predict/loss run RESIDENT in VRAM (needs
+' the `gpu` build + GLOBW_GPU=1; otherwise nungw.to_gpu is a no-op and it stays on
+' the CPU, with the same result). Move the data too: xg = nungw.to_gpu(x), etc.
+function gpu(net as list of nungw of float) as list of nungw of float
+    variables:
+        out as list of nungw of float
+        i as int
+    for(i from 1 to length(net))
+        append(out, nungw.to_gpu(net[i]))
+    end loop
+    return out
+end function
+
 ' Forward pass over a batch x (rows x inputs). Returns the output (rows x outputs).
 function predict(net as list of nungw of float, x as nungw of float, rows as int) as nungw of float
     variables:
@@ -39,7 +52,7 @@ function predict(net as list of nungw of float, x as nungw of float, rows as int
         shp = nungw.shape(w)
         ni = shp[1]
         no = shp[2]
-        z = nungw.matmul(a, rows, ni, w, no) + b
+        z = nungw.matmul(a, w) + b
         if(l < layers)
             a = relu(z)
         else
@@ -86,7 +99,7 @@ procedure train(net as list of nungw of float, x as nungw of float, y as nungw o
             shp = nungw.shape(w)
             ni = shp[1]
             no = shp[2]
-            z = nungw.matmul(a, rows, ni, w, no) + b
+            z = nungw.matmul(a, w) + b
             if(l < layers)
                 a = relu(z)
             else
@@ -106,10 +119,10 @@ procedure train(net as list of nungw of float, x as nungw of float, y as nungw o
                 ad = nungw.sign(acts[l + 1])
             end if
             dz = nungw.mul(dcur, ad)
-            grads[2 * l - 1] = nungw.matmul(nungw.transpose(acts[l], rows, ni), ni, rows, dz, no)
+            grads[2 * l - 1] = nungw.matmul_ta(acts[l], dz)   ' acts[l]^T * dz
             grads[2 * l] = nungw.sum_axis(dz, 0)
             if(l > 1)
-                dcur = nungw.matmul(dz, rows, no, nungw.transpose(net[2 * l - 1], ni, no), ni)
+                dcur = nungw.matmul_tb(dz, net[2 * l - 1])    ' dz * W^T
             end if
         end loop
         ' Adam update
