@@ -1372,6 +1372,8 @@ The project is a Cargo project at the repository root, with one module per phase
 **Command line** (the binary is `gw`)
 ```
 gw program.gw            run the program
+gw --repl                start an interactive REPL (declarations and assignments
+                         persist across lines; a bare expression prints its value)
 gw --check program.gw    type-check only, do not run (prints "No errors found.")
 gw --json program.gw     report errors as a JSON array (for editors / CI),
                          e.g. gw --check --json x.gw -> [] or [{"line":3,"col":5,

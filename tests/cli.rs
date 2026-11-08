@@ -9,6 +9,39 @@ fn globw(args: &[&str]) -> (i32, String, String) {
     )
 }
 
+fn globw_stdin(args: &[&str], input: &str) -> (i32, String, String) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gw"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    (
+        out.status.code().unwrap(),
+        String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
+        String::from_utf8_lossy(&out.stderr).replace("\r\n", "\n"),
+    )
+}
+
+#[test]
+fn repl_evaluates_and_keeps_state() {
+    // declarations and assignments persist across lines; a bare expression prints
+    // its value. Prompts and errors go to stderr, results to stdout.
+    let (code, stdout, stderr) = globw_stdin(&["--repl"], "x as int\nx = 5\nx + 10\nx * 2\n\"hi\"\n");
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "15\n10\nhi\n", "{}", stderr);
+    // a bad line is reported but does not break the session or the state
+    let (code, stdout, stderr) = globw_stdin(&["--repl"], "x as int\nx = 7\nnope + 1\nx + 1\n");
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "8\n", "{}", stderr);
+    assert!(stderr.contains("not declared"), "{}", stderr);
+}
+
 #[test]
 fn runs_a_program() {
     let (code, stdout, _) = globw(&["examples/hello.gw"]);
