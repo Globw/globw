@@ -1278,10 +1278,26 @@ output(ffi.int(m, "abs", [-9]))        ' int abs(int)         -> 9
 ```
 
 - `ffi.open(path)` loads the library and returns an integer handle.
-- `ffi.int(handle, name, args)` calls a function taking 64-bit integer arguments
-  and returning a 64-bit integer; `ffi.real(...)` does the same with doubles.
-- Up to six arguments. Strings, pointers, structs and callbacks are not handled
-  yet — the signature is assumed to match, as with any FFI.
+- `ffi.int(handle, name, args)` calls a function whose arguments are all 64-bit
+  integers **or pointers** (a pointer is just an address, i.e. an integer) and
+  returns a 64-bit integer or pointer; `ffi.int32(...)` is the same for a C `int`
+  (32-bit) return; `ffi.real(...)` is for `double` arguments and return.
+- `ffi.cstr(s)` copies a Globw string into a C string and returns its pointer (to
+  pass as a `char*`); `ffi.read(ptr)` reads a C string at a pointer back into a
+  Globw string; `ffi.buffer(g)` returns the address of a nungw's data, so a C
+  function can read or write the array in place.
+
+```
+m = ffi.open("msvcrt.dll")
+output(ffi.read(ffi.int(m, "getenv", [ffi.cstr("PATH")])))   ' char* getenv(char*)
+output(ffi.int32(m, "atoi", [ffi.cstr("-42")]))              ' int atoi(char*) -> -42
+a = nungw.of([1.0, 2.0, 3.0])
+n = ffi.int(m, "memset", [ffi.buffer(a), 0, 24])             ' zero the array in place
+```
+
+- Up to six arguments. A single call cannot mix integer and floating-point
+  arguments (that needs libffi); structs and callbacks are not handled. The
+  signature is assumed to match, as with any FFI.
 
 ## 7. Errors
 

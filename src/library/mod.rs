@@ -339,7 +339,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), Type::Base(Int))
         }
-        FfiInt | FfiReal => {
+        FfiInt | FfiInt32 | FfiReal => {
             arity(3)?;
             if a[0] != Type::Base(Int) {
                 return Err(CheckError::Arg { index: 0, expected: Type::Base(Int) });
@@ -348,9 +348,16 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 return Err(CheckError::Arg { index: 1, expected: Type::Base(Str) });
             }
             match collection(a[2]) {
-                Some(e) if numeric(e) => ok(none(3), if b == FfiInt { Type::Base(Int) } else { Type::Base(Real) }),
+                Some(e) if numeric(e) => ok(none(3), if b == FfiReal { Type::Base(Real) } else { Type::Base(Int) }),
                 _ => other("the third argument must be a list of numbers"),
             }
+        }
+        FfiBuffer => {
+            arity(1)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            ok(none(1), Type::Base(Int))
         }
         GridGet => {
             arity(2)?;
@@ -4977,7 +4984,7 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
                 return Err(deny("the proc module", "--allow-run"));
             }
         }
-        FfiOpen | FfiInt | FfiReal => {
+        FfiOpen | FfiInt | FfiInt32 | FfiReal | FfiCstr | FfiRead | FfiBuffer => {
             if !c.run {
                 return Err(deny("the ffi module", "--allow-run"));
             }
@@ -8612,12 +8619,25 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             Value::Int(ffi_call_int(int(&args[0]), text(&args[1]), &xs)?)
         }
         #[cfg(feature = "native")]
+        FfiInt32 => {
+            let xs: Vec<i64> = seq(&args[2]).borrow().iter().map(int).collect();
+            Value::Int(ffi_call_int32(int(&args[0]), text(&args[1]), &xs)?)
+        }
+        #[cfg(feature = "native")]
         FfiReal => {
             let xs: Vec<f64> = seq(&args[2]).borrow().iter().map(real).collect();
             Value::Real(ffi_call_real(int(&args[0]), text(&args[1]), &xs)?)
         }
+        #[cfg(feature = "native")]
+        FfiCstr => Value::Int(ffi_cstr(text(&args[0]))?),
+        #[cfg(feature = "native")]
+        FfiRead => string(ffi_read(int(&args[0]))?),
+        #[cfg(feature = "native")]
+        FfiBuffer => Value::Int(floats(&args[0]).borrow().as_ptr() as i64),
         #[cfg(not(feature = "native"))]
-        FfiOpen | FfiInt | FfiReal => return Err("the ffi module is not available in the web playground".to_string()),
+        FfiOpen | FfiInt | FfiInt32 | FfiReal | FfiCstr | FfiRead | FfiBuffer => {
+            return Err("the ffi module is not available in the web playground".to_string())
+        }
 
         // math
         MathGcd => Value::Int(gcd(int(&args[0]), int(&args[1]))),

@@ -146,7 +146,11 @@ pub enum Builtin {
     // module "ffi" (call C functions from a native shared library)
     FfiOpen,
     FfiInt,
+    FfiInt32,
     FfiReal,
+    FfiCstr,
+    FfiRead,
+    FfiBuffer,
     // module "math" (extra maths)
     MathGcd,
     MathLcm,
@@ -1055,7 +1059,11 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (ShellRun, "shell.run", Sig::Fixed(&[S], Some(Str))),
     (FfiOpen, "ffi.open", Sig::Flexible { function: true }),
     (FfiInt, "ffi.int", Sig::Flexible { function: true }),
+    (FfiInt32, "ffi.int32", Sig::Flexible { function: true }),
     (FfiReal, "ffi.real", Sig::Flexible { function: true }),
+    (FfiCstr, "ffi.cstr", Sig::Fixed(&[S], Some(Int))),
+    (FfiRead, "ffi.read", Sig::Fixed(&[I], Some(Str))),
+    (FfiBuffer, "ffi.buffer", Sig::Flexible { function: true }),
     (MathGcd, "math.gcd", Sig::Fixed(&[I, I], Some(Int))),
     (MathLcm, "math.lcm", Sig::Fixed(&[I, I], Some(Int))),
     (MathFactorial, "math.factorial", Sig::Fixed(&[I], Some(Int))),

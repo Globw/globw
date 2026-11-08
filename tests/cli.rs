@@ -597,6 +597,23 @@ fn ffi_calls_a_c_function() {
     assert_eq!((code, stdout.as_str()), (0, "4.0 9\n"), "{}", stderr);
 }
 
+#[cfg(windows)]
+#[test]
+fn ffi_strings_and_buffers() {
+    // strings (atoi via a C string), 32-bit int return, and passing a nungw
+    // buffer to C (memset zeroes it in place).
+    let dir = std::env::temp_dir().join("globw_ffi_str_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import ffi\nimport nungw\nvariables:\n    lib, r as int\n    a as nungw of float\n\
+               lib = ffi.open(\"msvcrt.dll\")\n\
+               a = nungw.of([1.0, 2.0, 3.0, 4.0])\n\
+               r = ffi.int(lib, \"memset\", [ffi.buffer(a), 0, 32])\n\
+               output(ffi.int32(lib, \"atoi\", [ffi.cstr(\"100\")]), \" \", nungw.sum(a))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&["--allow-run", dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "100 0.0\n"), "{}", stderr);
+}
+
 #[test]
 fn permissions_are_denied_by_default() {
     let dir = std::env::temp_dir().join("globw_perm_test");
