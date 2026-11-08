@@ -558,6 +558,21 @@ fn builtin_module_chart_svg() {
 }
 
 #[test]
+fn json_diagnostics_are_machine_readable() {
+    let dir = std::env::temp_dir().join("globw_json_diag_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    // a valid program reports an empty array
+    std::fs::write(dir.join("ok.gw"), "variables:\n    x as int\nx = 5\noutput(x)\n").unwrap();
+    let (code, stdout, stderr) = globw(&["--check", "--json", dir.join("ok.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[]\n"), "{}", stderr);
+    // a type error is reported as JSON with a line and a message
+    std::fs::write(dir.join("bad.gw"), "variables:\n    x as int\nx = \"hello\"\n").unwrap();
+    let (code, stdout, _) = globw(&["--check", "--json", dir.join("bad.gw").to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stdout.contains("\"line\":3") && stdout.contains("\"message\":"), "{}", stdout);
+}
+
+#[test]
 fn ffi_is_denied_without_allow_run() {
     // the ffi module runs native code, so it needs --allow-run.
     let dir = std::env::temp_dir().join("globw_ffi_perm_test");

@@ -1334,11 +1334,14 @@ The project is a Cargo project at the repository root, with one module per phase
 - Integers and reals are never heap-allocated. Strings, arrays and lists are shared by reference.
 - Globals live in fixed-index slots and are never looked up by name at run time.
 
-**Command line**
+**Command line** (the binary is `gw`)
 ```
-globw program.gw           run
-globw --check program.gw
-       globw --profile program.gw  (counts how often each opcode runs)   only check for errors, do not run
+gw program.gw            run the program
+gw --check program.gw    type-check only, do not run (prints "No errors found.")
+gw --json program.gw     report errors as a JSON array (for editors / CI),
+                         e.g. gw --check --json x.gw -> [] or [{"line":3,"col":5,
+                         "len":7,"message":"...","hint":null,"file":"x.gw"}]
+gw --profile program.gw  run and count how often each opcode runs
 ```
 
 ## 9. Tests

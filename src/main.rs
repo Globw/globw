@@ -48,6 +48,7 @@ fn main() -> ExitCode {
     // the security boundary for running untrusted .gw files and gwget packages.
     let mut check_only = false;
     let mut profile = false;
+    let mut json = false;
     let mut caps = globw::library::Caps::none();
     let mut file: Option<&String> = None;
     let mut bad = false;
@@ -59,6 +60,7 @@ fn main() -> ExitCode {
         match key {
             "--check" => check_only = true,
             "--profile" => profile = true,
+            "--json" => json = true,
             "--allow-run" => caps.allow_run(),
             "--allow-net" => caps.allow_net(val),
             "--allow-read" => caps.allow_read(val),
@@ -79,7 +81,7 @@ fn main() -> ExitCode {
         (false, Some(f)) => f,
         _ => {
             eprintln!(
-                "Usage: gw [options] program.gw\n\nOptions:\n  --check          type-check only, do not run\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
+                "Usage: gw [options] program.gw\n\nOptions:\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
             );
             return ExitCode::from(3);
         }
@@ -109,13 +111,35 @@ fn main() -> ExitCode {
     let module = match compiled {
         Ok(m) => m,
         Err(errors) => {
-            let text: Vec<String> = errors.iter().map(|e| e.render_in(&files)).collect();
-            eprint!("{}", text.join("\n"));
+            if json {
+                // machine-readable diagnostics, for editors / CI
+                let arr: Vec<serde_json::Value> = errors
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "file": files.get(e.pos.file as usize).map(|f| f.name.clone()),
+                            "line": e.pos.line,
+                            "col": e.pos.col,
+                            "len": e.pos.len,
+                            "message": e.message,
+                            "hint": e.hint,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string()));
+            } else {
+                let text: Vec<String> = errors.iter().map(|e| e.render_in(&files)).collect();
+                eprint!("{}", text.join("\n"));
+            }
             return ExitCode::from(1);
         }
     };
     if check_only {
-        println!("No errors found.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No errors found.");
+        }
         return ExitCode::SUCCESS;
     }
     let stdin = io::stdin();
