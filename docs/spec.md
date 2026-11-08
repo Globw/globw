@@ -1295,9 +1295,20 @@ a = nungw.of([1.0, 2.0, 3.0])
 n = ffi.int(m, "memset", [ffi.buffer(a), 0, 24])             ' zero the array in place
 ```
 
-- Up to six arguments. A single call cannot mix integer and floating-point
-  arguments (that needs libffi); structs and callbacks are not handled. The
-  signature is assumed to match, as with any FFI.
+- Up to six arguments, and a single call cannot mix integer and floating-point
+  arguments. For anything more general, build with `--features ffi-full` (which
+  compiles the C **libffi**): `ffi.call_int(lib, name, sig, args)` and
+  `ffi.call_real(...)` take a signature string — one character per argument,
+  `i` int64, `d` double, `f` float32, `p` pointer — and call **any** C signature,
+  mixing integers and floats freely:
+
+  ```
+  ffi.call_real(m, "ldexp", "di", [1.5, 3.0])   ' double ldexp(double, int) -> 12.0
+  ```
+
+  The plain build stays pure-Rust (no libffi, single binary) and reports a clear
+  error if `ffi.call_*` is used without the feature. Structs and callbacks are
+  out of scope either way; the signature is assumed to match, as with any FFI.
 
 ## 7. Errors
 

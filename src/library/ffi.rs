@@ -115,3 +115,85 @@ pub(super) fn ffi_call_real(h: i64, name: &str, args: &[f64]) -> Result<f64, Str
         }
     })
 }
+
+// ---- optional: a fully general call via libffi (feature "ffi-full") ----
+// Handles any C signature, including a mix of integer and floating-point
+// arguments that the hand-rolled paths above cannot. Compiled only with
+// --features ffi-full (which builds the C libffi).
+
+/// The result of a general call: an integer or a double.
+#[cfg(feature = "ffi-full")]
+pub(super) enum FfiRet {
+    Int(i64),
+    Real(f64),
+}
+
+/// Calls `name` in library `h` with the signature `sig` (one character per
+/// argument: `i` int64, `d` double, `f` float32, `p` pointer), its arguments
+/// given as doubles (an `i`/`p` slot is rounded/cast to an integer/pointer). The
+/// return is an integer (`ret_int`) or a double.
+#[cfg(feature = "ffi-full")]
+pub(super) fn ffi_call_sig(h: i64, name: &str, sig: &str, args: &[f64], ret_int: bool) -> Result<FfiRet, String> {
+    use libffi::middle::{arg, Cif, CodePtr, Type};
+    use std::os::raw::c_void;
+    let n = sig.chars().count();
+    if n != args.len() {
+        return Err(format!("ffi.call: signature \"{}\" expects {} arguments, got {}", sig, n, args.len()));
+    }
+    enum Slot {
+        I(i64),
+        D(f64),
+        F(f32),
+        P(*const c_void),
+    }
+    let mut types: Vec<Type> = Vec::with_capacity(n);
+    let mut slots: Vec<Slot> = Vec::with_capacity(n);
+    for (c, &x) in sig.chars().zip(args) {
+        match c {
+            'i' => {
+                types.push(Type::i64());
+                slots.push(Slot::I(x as i64));
+            }
+            'd' => {
+                types.push(Type::f64());
+                slots.push(Slot::D(x));
+            }
+            'f' => {
+                types.push(Type::f32());
+                slots.push(Slot::F(x as f32));
+            }
+            'p' => {
+                types.push(Type::pointer());
+                slots.push(Slot::P(x as i64 as usize as *const c_void));
+            }
+            other => return Err(format!("ffi.call: unknown type '{}' in signature \"{}\"", other, sig)),
+        }
+    }
+    let call_args: Vec<_> = slots
+        .iter()
+        .map(|s| match s {
+            Slot::I(v) => arg(v),
+            Slot::D(v) => arg(v),
+            Slot::F(v) => arg(v),
+            Slot::P(v) => arg(v),
+        })
+        .collect();
+    let cif = Cif::new(types, if ret_int { Type::i64() } else { Type::f64() });
+    LIBS.with(|l| {
+        let vlibs = l.borrow();
+        let lib = usize::try_from(h).ok().and_then(|i| vlibs.get(i)).ok_or("ffi: invalid library handle")?;
+        // SAFETY: resolving and calling an arbitrary C symbol with the declared
+        // signature; this is the trust an FFI inherently places in the caller.
+        unsafe {
+            let s = lib
+                .get::<unsafe extern "C" fn()>(name.as_bytes())
+                .map_err(|e| format!("ffi: no function \"{}\" ({})", name, e))?;
+            let code = CodePtr(*s as *mut c_void);
+            Ok(if ret_int {
+                FfiRet::Int(cif.call::<i64>(code, &call_args))
+            } else {
+                FfiRet::Real(cif.call::<f64>(code, &call_args))
+            })
+        }
+    })
+}

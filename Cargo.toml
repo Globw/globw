@@ -36,6 +36,11 @@ native = [
 # Optional GPU backend for nungw fused element-wise kernels (wgpu + WGSL compute,
 # f32). Off by default: ordinary builds, the wasm playground and CI are untouched.
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
+# Optional: a fully general FFI via libffi (arbitrary C signatures, mixing int and
+# float arguments). Off by default because it compiles the C libffi at build time,
+# which the plain "single binary, builds everywhere" build avoids. Without it, the
+# pure-Rust ffi.int/ffi.real/ffi.cstr/ffi.buffer path still works.
+ffi-full = ["native", "dep:libffi"]
 
 [dependencies]
 # portable everywhere (native and wasm)
@@ -61,6 +66,7 @@ tinyfiledialogs = { version = "3.9.1", optional = true }
 ureq = { version = "2.12.1", optional = true }
 libloading = { version = "0.8.6", optional = true }
 rayon = { version = "1.10.0", optional = true }
+libffi = { version = "3.2.0", optional = true }
 # GPU backend, enabled by the `gpu` feature
 wgpu = { version = "30.0.1", optional = true }
 pollster = { version = "0.4.0", optional = true }

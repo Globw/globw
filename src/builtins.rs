@@ -151,6 +151,8 @@ pub enum Builtin {
     FfiCstr,
     FfiRead,
     FfiBuffer,
+    FfiCallInt,
+    FfiCallReal,
     // module "math" (extra maths)
     MathGcd,
     MathLcm,
@@ -1064,6 +1066,8 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (FfiCstr, "ffi.cstr", Sig::Fixed(&[S], Some(Int))),
     (FfiRead, "ffi.read", Sig::Fixed(&[I], Some(Str))),
     (FfiBuffer, "ffi.buffer", Sig::Flexible { function: true }),
+    (FfiCallInt, "ffi.call_int", Sig::Flexible { function: true }),
+    (FfiCallReal, "ffi.call_real", Sig::Flexible { function: true }),
     (MathGcd, "math.gcd", Sig::Fixed(&[I, I], Some(Int))),
     (MathLcm, "math.lcm", Sig::Fixed(&[I, I], Some(Int))),
     (MathFactorial, "math.factorial", Sig::Fixed(&[I], Some(Int))),

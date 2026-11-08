@@ -572,6 +572,35 @@ fn json_diagnostics_are_machine_readable() {
     assert!(stdout.contains("\"line\":3") && stdout.contains("\"message\":"), "{}", stdout);
 }
 
+#[cfg(not(feature = "ffi-full"))]
+#[test]
+fn ffi_call_needs_ffi_full_feature() {
+    // the general libffi-backed call is opt-in; without the feature it says so.
+    let dir = std::env::temp_dir().join("globw_ffi_full_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import ffi\nvariables:\n    lib as int\n\
+               lib = ffi.open(\"msvcrt.dll\")\n\
+               output(ffi.call_real(lib, \"pow\", \"dd\", [2.0, 10.0]))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, _, stderr) = globw(&["--allow-run", dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("ffi-full"), "{}", stderr);
+}
+
+#[cfg(all(windows, feature = "ffi-full"))]
+#[test]
+fn ffi_call_mixed_signature() {
+    // libffi handles a mix of int and float in one signature: ldexp(double, int).
+    let dir = std::env::temp_dir().join("globw_ffi_mix_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import ffi\nvariables:\n    lib as int\n\
+               lib = ffi.open(\"msvcrt.dll\")\n\
+               output(ffi.call_real(lib, \"ldexp\", \"di\", [1.5, 3.0]))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&["--allow-run", dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "12.0\n"), "{}", stderr);
+}
+
 #[test]
 fn ffi_is_denied_without_allow_run() {
     // the ffi module runs native code, so it needs --allow-run.
