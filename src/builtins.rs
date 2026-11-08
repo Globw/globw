@@ -499,7 +499,7 @@ pub enum Builtin {
     GridClip, GridConcat, GridWhere,
     // N-d concatenation / slicing, and heavier linear algebra
     GridConcatAxis, GridSlice,
-    GridEigvalsSym, GridSingularValues, GridLstsq,
+    GridEigvalsSym, GridEigvecsSym, GridSingularValues, GridSvdU, GridSvdV, GridLstsq,
     // module "counter" (tallies)
     CounterItems,
     CounterChars,
@@ -1567,7 +1567,10 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GridConcatAxis, "nungw.concat_axis", Sig::Flexible { function: true }),
     (GridSlice, "nungw.slice", Sig::Flexible { function: true }),
     (GridEigvalsSym, "nungw.eigvals_sym", Sig::Flexible { function: true }),
+    (GridEigvecsSym, "nungw.eigvecs_sym", Sig::Flexible { function: true }),
     (GridSingularValues, "nungw.singular_values", Sig::Flexible { function: true }),
+    (GridSvdU, "nungw.svd_u", Sig::Flexible { function: true }),
+    (GridSvdV, "nungw.svd_v", Sig::Flexible { function: true }),
     (GridLstsq, "nungw.lstsq", Sig::Flexible { function: true }),
     (CounterItems, "counter.items", Sig::Flexible { function: true }),
     (CounterChars, "counter.chars", Sig::Flexible { function: true }),

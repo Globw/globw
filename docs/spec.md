@@ -692,7 +692,7 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.matmul(a, b)` | matrix product using the arrays' 2-D shapes: `a` is `m`×`k`, `b` is `k`×`n`, result `m`×`n`. The explicit form `nungw.matmul(a, rows, inner, b, cols)` is still there for flat arrays |
 | `nungw.matmul_ta(a, b)` | product with the first matrix transposed: `aᵀ · b` (no explicit transpose). Explicit form: `nungw.matmul_ta(a, a_rows, a_cols, b, b_cols)` |
 | `nungw.matmul_tb(a, b)` | product with the second matrix transposed: `a · bᵀ` (no explicit transpose). Explicit form: `nungw.matmul_tb(a, a_rows, inner, b, b_rows)` |
-| `nungw.solve(a, n, b)`, `nungw.inv(a, n)`, `nungw.det(a, n)`, `nungw.transpose(a, rows, cols)` | linear algebra on a flat row-major matrix (LU with partial pivoting): solve `A x = b`, inverse, determinant, transpose. Each also has a shape-aware form that drops the dimensions: `nungw.solve(a, b)`, `nungw.inv(a)`, `nungw.det(a)`, `nungw.transpose(a)` (likewise `eigvals_sym`, `singular_values`, `lstsq`) |
+| `nungw.solve(a, n, b)`, `nungw.inv(a, n)`, `nungw.det(a, n)`, `nungw.transpose(a, rows, cols)` | linear algebra on a flat row-major matrix (LU with partial pivoting): solve `A x = b`, inverse, determinant, transpose. Each also has a shape-aware form that drops the dimensions: `nungw.solve(a, b)`, `nungw.inv(a)`, `nungw.det(a)`, `nungw.transpose(a)` (likewise `eigvals_sym`, `eigvecs_sym`, `singular_values`, `svd_u`, `svd_v`, `lstsq`) |
 | `nungw.fft(a)`, `nungw.ifft(c)`, `nungw.cabs(c)` | FFT of a real array → complex, inverse FFT, and magnitudes; a complex array is interleaved `[re, im, re, im, ...]` |
 | `nungw.shape(g)`, `nungw.ndim(g)`, `nungw.reshape(g, [dims])` | a nungw is N-dimensional: read its shape, its number of dimensions, or give it a new shape |
 | `nungw.at(g, i, j, ...)` | read one element by N-dimensional index (1-based) |
@@ -701,7 +701,9 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.cumsum(g)`, `nungw.cumprod(g)`, `nungw.sort(g)`, `nungw.argsort(g)` | running sum/product, sorted values, and the 1-based sort order (all flattened) |
 | `nungw.clip(g, lo, hi)`, `nungw.concat(a, b)`, `nungw.where(cond, a, b)` | clamp to a range; join two arrays (flat); pick from `a` where `cond` ≠ 0, else `b` |
 | `nungw.concat_axis(a, b, axis)`, `nungw.slice(g, start, stop)` | join two arrays along a dimension (vstack/hstack); take a 1-based inclusive flat slice |
-| `nungw.eigvals_sym(a, n)`, `nungw.singular_values(a, m, n)`, `nungw.lstsq(a, m, n, b)` | eigenvalues of a symmetric matrix, singular values, and the least-squares solution of `A x ≈ b` |
+| `nungw.eigvals_sym(a, n)`, `nungw.eigvecs_sym(a, n)` | eigenvalues (ascending) and the matching eigenvectors (as the columns of an `n×n` matrix) of a symmetric matrix, so `A = V·diag(λ)·Vᵀ` |
+| `nungw.singular_values(a, m, n)`, `nungw.svd_u(a, m, n)`, `nungw.svd_v(a, m, n)` | the thin SVD of an `m×n` matrix: the `r = min(m,n)` singular values (descending), the left singular vectors `U` (`m×r`) and the right singular vectors `V` (`n×r`), so `A = U·diag(σ)·Vᵀ` |
+| `nungw.lstsq(a, m, n, b)` | the least-squares solution of `A x ≈ b` |
 
 A nungw is **N-dimensional**: it carries a shape, and element-wise binary operators
 **broadcast** like NumPy (shapes align from the right; a size-1 dimension repeats).

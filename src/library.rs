@@ -553,7 +553,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), Type::Grid)
         }
-        GridInv | GridDet | GridEigvalsSym => {
+        GridInv | GridDet | GridEigvalsSym | GridEigvecsSym => {
             // shape-aware form f(a) using a's square 2-D shape, or explicit f(a, n).
             if a.len() == 1 {
                 if a[0] != Type::Grid {
@@ -611,8 +611,8 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(3), Type::Grid)
         }
-        GridSingularValues => {
-            // shape-aware form singular_values(a), or explicit (a, m, n).
+        GridSingularValues | GridSvdU | GridSvdV => {
+            // shape-aware form f(a), or explicit (a, m, n).
             if a.len() == 1 {
                 if a[0] != Type::Grid {
                     return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -4025,8 +4025,15 @@ fn axis_reduce(
 /// Eigenvalues of a symmetric n x n matrix, by the classic cyclic Jacobi
 /// rotations. Pure Rust (works on wasm). The input is assumed symmetric; the
 /// returned values are unsorted (callers sort).
-fn jacobi_eigenvalues(mat: &[f64], n: usize) -> Vec<f64> {
+/// Jacobi eigen-decomposition of a symmetric n x n matrix (row-major): the
+/// eigenvalues, and the eigenvector matrix V (row-major, n x n) whose column j is
+/// the unit eigenvector for eigenvalue j, in Jacobi's natural (unsorted) order.
+fn jacobi_eigen(mat: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
     let mut a = mat.to_vec();
+    let mut v = vec![0.0; n * n];
+    for i in 0..n {
+        v[i * n + i] = 1.0;
+    }
     for _sweep in 0..100 {
         let mut off = 0.0;
         for p in 0..n {
@@ -4061,10 +4068,68 @@ fn jacobi_eigenvalues(mat: &[f64], n: usize) -> Vec<f64> {
                     a[p * n + i] = c * api - s * aqi;
                     a[q * n + i] = s * api + c * aqi;
                 }
+                // accumulate the rotation into V (V <- V J) for the eigenvectors
+                for i in 0..n {
+                    let vip = v[i * n + p];
+                    let viq = v[i * n + q];
+                    v[i * n + p] = c * vip - s * viq;
+                    v[i * n + q] = s * vip + c * viq;
+                }
             }
         }
     }
-    (0..n).map(|i| a[i * n + i]).collect()
+    let vals = (0..n).map(|i| a[i * n + i]).collect();
+    (vals, v)
+}
+
+fn jacobi_eigenvalues(mat: &[f64], n: usize) -> Vec<f64> {
+    jacobi_eigen(mat, n).0
+}
+
+/// Thin SVD of an m x n matrix A (row-major) via the eigen-decomposition of
+/// A^T A: returns the r = min(m,n) singular values (descending), U (m x r) and
+/// V (n x r), with the columns of U and V the left/right singular vectors. So
+/// A ~= U * diag(sigma) * V^T.
+fn svd_thin(a: &[f64], m: usize, n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    // A^T A (n x n, symmetric)
+    let mut ata = vec![0.0; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            let mut s = 0.0;
+            for k in 0..m {
+                s += a[k * n + i] * a[k * n + j];
+            }
+            ata[i * n + j] = s;
+        }
+    }
+    let (eigvals, vecs) = jacobi_eigen(&ata, n);
+    // order by eigenvalue (= sigma^2) descending
+    let mut idx: Vec<usize> = (0..n).collect();
+    idx.sort_by(|&i, &j| eigvals[j].partial_cmp(&eigvals[i]).unwrap_or(std::cmp::Ordering::Equal));
+    let r = m.min(n);
+    let mut sig = vec![0.0; r];
+    let mut vmat = vec![0.0; n * r]; // V: n x r
+    for c in 0..r {
+        let oc = idx[c];
+        sig[c] = eigvals[oc].max(0.0).sqrt();
+        for row in 0..n {
+            vmat[row * r + c] = vecs[row * n + oc];
+        }
+    }
+    // U columns: u_c = A v_c / sigma_c (left zero when sigma ~ 0)
+    let mut umat = vec![0.0; m * r]; // U: m x r
+    for c in 0..r {
+        if sig[c] > 1e-12 {
+            for row in 0..m {
+                let mut acc = 0.0;
+                for k in 0..n {
+                    acc += a[row * n + k] * vmat[k * r + c];
+                }
+                umat[row * r + c] = acc / sig[c];
+            }
+        }
+    }
+    (sig, umat, vmat)
 }
 
 /// The optimized BLAS, loaded once at run time if one can be found. Globw uses
@@ -11049,6 +11114,62 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             sv.sort_by(|a, b| b.partial_cmp(a).unwrap_or(Ordering::Equal));
             sv.truncate(m.min(n));
             grid_val(sv)
+        }
+        GridEigvecsSym => {
+            let n = if args.len() == 1 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 || s[0] != s[1] {
+                    return Err("nungw.eigvecs_sym: the argument must be a square 2-D nungw (or pass n)".to_string());
+                }
+                s[0]
+            } else {
+                let n = int(&args[1]);
+                if n < 0 {
+                    return Err("nungw.eigvecs_sym: the dimension cannot be negative".to_string());
+                }
+                n as usize
+            };
+            let v = floats(&args[0]).borrow();
+            if v.len() != n * n {
+                return Err(format!("nungw.eigvecs_sym: a {n}x{n} matrix needs {} values, it has {}", n * n, v.len()));
+            }
+            let (vals, vecs) = jacobi_eigen(&v[..], n);
+            // columns ordered to match eigvals_sym (eigenvalues ascending)
+            let mut idx: Vec<usize> = (0..n).collect();
+            idx.sort_by(|&i, &j| vals[i].partial_cmp(&vals[j]).unwrap_or(Ordering::Equal));
+            let mut out = vec![0.0; n * n];
+            for (newc, &oldc) in idx.iter().enumerate() {
+                for row in 0..n {
+                    out[row * n + newc] = vecs[row * n + oldc];
+                }
+            }
+            grid_val_shaped(out, vec![n, n])
+        }
+        GridSvdU | GridSvdV => {
+            let (m, n) = if args.len() == 1 {
+                let s = shape_of(&args[0]);
+                if s.len() != 2 {
+                    return Err("nungw.svd: the argument must be a 2-D nungw (or pass m and n)".to_string());
+                }
+                (s[0], s[1])
+            } else {
+                let (m, n) = (int(&args[1]), int(&args[2]));
+                if m < 0 || n < 0 {
+                    return Err("nungw.svd: the dimensions cannot be negative".to_string());
+                }
+                (m as usize, n as usize)
+            };
+            let v = floats(&args[0]).borrow();
+            if v.len() != m * n {
+                return Err(format!("nungw.svd: a {m}x{n} matrix needs {} values, it has {}", m * n, v.len()));
+            }
+            let (_sig, umat, vmat) = svd_thin(&v[..], m, n);
+            let r = m.min(n);
+            if b == GridSvdU {
+                grid_val_shaped(umat, vec![m, r])
+            } else {
+                grid_val_shaped(vmat, vec![n, r])
+            }
         }
         GridLstsq => {
             let (m, n, b_idx) = if args.len() == 2 {
