@@ -43,6 +43,18 @@ fn repl_evaluates_and_keeps_state() {
 }
 
 #[test]
+fn repl_blocks_and_definitions() {
+    // a function definition spans several lines, persists, and is callable; a
+    // redefinition replaces it; a for loop runs (its counter is declared first).
+    let input = "function f() as int\n    return 1\nend function\nf()\n\
+        function f() as int\n    return 9\nend function\nf()\n\
+        i as int\nfor(i from 1 to 3)\n    output(i)\nend loop\n";
+    let (code, stdout, stderr) = globw_stdin(&["--repl"], input);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "1\n9\n1\n2\n3\n", "{}", stderr);
+}
+
+#[test]
 fn runs_a_program() {
     let (code, stdout, _) = globw(&["examples/hello.gw"]);
     assert_eq!(code, 0);

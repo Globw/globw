@@ -197,8 +197,45 @@ enum Kind {
     Import,
     Decl,
     Assign,
+    Def,
     Stmt,
     Expr,
+}
+
+/// The leading identifier of a line (its first keyword).
+fn first_word(line: &str) -> String {
+    line.trim_start().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect()
+}
+
+/// Whether the line opens a multi-line block that a matching `end` closes.
+fn is_block_opener(line: &str) -> bool {
+    matches!(
+        first_word(line).as_str(),
+        "for" | "while" | "if" | "function" | "procedure" | "class" | "try"
+    )
+}
+
+/// The name a function/procedure/class block defines (its second word).
+fn def_name(block: &str) -> String {
+    block
+        .lines()
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("")
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
+}
+
+/// +1 for a block opener, -1 for `end`, 0 otherwise -- for tracking nesting.
+fn block_delta(line: &str) -> i32 {
+    match first_word(line).as_str() {
+        "for" | "while" | "if" | "function" | "procedure" | "class" | "try" => 1,
+        "end" => -1,
+        _ => 0,
+    }
 }
 
 /// The first `=` at bracket depth 0 that is a plain assignment (not ==, !=, <=, >=
@@ -258,7 +295,7 @@ fn classify(line: &str) -> Kind {
     Kind::Expr
 }
 
-fn assemble(imports: &[String], decls: &[String], stmts: &[String], tail: Option<&str>) -> String {
+fn assemble(imports: &[String], decls: &[String], defs: &[String], stmts: &[String], tail: Option<&str>) -> String {
     let mut s = String::new();
     for i in imports {
         s.push_str(i);
@@ -271,6 +308,10 @@ fn assemble(imports: &[String], decls: &[String], stmts: &[String], tail: Option
             s.push_str(d.trim_start());
             s.push('\n');
         }
+    }
+    for d in defs {
+        s.push_str(d);
+        s.push('\n');
     }
     for st in stmts {
         s.push_str(st);
@@ -300,7 +341,8 @@ fn repl(caps: globw::library::Caps) -> ExitCode {
     globw::library::set_caps(caps);
     eprintln!("Globw REPL. Type an expression to see its value, a declaration like `x as int`,");
     eprintln!("an assignment like `x = 5`, or `import nungw`. Ctrl-D (Ctrl-Z on Windows) to quit.");
-    let (mut imports, mut decls, mut stmts): (Vec<String>, Vec<String>, Vec<String>) = (vec![], vec![], vec![]);
+    let (mut imports, mut decls, mut defs, mut stmts): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) =
+        (vec![], vec![], vec![], vec![]);
     let stdin = io::stdin();
     let mut lock = stdin.lock();
     loop {
@@ -311,34 +353,66 @@ fn repl(caps: globw::library::Caps) -> ExitCode {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
-        let line = line.trim_end().to_string();
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed == "variables:" {
+        let mut block = line.trim_end().to_string();
+        if block.trim().is_empty() || block.trim() == "variables:" {
             continue;
         }
-        let (mut ti, mut td, mut ts) = (imports.clone(), decls.clone(), stmts.clone());
-        let tail = match classify(&line) {
+        // read the rest of a multi-line block until its matching `end`
+        if is_block_opener(&block) {
+            let mut depth = 1;
+            while depth > 0 {
+                eprint!("... ");
+                let _ = io::stderr().flush();
+                let mut cont = String::new();
+                match lock.read_line(&mut cont) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                let cont = cont.trim_end();
+                depth += block_delta(cont);
+                block.push('\n');
+                block.push_str(cont);
+            }
+        }
+        let kind = match first_word(&block).as_str() {
+            "function" | "procedure" | "class" => Kind::Def,
+            _ if is_block_opener(&block) => Kind::Stmt,
+            _ => classify(&block),
+        };
+        let (mut ti, mut td, mut tf, mut ts) = (imports.clone(), decls.clone(), defs.clone(), stmts.clone());
+        let tail = match kind {
             Kind::Import => {
-                ti.push(line.clone());
+                ti.push(block.clone());
                 None
             }
             Kind::Decl => {
-                td.push(line.clone());
+                // re-declaring a name replaces the earlier declaration
+                let lhs = block.split(" as ").next().unwrap_or("").trim().to_string();
+                td.retain(|d| d.split(" as ").next().unwrap_or("").trim() != lhs);
+                td.push(block.clone());
+                None
+            }
+            Kind::Def => {
+                // re-defining a function/procedure/class replaces the earlier one
+                let name = def_name(&block);
+                tf.retain(|d| def_name(d) != name);
+                tf.push(block.clone());
                 None
             }
             Kind::Assign => {
-                ts.push(line.clone());
+                ts.push(block.clone());
                 None
             }
-            Kind::Stmt => Some(line.clone()),
-            Kind::Expr => Some(format!("output({})", line)),
+            Kind::Stmt => Some(block.clone()),
+            Kind::Expr => Some(format!("output({})", block)),
         };
-        match repl_eval(&assemble(&ti, &td, &ts, tail.as_deref())) {
+        match repl_eval(&assemble(&ti, &td, &tf, &ts, tail.as_deref())) {
             Ok(out) => {
                 print!("{}", out);
                 let _ = io::stdout().flush();
                 imports = ti;
                 decls = td;
+                defs = tf;
                 stmts = ts;
             }
             Err(e) => eprintln!("{}", e.trim_end()),
