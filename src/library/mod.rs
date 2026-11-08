@@ -332,6 +332,26 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), Type::Base(Int))
         }
+        FfiOpen => {
+            arity(1)?;
+            if a[0] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Str) });
+            }
+            ok(none(1), Type::Base(Int))
+        }
+        FfiInt | FfiReal => {
+            arity(3)?;
+            if a[0] != Type::Base(Int) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Int) });
+            }
+            if a[1] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(Str) });
+            }
+            match collection(a[2]) {
+                Some(e) if numeric(e) => ok(none(3), if b == FfiInt { Type::Base(Int) } else { Type::Base(Real) }),
+                _ => other("the third argument must be a list of numbers"),
+            }
+        }
         GridGet => {
             arity(2)?;
             if a[0] != Type::Grid {
@@ -1471,6 +1491,12 @@ use clock::*;
 // -------- running commands (the "shell" module) (helpers in shell.rs) --------
 mod shell;
 use shell::*;
+
+// ---- module "ffi": call C functions from a native shared library (in ffi.rs) ----
+#[cfg(feature = "native")]
+mod ffi;
+#[cfg(feature = "native")]
+use ffi::*;
 
 // ---------------------------------------------------------------- helpers for the extra modules
 
@@ -4949,6 +4975,11 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
         ProcStart | ProcDone | ProcWait | ProcKill => {
             if !c.run {
                 return Err(deny("the proc module", "--allow-run"));
+            }
+        }
+        FfiOpen | FfiInt | FfiReal => {
+            if !c.run {
+                return Err(deny("the ffi module", "--allow-run"));
             }
         }
         WebGet | WebPost | WebStatus | WebDownload => check_host(&c.net, text(&args[0]), "the web module")?,
@@ -8572,6 +8603,21 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             string(String::from_utf8(bytes).map_err(|_| "encode.from_base64: the decoded data is not text".to_string())?)
         }
         ShellRun => string(shell_run(text(&args[0]))?),
+
+        #[cfg(feature = "native")]
+        FfiOpen => Value::Int(ffi_open(text(&args[0]))?),
+        #[cfg(feature = "native")]
+        FfiInt => {
+            let xs: Vec<i64> = seq(&args[2]).borrow().iter().map(int).collect();
+            Value::Int(ffi_call_int(int(&args[0]), text(&args[1]), &xs)?)
+        }
+        #[cfg(feature = "native")]
+        FfiReal => {
+            let xs: Vec<f64> = seq(&args[2]).borrow().iter().map(real).collect();
+            Value::Real(ffi_call_real(int(&args[0]), text(&args[1]), &xs)?)
+        }
+        #[cfg(not(feature = "native"))]
+        FfiOpen | FfiInt | FfiReal => return Err("the ffi module is not available in the web playground".to_string()),
 
         // math
         MathGcd => Value::Int(gcd(int(&args[0]), int(&args[1]))),

@@ -558,6 +558,31 @@ fn builtin_module_chart_svg() {
 }
 
 #[test]
+fn ffi_is_denied_without_allow_run() {
+    // the ffi module runs native code, so it needs --allow-run.
+    let dir = std::env::temp_dir().join("globw_ffi_perm_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("p.gw"), "import ffi\nvariables:\n    h as int\nh = ffi.open(\"msvcrt.dll\")\n").unwrap();
+    let (code, _, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("ffi") && stderr.contains("--allow-run"), "{}", stderr);
+}
+
+#[cfg(windows)]
+#[test]
+fn ffi_calls_a_c_function() {
+    // load the C runtime and call double sqrt(double) / int abs(int) through FFI.
+    let dir = std::env::temp_dir().join("globw_ffi_call_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import ffi\nvariables:\n    lib as int\n\
+               lib = ffi.open(\"msvcrt.dll\")\n\
+               output(ffi.real(lib, \"sqrt\", [16.0]), \" \", ffi.int(lib, \"abs\", [-9]))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&["--allow-run", dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "4.0 9\n"), "{}", stderr);
+}
+
+#[test]
 fn permissions_are_denied_by_default() {
     let dir = std::env::temp_dir().join("globw_perm_test");
     std::fs::create_dir_all(&dir).unwrap();

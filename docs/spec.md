@@ -1252,7 +1252,7 @@ directories. A bare flag (no `=`) grants the whole category.
 
 | Flag | Permits |
 |---|---|
-| `--allow-run` | `shell.run` and the `proc` module |
+| `--allow-run` | `shell.run`, the `proc` module, and the `ffi` module (native code) |
 | `--allow-net` | the `web`, `serve` and `net` modules, and `ai` requests |
 | `--allow-read` | reading files, and `db.open` / `db.value` / `db.query` |
 | `--allow-write` | `write_file`, the `chart` module, and `db.run` |
@@ -1261,6 +1261,27 @@ directories. A bare flag (no `=`) grants the whole category.
 Without the matching flag the call fails with a clear error that names the flag to
 add. Pure computation — maths, strings, collections, `nungw`, graphics windows —
 needs no permission.
+
+### 6.18 Foreign functions (`ffi`)
+
+`import ffi` calls C functions from a native shared library, so Globw can reach
+anything with a C ABI. It runs native code, so it needs `--allow-run`.
+
+```
+import ffi
+variables:
+    m as int
+m = ffi.open("msvcrt.dll")            ' a .dll / .so / .dylib; returns a handle
+output(ffi.real(m, "sqrt", [2.0]))    ' double sqrt(double)  -> 1.4142135623730951
+output(ffi.real(m, "pow", [2.0, 10.0])) ' double pow(double,double) -> 1024.0
+output(ffi.int(m, "abs", [-9]))        ' int abs(int)         -> 9
+```
+
+- `ffi.open(path)` loads the library and returns an integer handle.
+- `ffi.int(handle, name, args)` calls a function taking 64-bit integer arguments
+  and returning a 64-bit integer; `ffi.real(...)` does the same with doubles.
+- Up to six arguments. Strings, pointers, structs and callbacks are not handled
+  yet — the signature is assumed to match, as with any FFI.
 
 ## 7. Errors
 
