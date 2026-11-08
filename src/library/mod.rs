@@ -920,98 +920,9 @@ fn url_query(url: &str, key: &str) -> String {
     String::new()
 }
 
-// ---------------------------------------------------------------- the "chart" module (SVG plots)
-
-enum ChartKind {
-    Line,
-    Bars,
-    Scatter,
-}
-
-const CHART_W: f64 = 640.0;
-const CHART_H: f64 = 400.0;
-const CHART_M: f64 = 45.0;
-
-fn chart_range(d: &[f64]) -> (f64, f64) {
-    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-    for &v in d {
-        lo = lo.min(v);
-        hi = hi.max(v);
-    }
-    if (hi - lo).abs() < 1e-12 {
-        hi = lo + 1.0;
-    }
-    (lo, hi)
-}
-
-fn chart_header() -> String {
-    format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\">\n\
-         <rect width=\"{w}\" height=\"{h}\" fill=\"white\"/>\n\
-         <rect x=\"{m}\" y=\"{m}\" width=\"{pw}\" height=\"{ph}\" fill=\"none\" stroke=\"#ccc\"/>\n",
-        w = CHART_W, h = CHART_H, m = CHART_M, pw = CHART_W - 2.0 * CHART_M, ph = CHART_H - 2.0 * CHART_M
-    )
-}
-
-fn chart_svg(data: &[f64], bars: bool) -> String {
-    let (lo, hi) = chart_range(data);
-    let n = data.len();
-    let sx = |i: usize| CHART_M + (CHART_W - 2.0 * CHART_M) * i as f64 / (n.max(2) - 1) as f64;
-    let sy = |v: f64| (CHART_H - CHART_M) - (v - lo) / (hi - lo) * (CHART_H - 2.0 * CHART_M);
-    let mut s = chart_header();
-    if bars {
-        let bw = (CHART_W - 2.0 * CHART_M) / n as f64 * 0.7;
-        for (i, &v) in data.iter().enumerate() {
-            let cx = CHART_M + (CHART_W - 2.0 * CHART_M) * (i as f64 + 0.5) / n as f64;
-            let top = sy(v);
-            s.push_str(&format!(
-                "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" fill=\"#4682b4\"/>\n",
-                cx - bw / 2.0, top, bw, (CHART_H - CHART_M) - top
-            ));
-        }
-    } else {
-        let pts: Vec<String> = data.iter().enumerate().map(|(i, &v)| format!("{:.1},{:.1}", sx(i), sy(v))).collect();
-        s.push_str(&format!("<polyline points=\"{}\" fill=\"none\" stroke=\"#4682b4\" stroke-width=\"2\"/>\n", pts.join(" ")));
-    }
-    s.push_str(&format!("<text x=\"4\" y=\"{:.0}\" font-size=\"11\" fill=\"#666\">{:.3}</text>\n", CHART_M + 4.0, hi));
-    s.push_str(&format!("<text x=\"4\" y=\"{:.0}\" font-size=\"11\" fill=\"#666\">{:.3}</text>\n", CHART_H - CHART_M, lo));
-    s.push_str("</svg>\n");
-    s
-}
-
-fn chart_svg_scatter(xs: &[f64], ys: &[f64]) -> String {
-    let (xlo, xhi) = chart_range(xs);
-    let (ylo, yhi) = chart_range(ys);
-    let sx = |v: f64| CHART_M + (v - xlo) / (xhi - xlo) * (CHART_W - 2.0 * CHART_M);
-    let sy = |v: f64| (CHART_H - CHART_M) - (v - ylo) / (yhi - ylo) * (CHART_H - 2.0 * CHART_M);
-    let mut s = chart_header();
-    for (&x, &y) in xs.iter().zip(ys) {
-        s.push_str(&format!("<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"3\" fill=\"#4682b4\"/>\n", sx(x), sy(y)));
-    }
-    s.push_str("</svg>\n");
-    s
-}
-
-fn chart_write(xs: &Value, ys: Option<&Value>, kind: ChartKind, path: &str) -> Result<Value, String> {
-    let data: Vec<f64> = seq(xs).borrow().iter().map(real).collect();
-    if data.is_empty() {
-        return Err("chart: the data is empty".to_string());
-    }
-    let svg = match kind {
-        ChartKind::Line => chart_svg(&data, false),
-        ChartKind::Bars => chart_svg(&data, true),
-        ChartKind::Scatter => {
-            let yd: Vec<f64> = seq(ys.expect("scatter has y")).borrow().iter().map(real).collect();
-            if yd.len() != data.len() {
-                return Err("chart.scatter: the two lists must have the same length".to_string());
-            }
-            chart_svg_scatter(&data, &yd)
-        }
-    };
-    std::fs::write(path, svg).map_err(|e| format!("chart: cannot write \"{}\": {}", path, e))?;
-    Ok(Value::Null)
-}
-
+// -------- the "chart" module (SVG plots) (helpers in chart.rs) --------
+mod chart;
+use chart::*;
 // ---- table (CSV) helpers ----
 
 fn csv_lines(csv: &str) -> Vec<&str> {
@@ -1589,137 +1500,17 @@ fn count_into(items: impl Iterator<Item = String>) -> Value {
     Value::Dict(Rc::new(RefCell::new(d)))
 }
 
-// ---------------------------------------------------------------- JSON (the "data" module)
+// -------- JSON (the "data" module) (helpers in data.rs) --------
+mod data;
+use data::*;
 
-/// Parses the JSON text of a `data.*` call's first argument.
-fn json_root(v: &Value) -> Result<Json, String> {
-    serde_json::from_str(text(v)).map_err(|e| format!("invalid JSON: {}", e))
-}
+// -------- dates and times (the "clock" module) (helpers in clock.rs) --------
+mod clock;
+use clock::*;
 
-/// Follows a path like `users[1].name` into a JSON value. Object members are
-/// written `.name` (or just `name` at the start), array positions `[n]` and are
-/// 1-based, as everywhere in Globw. An empty path is the whole value.
-fn json_at<'a>(root: &'a Json, path: &str) -> Result<&'a Json, String> {
-    let mut cur = root;
-    let mut rest = path.trim();
-    while !rest.is_empty() {
-        if let Some(r) = rest.strip_prefix('.') {
-            rest = r;
-        } else if let Some(r) = rest.strip_prefix('[') {
-            let end = r.find(']').ok_or_else(|| format!("bad path \"{}\": a \"]\" is missing", path))?;
-            let n: usize = r[..end]
-                .trim()
-                .parse()
-                .map_err(|_| format!("bad path \"{}\": an array position must be a whole number", path))?;
-            if n < 1 {
-                return Err(format!("bad path \"{}\": array positions start at 1", path));
-            }
-            cur = cur.get(n - 1).ok_or_else(|| format!("the JSON has no value at \"{}\"", path))?;
-            rest = &r[end + 1..];
-        } else {
-            let end = rest.find(|c| c == '.' || c == '[').unwrap_or(rest.len());
-            cur = cur.get(&rest[..end]).ok_or_else(|| format!("the JSON has no value at \"{}\"", path))?;
-            rest = &rest[end..];
-        }
-    }
-    Ok(cur)
-}
-
-/// Turns a Globw value into JSON (for `data.to_json`). Functions, objects and
-/// matrices have no JSON form and raise an error.
-fn to_json_value(v: &Value) -> Result<Json, String> {
-    Ok(match v {
-        Value::Null => Json::Null,
-        Value::Int(n) => Json::from(*n),
-        Value::Real(r) => serde_json::Number::from_f64(*r)
-            .map(Json::Number)
-            .ok_or("cannot turn an infinite or not-a-number value into JSON")?,
-        Value::Bool(b) => Json::Bool(*b),
-        Value::Str(s) => Json::String(s.to_string()),
-        Value::Seq(items) => Json::Array(items.borrow().iter().map(to_json_value).collect::<Result<_, _>>()?),
-        Value::Floats(g, _) => Json::Array(
-            g.borrow()
-                .iter()
-                .map(|&x| serde_json::Number::from_f64(x).map(Json::Number).ok_or_else(|| "a nungw value has no JSON form".to_string()))
-                .collect::<Result<_, _>>()?,
-        ),
-        Value::Set(d) => Json::Array(d.borrow().keys().map(|k| to_json_value(&k.value())).collect::<Result<_, _>>()?),
-        Value::Dict(d) => {
-            let d = d.borrow();
-            let mut map = serde_json::Map::new();
-            for (k, val) in d.keys().zip(d.values()) {
-                let key = match k {
-                    DictKey::Int(n) => n.to_string(),
-                    DictKey::Str(s) => s.to_string(),
-                };
-                map.insert(key, to_json_value(val)?);
-            }
-            Json::Object(map)
-        }
-        Value::Matrix(_) | Value::Object(_) | Value::Func(_) => {
-            return Err("this value has no JSON form".to_string());
-        }
-        #[cfg(feature = "gpu")]
-        Value::GpuFloats(..) => {
-            return Err("a GPU-resident nungw has no JSON form; bring it back with nungw.to_cpu first".to_string());
-        }
-    })
-}
-
-// ---------------------------------------------------------------- dates and times (the "clock" module)
-
-/// Formats a Unix timestamp (seconds) as local time, using a date pattern
-/// like "%Y-%m-%d %H:%M:%S". A bad pattern is a run-time error, not a crash.
-fn clock_format(stamp: i64, pattern: &str) -> Result<String, String> {
-    use chrono::format::{Item, StrftimeItems};
-    let utc = chrono::DateTime::from_timestamp(stamp, 0).ok_or("clock.format: the timestamp is out of range")?;
-    let local = utc.with_timezone(&chrono::Local);
-    let items: Vec<Item> = StrftimeItems::new(pattern).collect();
-    if items.iter().any(|it| matches!(it, Item::Error)) {
-        return Err(format!("clock.format: \"{}\" is not a valid date pattern", pattern));
-    }
-    Ok(local.format_with_items(items.iter()).to_string())
-}
-
-/// Reads a local date-and-time written like `pattern` and returns its Unix
-/// timestamp (seconds).
-fn clock_parse(s: &str, pattern: &str) -> Result<i64, String> {
-    use chrono::TimeZone;
-    let naive = chrono::NaiveDateTime::parse_from_str(s, pattern)
-        .map_err(|e| format!("clock.parse: {} does not match \"{}\" ({})", quote(s), pattern, e))?;
-    match chrono::Local.from_local_datetime(&naive).single() {
-        Some(dt) => Ok(dt.timestamp()),
-        None => Err(format!("clock.parse: {} is an ambiguous or impossible local time", quote(s))),
-    }
-}
-
-fn quote(s: &str) -> String {
-    format!("\"{}\"", s)
-}
-
-// ---------------------------------------------------------------- running commands (the "shell" module)
-
-/// Runs a command through the operating system's shell and returns its standard
-/// output. A command that fails (non-zero exit) is a catchable run-time error
-/// carrying its error output.
-fn shell_run(command: &str) -> Result<String, String> {
-    let mut c = if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        c.arg("/C").arg(command);
-        c
-    } else {
-        let mut c = std::process::Command::new("sh");
-        c.arg("-c").arg(command);
-        c
-    };
-    let out = c.output().map_err(|e| format!("shell.run: cannot start the command ({})", e))?;
-    if !out.status.success() {
-        let code = out.status.code().map_or_else(|| "stopped by a signal".to_string(), |n| format!("exit code {}", n));
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("shell.run: the command failed ({}): {}", code, err.trim()));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
+// -------- running commands (the "shell" module) (helpers in shell.rs) --------
+mod shell;
+use shell::*;
 
 // ---------------------------------------------------------------- helpers for the extra modules
 
