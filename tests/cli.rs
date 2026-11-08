@@ -591,7 +591,9 @@ fn ffi_memory_roundtrip() {
 #[test]
 fn ffi_calls_c_on_every_os() {
     // the FFI itself is cross-platform (libloading + extern "C"); only the library
-    // name differs. Load the platform's C math/runtime and call sqrt and abs.
+    // name differs. sqrt (double -> double) lives in the math library, abs (int ->
+    // int) in the C library. abs returns a 32-bit int, so it goes through ffi.int32:
+    // on the System V ABI (Linux/macOS) the upper bits of a 64-bit read are undefined.
     let (math, libc) = if cfg!(windows) {
         ("msvcrt.dll", "msvcrt.dll")
     } else if cfg!(target_os = "macos") {
@@ -605,7 +607,7 @@ fn ffi_calls_c_on_every_os() {
         "import ffi\nvariables:\n    m, c as int\n\
          m = ffi.open(\"{math}\")\n\
          c = ffi.open(\"{libc}\")\n\
-         output(ffi.real(m, \"sqrt\", [16.0]), \" \", ffi.int(c, \"abs\", [-9]))\n"
+         output(ffi.real(m, \"sqrt\", [16.0]), \" \", ffi.int32(c, \"abs\", [-9]))\n"
     );
     std::fs::write(dir.join("p.gw"), src).unwrap();
     let (code, stdout, stderr) = globw(&["--allow-run", dir.join("p.gw").to_str().unwrap()]);
