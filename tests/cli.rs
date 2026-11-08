@@ -727,6 +727,21 @@ fn nungw_gpu_resident_binary() {
 }
 
 #[test]
+fn nungw_rows_slices_a_matrix() {
+    // nungw.rows takes a 1-based inclusive range of rows of a 2-D matrix,
+    // keeping the 2-D shape.
+    let dir = std::env::temp_dir().join("globw_rows_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    a, r as nungw of float\n\
+               a = nungw.reshape(nungw.range(12), [4, 3])\n\
+               r = nungw.rows(a, 2, 3)\n\
+               output(nungw.to_list(r))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[3.0, 4.0, 5.0, 6.0, 7.0, 8.0]\n"), "{}", stderr);
+}
+
+#[test]
 fn nungw_eig_svd_reconstruct() {
     // eigvecs_sym and svd_u/svd_v must reconstruct the matrix:
     // A = V diag(lambda) V^T, and A = U diag(sigma) V^T.

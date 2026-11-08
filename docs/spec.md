@@ -700,7 +700,7 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.rand(n)`, `nungw.randn(n)`, `nungw.eye(n)` | random uniform `[0, 1)`, standard-normal, and the n×n identity |
 | `nungw.cumsum(g)`, `nungw.cumprod(g)`, `nungw.sort(g)`, `nungw.argsort(g)` | running sum/product, sorted values, and the 1-based sort order (all flattened) |
 | `nungw.clip(g, lo, hi)`, `nungw.concat(a, b)`, `nungw.where(cond, a, b)` | clamp to a range; join two arrays (flat); pick from `a` where `cond` ≠ 0, else `b` |
-| `nungw.concat_axis(a, b, axis)`, `nungw.slice(g, start, stop)` | join two arrays along a dimension (vstack/hstack); take a 1-based inclusive flat slice |
+| `nungw.concat_axis(a, b, axis)`, `nungw.slice(g, start, stop)`, `nungw.rows(a, start, stop)` | join two arrays along a dimension (vstack/hstack); take a 1-based inclusive flat slice; take a 1-based inclusive range of rows of a 2-D matrix, keeping the shape (handy for mini-batches) |
 | `nungw.eigvals_sym(a, n)`, `nungw.eigvecs_sym(a, n)` | eigenvalues (ascending) and the matching eigenvectors (as the columns of an `n×n` matrix) of a symmetric matrix, so `A = V·diag(λ)·Vᵀ` |
 | `nungw.singular_values(a, m, n)`, `nungw.svd_u(a, m, n)`, `nungw.svd_v(a, m, n)` | the thin SVD of an `m×n` matrix: the `r = min(m,n)` singular values (descending), the left singular vectors `U` (`m×r`) and the right singular vectors `V` (`n×r`), so `A = U·diag(σ)·Vᵀ` |
 | `nungw.lstsq(a, m, n, b)` | the least-squares solution of `A x ≈ b` |

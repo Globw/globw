@@ -630,7 +630,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(3), Type::Grid)
         }
-        GridSlice => {
+        GridSlice | GridRows => {
             arity(3)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -11058,6 +11058,21 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 return Err(format!("nungw.slice: range {start}..{stop} is invalid for {len} values (1-based, inclusive)"));
             }
             grid_val(v[(start as usize - 1)..(stop as usize)].to_vec())
+        }
+        GridRows => {
+            // a range of rows of a 2-D matrix, 1-based inclusive, keeping the shape.
+            let shape = shape_of(&args[0]);
+            if shape.len() != 2 {
+                return Err("nungw.rows: the argument must be a 2-D nungw".to_string());
+            }
+            let (m, n) = (shape[0] as i64, shape[1]);
+            let (start, stop) = (int(&args[1]), int(&args[2]));
+            if start < 1 || stop > m || start > stop {
+                return Err(format!("nungw.rows: rows {start}..{stop} are invalid for a matrix with {m} rows (1-based, inclusive)"));
+            }
+            let v = floats(&args[0]).borrow();
+            let (lo, hi) = ((start as usize - 1) * n, stop as usize * n);
+            grid_val_shaped(v[lo..hi].to_vec(), vec![(stop - start + 1) as usize, n])
         }
         GridEigvalsSym => {
             let n = if args.len() == 1 {
