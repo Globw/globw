@@ -1286,6 +1286,11 @@ output(ffi.int(m, "abs", [-9]))        ' int abs(int)         -> 9
   pass as a `char*`); `ffi.read(ptr)` reads a C string at a pointer back into a
   Globw string; `ffi.buffer(g)` returns the address of a nungw's data, so a C
   function can read or write the array in place.
+- For **C structs and out-parameters** (most C APIs take a *pointer* to a struct):
+  `ffi.alloc(n)` reserves `n` zeroed bytes and returns the address;
+  `ffi.poke_int` / `ffi.poke_i32` / `ffi.poke_real(ptr, offset, value)` write a
+  field; `ffi.peek_int` / `ffi.peek_i32` / `ffi.peek_real(ptr, offset)` read one.
+  So you build a struct field by field, pass its pointer, and read fields back.
 
 ```
 m = ffi.open("msvcrt.dll")

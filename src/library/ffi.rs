@@ -116,6 +116,55 @@ pub(super) fn ffi_call_real(h: i64, name: &str, args: &[f64]) -> Result<f64, Str
     })
 }
 
+// ---- raw memory, for building C structs and reading out-parameters ----
+// Most C APIs take a *pointer* to a struct, so you allocate a buffer, write the
+// fields at their byte offsets, pass the pointer (as an integer) to ffi.int, then
+// read fields back. Every address here is trusted, so the module needs --allow-run.
+
+thread_local! {
+    // buffers handed to native code, kept alive for the session.
+    static BUFS: RefCell<Vec<Vec<u8>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Allocates `n` zeroed bytes and returns their address. The buffer lives for the
+/// rest of the program (a simple arena; there is no free).
+pub(super) fn ffi_alloc(n: i64) -> Result<i64, String> {
+    if !(0..=(1 << 30)).contains(&n) {
+        return Err("ffi.alloc: the size must be between 0 and 1 GiB".to_string());
+    }
+    let buf = vec![0u8; n as usize];
+    let ptr = buf.as_ptr() as i64; // the heap data does not move when the Vec is stored
+    BUFS.with(|v| v.borrow_mut().push(buf));
+    Ok(ptr)
+}
+
+/// Writes a 64-bit integer at `ptr + off`.
+pub(super) fn ffi_poke_int(ptr: i64, off: i64, v: i64) {
+    // SAFETY: writes to a user-provided address; this is raw memory access, gated
+    // by --allow-run.
+    unsafe { ((ptr + off) as *mut i64).write_unaligned(v) }
+}
+/// Writes a 32-bit integer (a C `int`) at `ptr + off`.
+pub(super) fn ffi_poke_i32(ptr: i64, off: i64, v: i64) {
+    unsafe { ((ptr + off) as *mut i32).write_unaligned(v as i32) }
+}
+/// Writes a double at `ptr + off`.
+pub(super) fn ffi_poke_real(ptr: i64, off: i64, v: f64) {
+    unsafe { ((ptr + off) as *mut f64).write_unaligned(v) }
+}
+/// Reads a 64-bit integer at `ptr + off`.
+pub(super) fn ffi_peek_int(ptr: i64, off: i64) -> i64 {
+    unsafe { ((ptr + off) as *const i64).read_unaligned() }
+}
+/// Reads a 32-bit integer (a C `int`) at `ptr + off`, sign extended.
+pub(super) fn ffi_peek_i32(ptr: i64, off: i64) -> i64 {
+    unsafe { i64::from(((ptr + off) as *const i32).read_unaligned()) }
+}
+/// Reads a double at `ptr + off`.
+pub(super) fn ffi_peek_real(ptr: i64, off: i64) -> f64 {
+    unsafe { ((ptr + off) as *const f64).read_unaligned() }
+}
+
 // ---- optional: a fully general call via libffi (feature "ffi-full") ----
 // Handles any C signature, including a mix of integer and floating-point
 // arguments that the hand-rolled paths above cannot. Compiled only with

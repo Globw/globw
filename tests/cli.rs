@@ -572,6 +572,24 @@ fn json_diagnostics_are_machine_readable() {
     assert!(stdout.contains("\"line\":3") && stdout.contains("\"message\":"), "{}", stdout);
 }
 
+#[cfg(windows)]
+#[test]
+fn ffi_struct_memory() {
+    // build a C struct in a buffer: alloc, poke fields, peek them back, and let a
+    // C function (memcmp) read the buffer.
+    let dir = std::env::temp_dir().join("globw_ffi_struct_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import ffi\nvariables:\n    lib, buf as int\n\
+               lib = ffi.open(\"msvcrt.dll\")\n\
+               buf = ffi.alloc(16)\n\
+               ffi.poke_int(buf, 0, 42)\n\
+               ffi.poke_real(buf, 8, 3.5)\n\
+               output(ffi.peek_int(buf, 0), \" \", ffi.peek_real(buf, 8), \" \", ffi.int(lib, \"memcmp\", [buf, buf, 16]))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&["--allow-run", dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "42 3.5 0\n"), "{}", stderr);
+}
+
 #[cfg(not(feature = "ffi-full"))]
 #[test]
 fn ffi_call_needs_ffi_full_feature() {

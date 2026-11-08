@@ -5000,7 +5000,8 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
                 return Err(deny("the proc module", "--allow-run"));
             }
         }
-        FfiOpen | FfiInt | FfiInt32 | FfiReal | FfiCstr | FfiRead | FfiBuffer | FfiCallInt | FfiCallReal => {
+        FfiOpen | FfiInt | FfiInt32 | FfiReal | FfiCstr | FfiRead | FfiBuffer | FfiCallInt | FfiCallReal
+        | FfiAlloc | FfiPokeInt | FfiPokeI32 | FfiPokeReal | FfiPeekInt | FfiPeekI32 | FfiPeekReal => {
             if !c.run {
                 return Err(deny("the ffi module", "--allow-run"));
             }
@@ -8650,6 +8651,29 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         FfiRead => string(ffi_read(int(&args[0]))?),
         #[cfg(feature = "native")]
         FfiBuffer => Value::Int(floats(&args[0]).borrow().as_ptr() as i64),
+        #[cfg(feature = "native")]
+        FfiAlloc => Value::Int(ffi_alloc(int(&args[0]))?),
+        #[cfg(feature = "native")]
+        FfiPokeInt => {
+            ffi_poke_int(int(&args[0]), int(&args[1]), int(&args[2]));
+            Value::Null
+        }
+        #[cfg(feature = "native")]
+        FfiPokeI32 => {
+            ffi_poke_i32(int(&args[0]), int(&args[1]), int(&args[2]));
+            Value::Null
+        }
+        #[cfg(feature = "native")]
+        FfiPokeReal => {
+            ffi_poke_real(int(&args[0]), int(&args[1]), real(&args[2]));
+            Value::Null
+        }
+        #[cfg(feature = "native")]
+        FfiPeekInt => Value::Int(ffi_peek_int(int(&args[0]), int(&args[1]))),
+        #[cfg(feature = "native")]
+        FfiPeekI32 => Value::Int(ffi_peek_i32(int(&args[0]), int(&args[1]))),
+        #[cfg(feature = "native")]
+        FfiPeekReal => Value::Real(ffi_peek_real(int(&args[0]), int(&args[1]))),
         #[cfg(feature = "ffi-full")]
         FfiCallInt | FfiCallReal => {
             let xs: Vec<f64> = seq(&args[3]).borrow().iter().map(real).collect();
@@ -8663,7 +8687,8 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             return Err("ffi.call_int / ffi.call_real need a build with --features ffi-full".to_string())
         }
         #[cfg(not(feature = "native"))]
-        FfiOpen | FfiInt | FfiInt32 | FfiReal | FfiCstr | FfiRead | FfiBuffer | FfiCallInt | FfiCallReal => {
+        FfiOpen | FfiInt | FfiInt32 | FfiReal | FfiCstr | FfiRead | FfiBuffer | FfiCallInt | FfiCallReal
+        | FfiAlloc | FfiPokeInt | FfiPokeI32 | FfiPokeReal | FfiPeekInt | FfiPeekI32 | FfiPeekReal => {
             return Err("the ffi module is not available in the web playground".to_string())
         }
 
