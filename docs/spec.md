@@ -1265,7 +1265,10 @@ needs no permission.
 ### 6.18 Foreign functions (`ffi`)
 
 `import ffi` calls C functions from a native shared library, so Globw can reach
-anything with a C ABI. It runs native code, so it needs `--allow-run`.
+anything with a C ABI. It runs native code, so it needs `--allow-run`. The FFI is
+**cross-platform** (it loads `.dll`, `.so` or `.dylib` and uses the platform's C
+calling convention); only the library *name* differs per OS — e.g. `"msvcrt.dll"`
+on Windows, `"libm.so.6"` / `"libc.so.6"` on Linux, `"libSystem.dylib"` on macOS.
 
 ```
 import ffi
