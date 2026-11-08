@@ -5,16 +5,29 @@
   "version": "1.46.0",
   "license": "Apache-2.0",
   "icon": "images/icon.png",
-  "publisher": "local",
+  "publisher": "globw",
   "repository": {
     "type": "git",
     "url": "https://github.com/Globw/globw.git"
+  },
+  "homepage": "https://github.com/Globw/globw#readme",
+  "bugs": {
+    "url": "https://github.com/Globw/globw/issues"
   },
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Formatters",
+    "Snippets"
+  ],
+  "keywords": [
+    "globw",
+    "gw",
+    "language",
+    "interpreter",
+    "formatter"
   ],
   "main": "./extension.js",
   "activationEvents": [

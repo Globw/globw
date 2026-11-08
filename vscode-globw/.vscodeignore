@@ -1,0 +1,8 @@
+# Files kept out of the published .vsix (dev-only)
+test/**
+parse.js
+install.ps1
+*.vsix
+.vscodeignore
+.gitignore
+**/*.map

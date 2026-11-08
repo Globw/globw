@@ -1,8 +1,8 @@
 # Globw for VS Code
 
 Language support for **[Globw](https://github.com/Globw/globw)** — a statically
-typed, interpreted language (`.gw` files). Syntax highlighting, a run button and
-live error checking, right in the editor.
+typed, interpreted language (`.gw` files). Syntax highlighting, a run button,
+live error checking, completion, hover and formatting, right in the editor.
 
 ## Features
 
@@ -12,7 +12,13 @@ live error checking, right in the editor.
   bar) or by pressing **F5** — the output opens in an integrated terminal.
 - **Live errors**: your file is checked on open and on save, and the errors are
   underlined in place (including errors in the modules it imports).
+- **Completion** for every built-in function and the language keywords.
+- **Hover** over a built-in to see its signature.
+- **Format Document** (`Shift+Alt+F`): re-indents the file to canonical form.
 - A file icon for `.gw` files.
+
+> **Tip:** `gw --repl` opens an interactive session where you can try
+> expressions, declarations and even multi-line `function`/`for` blocks.
 
 ## Requirements
 
