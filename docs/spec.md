@@ -1376,6 +1376,8 @@ gw --repl                start an interactive REPL (declarations, assignments an
                          function/class definitions persist across lines, a bare
                          expression prints its value, and multi-line blocks such as
                          for/if/function are read until their matching end)
+gw fmt program.gw        re-indent the file in place (four spaces per block level);
+                         with no file, format standard input to standard output
 gw --check program.gw    type-check only, do not run (prints "No errors found.")
 gw --json program.gw     report errors as a JSON array (for editors / CI),
                          e.g. gw --check --json x.gw -> [] or [{"line":3,"col":5,

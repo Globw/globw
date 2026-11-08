@@ -44,6 +44,9 @@ fn main() -> ExitCode {
             return globw_add(url);
         }
     }
+    if args.first().map(String::as_str) == Some("fmt") {
+        return globw_fmt(&args[1..]);
+    }
     // Permissions are denied by default; each --allow-* flag grants one. This is
     // the security boundary for running untrusted .gw files and gwget packages.
     let mut check_only = false;
@@ -93,7 +96,7 @@ fn main() -> ExitCode {
         (false, Some(f)) => f,
         _ => {
             eprintln!(
-                "Usage: gw [options] program.gw\n\nOptions:\n  --repl           start an interactive session (REPL)\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
+                "Usage: gw [options] program.gw\n\nOptions:\n  --repl           start an interactive session (REPL)\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw fmt [files]   re-indent .gw files (or standard input to standard output)\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
             );
             return ExitCode::from(3);
         }
@@ -420,4 +423,128 @@ fn repl(caps: globw::library::Caps) -> ExitCode {
     }
     eprintln!();
     ExitCode::SUCCESS
+}
+
+// ---- the formatter (`gw fmt`) ----
+// Line-based: it re-indents each line to its block depth and normalises blank
+// lines and trailing spaces, without touching the content of a line. Globw is
+// not whitespace-sensitive (blocks close with `end`), so this is safe -- it
+// never reformats expressions or strings, and comments are preserved.
+
+/// Whether a line declares variables (`<names> as <type>`), used to indent the
+/// body of a `variables:` block.
+fn is_decl_line(t: &str) -> bool {
+    match t.find(" as ") {
+        Some(idx) => {
+            let before = &t[..idx];
+            !before.is_empty() && before.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ',' || c == ' ')
+        }
+        None => false,
+    }
+}
+
+/// Re-indents `src` to canonical form.
+fn format_source(src: &str) -> String {
+    let mut out = String::new();
+    let mut stack: Vec<&str> = Vec::new(); // the open blocks, by kind
+    let mut in_vars = false; // inside a `variables:` block (its decls get one more level)
+    let mut blanks = 0;
+    for raw in src.lines() {
+        let t = raw.trim();
+        if t.is_empty() {
+            blanks += 1;
+            in_vars = false; // a blank line ends a `variables:` block
+            if blanks <= 2 {
+                // keep up to one blank between items and up to two between sections
+                out.push('\n');
+            }
+            continue;
+        }
+        blanks = 0;
+        let comment = t.starts_with('\'');
+        let first = first_word(t);
+        let vars_header = t == "variables:" || t == "global variables:";
+        // a `variables:` block ends at the first line that is not a declaration
+        if in_vars && !comment && !is_decl_line(t) && !vars_header {
+            in_vars = false;
+        }
+        // `while(...)` after `repeat` is the loop's closer, not an opener
+        let closes_repeat = first == "while" && stack.last() == Some(&"repeat");
+        if first == "end" || closes_repeat {
+            stack.pop();
+        }
+        let dedent_kw = matches!(first.as_str(), "else" | "catch" | "always");
+        let level = (stack.len() as i32 + i32::from(in_vars) - i32::from(dedent_kw)).max(0);
+        for _ in 0..level {
+            out.push_str("    ");
+        }
+        out.push_str(t);
+        out.push('\n');
+        if vars_header {
+            in_vars = true;
+        } else if !closes_repeat {
+            match first.as_str() {
+                "for" | "while" => stack.push("loop"),
+                "if" => stack.push("if"),
+                "function" => stack.push("function"),
+                "procedure" => stack.push("procedure"),
+                "class" => stack.push("class"),
+                "try" => stack.push("try"),
+                "repeat" => stack.push("repeat"),
+                _ => {}
+            }
+        }
+        // inline multi-line lambdas: `function(` away from the start of the line
+        // opens a block too. Skip declarations (`x as function(...) as T` is a
+        // type) and one-liners (`function(...) gives expr` closes on its own line).
+        if !comment && !is_decl_line(t) && !t.contains(" gives ") {
+            let extra = t.matches("function(").count().saturating_sub(usize::from(t.starts_with("function(")));
+            for _ in 0..extra {
+                stack.push("function");
+            }
+        }
+    }
+    while out.ends_with("\n\n") {
+        out.pop();
+    }
+    out
+}
+
+fn globw_fmt(args: &[String]) -> ExitCode {
+    let files: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    if files.is_empty() {
+        // no file: format standard input to standard output (for editors)
+        match io::read_to_string(io::stdin()) {
+            Ok(src) => {
+                print!("{}", format_source(&src));
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("fmt: cannot read standard input: {}", e);
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        let mut code = ExitCode::SUCCESS;
+        for f in files {
+            match std::fs::read_to_string(f) {
+                Ok(src) => {
+                    let formatted = format_source(&src);
+                    if formatted == src {
+                        println!("{} is already formatted", f);
+                    } else if let Err(e) = std::fs::write(f, &formatted) {
+                        eprintln!("fmt: cannot write {}: {}", f, e);
+                        code = ExitCode::from(1);
+                    } else {
+                        println!("formatted {}", f);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("fmt: cannot read {}: {}", f, e);
+                    code = ExitCode::from(1);
+                }
+            }
+        }
+        code
+    }
 }

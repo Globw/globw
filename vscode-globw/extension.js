@@ -143,6 +143,22 @@ const completionProvider = {
     },
 };
 
+const formattingProvider = {
+    provideDocumentFormattingEdits(doc) {
+        return new Promise((resolve) => {
+            const child = execFile(globwPath(), ['fmt'], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+                if (err || !stdout) {
+                    resolve([]); // gw missing, or an older gw without fmt: leave the file as is
+                    return;
+                }
+                const full = new vscode.Range(doc.positionAt(0), doc.positionAt(doc.getText().length));
+                resolve([vscode.TextEdit.replace(full, stdout)]);
+            });
+            child.stdin.end(doc.getText());
+        });
+    },
+};
+
 const hoverProvider = {
     provideHover(doc, pos) {
         const word = wordAt(doc, pos);
@@ -162,6 +178,7 @@ function activate(context) {
         vscode.commands.registerCommand('globw.run', run),
         vscode.languages.registerCompletionItemProvider('globw', completionProvider, '.'),
         vscode.languages.registerHoverProvider('globw', hoverProvider),
+        vscode.languages.registerDocumentFormattingEditProvider('globw', formattingProvider),
         vscode.workspace.onDidOpenTextDocument((doc) => check(doc, diagnostics)),
         vscode.workspace.onDidSaveTextDocument((doc) => check(doc, diagnostics)),
         vscode.workspace.onDidChangeConfiguration((e) => {

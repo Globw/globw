@@ -55,6 +55,19 @@ fn repl_blocks_and_definitions() {
 }
 
 #[test]
+fn fmt_reindents_and_is_idempotent() {
+    // from standard input, fmt restores block indentation (four spaces per level)
+    let flat = "variables:\nx as int\nx = 5\nif(x > 0)\noutput(x)\nend if\n";
+    let want = "variables:\n    x as int\nx = 5\nif(x > 0)\n    output(x)\nend if\n";
+    let (code, stdout, stderr) = globw_stdin(&["fmt"], flat);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, want, "{}", stderr);
+    // formatting the result again changes nothing
+    let (_, again, _) = globw_stdin(&["fmt"], &stdout);
+    assert_eq!(again, want);
+}
+
+#[test]
 fn runs_a_program() {
     let (code, stdout, _) = globw(&["examples/hello.gw"]);
     assert_eq!(code, 0);
