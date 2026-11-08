@@ -727,6 +727,52 @@ fn nungw_gpu_resident_binary() {
 }
 
 #[test]
+fn nungw_rows_slices_a_matrix() {
+    // nungw.rows takes a 1-based inclusive range of rows of a 2-D matrix,
+    // keeping the 2-D shape.
+    let dir = std::env::temp_dir().join("globw_rows_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n    a, r as nungw of float\n\
+               a = nungw.reshape(nungw.range(12), [4, 3])\n\
+               r = nungw.rows(a, 2, 3)\n\
+               output(nungw.to_list(r))\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "[3.0, 4.0, 5.0, 6.0, 7.0, 8.0]\n"), "{}", stderr);
+}
+
+#[test]
+fn nungw_eig_svd_reconstruct() {
+    // eigvecs_sym and svd_u/svd_v must reconstruct the matrix:
+    // A = V diag(lambda) V^T, and A = U diag(sigma) V^T.
+    let dir = std::env::temp_dir().join("globw_eigsvd_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = "import nungw\nvariables:\n\
+               \x20   asym, vals, vecs, recon as nungw of float\n\
+               \x20   ag, sig, u, v, arec as nungw of float\n\
+               \x20   errm, errs as float\n\
+               asym = nungw.reshape(nungw.of([2.0, 1.0, 1.0, 2.0]), [2, 2])\n\
+               vals = nungw.eigvals_sym(asym)\n\
+               vecs = nungw.eigvecs_sym(asym)\n\
+               recon = nungw.matmul(vecs, nungw.transpose(vecs) * nungw.reshape(vals, [2, 1]))\n\
+               errm = nungw.max(nungw.abs(recon - asym))\n\
+               ag = nungw.reshape(nungw.of([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), [3, 2])\n\
+               sig = nungw.singular_values(ag)\n\
+               u = nungw.svd_u(ag)\n\
+               v = nungw.svd_v(ag)\n\
+               arec = nungw.matmul(u, nungw.transpose(v) * nungw.reshape(sig, [2, 1]))\n\
+               errs = nungw.max(nungw.abs(arec - ag))\n\
+               if(errm < 0.000001)\n\
+               \x20   if(errs < 0.000001)\n\
+               \x20       output(\"ok\")\n\
+               \x20   end if\n\
+               end if\n";
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "ok\n"), "{}", stderr);
+}
+
+#[test]
 fn nungw_inplace_reuse_is_correct() {
     // a fused expression reuses a dead temporary's buffer in place; it must give
     // the right result AND must never clobber a live variable (here x).
