@@ -3718,6 +3718,44 @@ pub fn lookup(name: &str) -> Option<Builtin> {
     TABLE.iter().find(|(_, n, _)| *n == name).map(|(b, _, _)| *b)
 }
 
+/// A JSON catalogue of every builtin -- its name and a readable signature -- for
+/// editor tooling (completion and hover). Fixed signatures are rendered exactly
+/// (`(int, string) -> float`); flexible ones show `(...)`. Names are made of
+/// letters, digits, `.` and `_`, so no JSON escaping is needed.
+pub fn catalogue_json() -> String {
+    fn type_name(b: &BaseType) -> &'static str {
+        match b {
+            BaseType::Int => "int",
+            BaseType::Real => "float",
+            BaseType::Str => "string",
+            BaseType::Bool => "bool",
+        }
+    }
+    let mut out = String::from("[");
+    for (i, (_b, name, sig)) in TABLE.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let rendered = match sig {
+            Sig::Fixed(params, ret) => {
+                let ps: Vec<&str> = params.iter().map(type_name).collect();
+                let tail = ret.map(|r| format!(" -> {}", type_name(&r))).unwrap_or_default();
+                format!("({}){}", ps.join(", "), tail)
+            }
+            Sig::Flexible { function } => {
+                if *function {
+                    "(...) -> value".to_string()
+                } else {
+                    "(...)".to_string()
+                }
+            }
+        };
+        out.push_str(&format!("{{\"name\":\"{}\",\"sig\":\"{}\"}}", name, rendered));
+    }
+    out.push(']');
+    out
+}
+
 const NO_WINDOW: &str = "there is no window: call window(...) first";
 
 fn int(v: &Value) -> i64 {

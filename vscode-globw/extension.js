@@ -1,12 +1,24 @@
-// VS Code support for Globw: run button / F5, and errors underlined on open and save.
+// VS Code support for Globw: run button / F5, errors underlined on open and save
+// (via `gw --check --json`), and completion + hover for the builtins (from
+// `gw --builtins`).
 
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
-const { parseErrors } = require('./parse');
 
 const EXE = process.platform === 'win32' ? 'gw.exe' : 'gw';
+
+// Keywords offered in completion alongside the builtins.
+const KEYWORDS = [
+    'variables', 'function', 'procedure', 'return', 'end', 'if', 'else', 'for', 'from', 'to', 'step',
+    'while', 'do', 'break', 'continue', 'import', 'lazy', 'as', 'of', 'list', 'dict', 'set', 'to',
+    'int', 'float', 'string', 'bool', 'nungw', 'new', 'class', 'extends', 'try', 'catch', 'always',
+    'and', 'or', 'not', 'true', 'false', 'none', 'in', 'gives', 'output', 'input', 'append', 'remove', 'length',
+];
+
+// Map of builtin name -> signature string, loaded once from `gw --builtins`.
+let catalogue = new Map();
 
 function globwPath() {
     const configured = vscode.workspace.getConfiguration('globw').get('path');
@@ -19,6 +31,20 @@ function globwPath() {
     return EXE; // otherwise rely on PATH
 }
 
+/** Loads the builtin catalogue (name + signature) for completion and hover. */
+function loadCatalogue() {
+    execFile(globwPath(), ['--builtins'], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+        if (err) return; // older gw without --builtins, or not found: just skip
+        try {
+            const map = new Map();
+            for (const b of JSON.parse(stdout || '[]')) map.set(b.name, b.sig);
+            catalogue = map;
+        } catch {
+            /* leave the previous catalogue */
+        }
+    });
+}
+
 /** The line of `doc` that imports module `name` (the first line if none does). */
 function importLine(doc, name) {
     // module names are made of letters, digits and _, so they need no escaping
@@ -29,23 +55,30 @@ function importLine(doc, name) {
     return 0;
 }
 
-/** Runs `globw --check` on the saved file and shows its errors as diagnostics. */
+/** Runs `gw --check --json` on the file and shows its errors as diagnostics. */
 function check(doc, diagnostics) {
     if (doc.languageId !== 'globw' || doc.uri.scheme !== 'file') return;
-    execFile(globwPath(), ['--check', doc.fileName], { windowsHide: true }, (err, _stdout, stderr) => {
+    execFile(globwPath(), ['--check', '--json', doc.fileName], { windowsHide: true }, (err, stdout) => {
         if (err && err.code === 'ENOENT') {
             vscode.window.showErrorMessage('Globw: the gw executable was not found. Set "globw.path" in the settings, or add gw to your PATH.');
             return;
+        }
+        let errors;
+        try {
+            errors = JSON.parse(stdout || '[]');
+        } catch {
+            return; // an older gw without --json, or unexpected output
         }
         // errors of this file, and of the modules it imports (shown in their own file
         // and, once per module, on the line of this file that imports it)
         const byFile = new Map([[doc.uri.toString(), { uri: doc.uri, items: [] }]]);
         const marked = new Set();
-        for (const e of parseErrors(stderr || '')) {
+        for (const e of errors) {
+            const line = Math.max(0, (e.line || 1) - 1);
             const range =
-                e.col === null
-                    ? new vscode.Range(e.line, 0, e.line, 1000)
-                    : new vscode.Range(e.line, e.col, e.line, e.col + (e.len || 1));
+                !e.col
+                    ? new vscode.Range(line, 0, line, 1000)
+                    : new vscode.Range(line, e.col - 1, line, e.col - 1 + (e.len || 1));
             const text = e.hint ? `${e.message}\nHint: ${e.hint}` : e.message;
             const d = new vscode.Diagnostic(range, text, vscode.DiagnosticSeverity.Error);
             d.source = 'globw';
@@ -54,8 +87,8 @@ function check(doc, diagnostics) {
             byFile.get(uri.toString()).items.push(d);
             if (e.file && !marked.has(e.file)) {
                 marked.add(e.file);
-                const line = importLine(doc, e.file.replace(/\.gw$/, ''));
-                const where = new vscode.Range(line, 0, line, doc.lineAt(line).text.length);
+                const il = importLine(doc, e.file.replace(/\.gw$/, ''));
+                const where = new vscode.Range(il, 0, il, doc.lineAt(il).text.length);
                 const note = new vscode.Diagnostic(where, `error in ${e.file}: ${e.message}`, vscode.DiagnosticSeverity.Error);
                 note.source = 'globw';
                 byFile.get(doc.uri.toString()).items.push(note);
@@ -77,8 +110,6 @@ async function run() {
     await doc.save();
     let terminal = vscode.window.terminals.find((t) => t.name === 'Globw');
     if (!terminal) {
-        // Windows: a PowerShell terminal (its usual default), so the `&` call runs;
-        // Linux/macOS: the user's default shell, where a quoted command runs as-is.
         const opts =
             process.platform === 'win32'
                 ? { name: 'Globw', shellPath: 'powershell.exe', shellArgs: ['-NoLogo'] }
@@ -91,13 +122,51 @@ async function run() {
     terminal.sendText(cmd);
 }
 
+/** The word (possibly module-qualified, like `nungw.sqrt`) at a position. */
+function wordAt(doc, pos) {
+    const range = doc.getWordRangeAtPosition(pos, /[A-Za-z_][A-Za-z0-9_.]*/);
+    return range ? doc.getText(range) : '';
+}
+
+const completionProvider = {
+    provideCompletionItems() {
+        const items = [];
+        for (const [name, sig] of catalogue) {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
+            item.detail = `${name}${sig}`;
+            items.push(item);
+        }
+        for (const kw of KEYWORDS) {
+            items.push(new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword));
+        }
+        return items;
+    },
+};
+
+const hoverProvider = {
+    provideHover(doc, pos) {
+        const word = wordAt(doc, pos);
+        const sig = catalogue.get(word);
+        if (!sig) return undefined;
+        const md = new vscode.MarkdownString();
+        md.appendCodeblock(`${word}${sig}`, 'globw');
+        return new vscode.Hover(md);
+    },
+};
+
 function activate(context) {
     const diagnostics = vscode.languages.createDiagnosticCollection('globw');
+    loadCatalogue();
     context.subscriptions.push(
         diagnostics,
         vscode.commands.registerCommand('globw.run', run),
+        vscode.languages.registerCompletionItemProvider('globw', completionProvider, '.'),
+        vscode.languages.registerHoverProvider('globw', hoverProvider),
         vscode.workspace.onDidOpenTextDocument((doc) => check(doc, diagnostics)),
         vscode.workspace.onDidSaveTextDocument((doc) => check(doc, diagnostics)),
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('globw.path')) loadCatalogue();
+        }),
         vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri))
     );
     vscode.workspace.textDocuments.forEach((doc) => check(doc, diagnostics));

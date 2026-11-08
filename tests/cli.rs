@@ -966,3 +966,13 @@ fn builtin_module_encode_base64() {
     let (code, stdout, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
     assert_eq!((code, stdout.as_str()), (0, "aGk= round\n"), "{}", stderr);
 }
+
+#[test]
+fn builtins_catalogue_is_json() {
+    // `gw --builtins` prints the builtin catalogue (name + signature) for editors.
+    let (code, stdout, stderr) = globw(&["--builtins"]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(stdout.starts_with('['), "should be a JSON array: {}", stdout);
+    assert!(stdout.contains("\"name\":\"ffi.open\""), "lists ffi.open");
+    assert!(stdout.contains("\"name\":\"shell.run\",\"sig\":\"(string) -> string\""), "renders a fixed signature");
+}

@@ -49,6 +49,7 @@ fn main() -> ExitCode {
     let mut check_only = false;
     let mut profile = false;
     let mut json = false;
+    let mut dump_builtins = false;
     let mut caps = globw::library::Caps::none();
     let mut file: Option<&String> = None;
     let mut bad = false;
@@ -61,6 +62,7 @@ fn main() -> ExitCode {
             "--check" => check_only = true,
             "--profile" => profile = true,
             "--json" => json = true,
+            "--builtins" => dump_builtins = true,
             "--allow-run" => caps.allow_run(),
             "--allow-net" => caps.allow_net(val),
             "--allow-read" => caps.allow_read(val),
@@ -77,11 +79,16 @@ fn main() -> ExitCode {
             }
         }
     }
+    if dump_builtins {
+        // the builtin catalogue, for editor completion and hover; no file needed
+        println!("{}", globw::builtins::catalogue_json());
+        return ExitCode::SUCCESS;
+    }
     let file = match (bad, file) {
         (false, Some(f)) => f,
         _ => {
             eprintln!(
-                "Usage: gw [options] program.gw\n\nOptions:\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
+                "Usage: gw [options] program.gw\n\nOptions:\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
             );
             return ExitCode::from(3);
         }
