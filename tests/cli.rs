@@ -618,11 +618,11 @@ fn ffi_calls_c_on_every_os() {
 #[test]
 fn ffi_call_needs_ffi_full_feature() {
     // the general libffi-backed call is opt-in; without the feature it says so.
+    // No library is opened (the error fires before the handle is used), so this
+    // runs on every OS.
     let dir = std::env::temp_dir().join("globw_ffi_full_test");
     std::fs::create_dir_all(&dir).unwrap();
-    let src = "import ffi\nvariables:\n    lib as int\n\
-               lib = ffi.open(\"msvcrt.dll\")\n\
-               output(ffi.call_real(lib, \"pow\", \"dd\", [2.0, 10.0]))\n";
+    let src = "import ffi\noutput(ffi.call_real(0, \"pow\", \"dd\", [2.0, 10.0]))\n";
     std::fs::write(dir.join("p.gw"), src).unwrap();
     let (code, _, stderr) = globw(&["--allow-run", dir.join("p.gw").to_str().unwrap()]);
     assert_eq!(code, 2);
