@@ -4,7 +4,7 @@
   "description": "Syntax colors, run button, live errors, completion, hover and formatting for the Globw language (.gw)",
   "version": "1.46.0",
   "license": "Apache-2.0",
-  "icon": "images/icon.png",
+  "icon": "images/logo-square.png",
   "publisher": "globw",
   "repository": {
     "type": "git",
