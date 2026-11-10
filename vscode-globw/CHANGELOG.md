@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.47.0
+
+- **Outline** of a file's functions, classes, methods and fields (from
+  `gw --symbols`), in the breadcrumb bar and the Outline view.
+- **Go to Definition** (F12) for functions, procedures, classes and variables.
+
 ## 1.46.0
 
 - **Format Document** (`Shift+Alt+F`): re-indents a `.gw` file to canonical form

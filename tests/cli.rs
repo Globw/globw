@@ -55,6 +55,16 @@ fn repl_blocks_and_definitions() {
 }
 
 #[test]
+fn symbols_lists_definitions() {
+    // `gw --symbols` prints a file's definitions (for the editor outline / go-to-def)
+    let (code, stdout, stderr) = globw(&["--symbols", "examples/classes.gw"]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(stdout.starts_with('['), "a JSON array: {}", stdout);
+    assert!(stdout.contains("\"name\":\"Player\",\"kind\":\"class\""), "lists the class: {}", stdout);
+    assert!(stdout.contains("\"kind\":\"method\""), "lists methods: {}", stdout);
+}
+
+#[test]
 fn fmt_reindents_and_is_idempotent() {
     // from standard input, fmt restores block indentation (four spaces per level)
     let flat = "variables:\nx as int\nx = 5\nif(x > 0)\noutput(x)\nend if\n";

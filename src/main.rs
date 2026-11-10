@@ -53,6 +53,7 @@ fn main() -> ExitCode {
     let mut profile = false;
     let mut json = false;
     let mut dump_builtins = false;
+    let mut dump_symbols = false;
     let mut repl_mode = false;
     let mut caps = globw::library::Caps::none();
     let mut file: Option<&String> = None;
@@ -67,6 +68,7 @@ fn main() -> ExitCode {
             "--profile" => profile = true,
             "--json" => json = true,
             "--builtins" => dump_builtins = true,
+            "--symbols" => dump_symbols = true,
             "--repl" => repl_mode = true,
             "--allow-run" => caps.allow_run(),
             "--allow-net" => caps.allow_net(val),
@@ -96,7 +98,7 @@ fn main() -> ExitCode {
         (false, Some(f)) => f,
         _ => {
             eprintln!(
-                "Usage: gw [options] program.gw\n\nOptions:\n  --repl           start an interactive session (REPL)\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw fmt [files]   re-indent .gw files (or standard input to standard output)\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
+                "Usage: gw [options] program.gw\n\nOptions:\n  --repl           start an interactive session (REPL)\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --symbols        print this file's definitions as JSON (for editors)\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw fmt [files]   re-indent .gw files (or standard input to standard output)\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
             );
             return ExitCode::from(3);
         }
@@ -117,6 +119,11 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
+    if dump_symbols {
+        // definitions in this file (for editor outline and go-to-definition)
+        println!("{}", symbols_json(&source));
+        return ExitCode::SUCCESS;
+    }
     // relative paths in the program (for example font files and modules) start from its folder
     if let Some(dir) = std::path::Path::new(file).parent().filter(|d| !d.as_os_str().is_empty()) {
         let _ = std::env::set_current_dir(dir);
@@ -547,4 +554,52 @@ fn globw_fmt(args: &[String]) -> ExitCode {
         }
         code
     }
+}
+
+// ---- `gw --symbols`: definitions in a file, for the editor ----
+
+fn json_quote(s: &str) -> String {
+    // identifiers never contain quotes; replace defensively to keep the JSON valid
+    format!("\"{}\"", s.replace('"', "'"))
+}
+
+fn push_sym(out: &mut Vec<String>, name: &str, kind: &str, pos: &globw::errors::Pos, container: &str) {
+    if pos.file != 0 {
+        return; // only definitions from this file
+    }
+    out.push(format!(
+        "{{\"name\":{},\"kind\":\"{}\",\"line\":{},\"col\":{},\"len\":{},\"container\":{}}}",
+        json_quote(name),
+        kind,
+        pos.line,
+        pos.col,
+        pos.len,
+        json_quote(container)
+    ));
+}
+
+/// The definitions in `src` (functions, procedures, classes, methods, fields and
+/// global variables) as a JSON array, for the editor's outline and go-to-definition.
+fn symbols_json(src: &str) -> String {
+    let program = match globw::lexer::tokenize(src).and_then(globw::parser::parse) {
+        Ok(p) => p,
+        Err(_) => return "[]".to_string(), // a file mid-edit: no symbols rather than an error
+    };
+    let mut out: Vec<String> = Vec::new();
+    for d in &program.globals {
+        push_sym(&mut out, &d.name, "variable", &d.pos, "");
+    }
+    for s in &program.subprograms {
+        push_sym(&mut out, &s.name, if s.is_function { "function" } else { "procedure" }, &s.pos, "");
+    }
+    for c in &program.classes {
+        push_sym(&mut out, &c.name, "class", &c.pos, "");
+        for f in &c.fields {
+            push_sym(&mut out, &f.name, "field", &f.pos, &c.name);
+        }
+        for m in &c.methods {
+            push_sym(&mut out, &m.name, "method", &m.pos, &c.name);
+        }
+    }
+    format!("[{}]", out.join(","))
 }

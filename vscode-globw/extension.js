@@ -143,6 +143,73 @@ const completionProvider = {
     },
 };
 
+/** This file's definitions (functions, classes, …) from `gw --symbols`. */
+function getSymbols(doc) {
+    return new Promise((resolve) => {
+        if (doc.languageId !== 'globw' || doc.uri.scheme !== 'file') {
+            resolve([]);
+            return;
+        }
+        execFile(globwPath(), ['--symbols', doc.fileName], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+            if (err && err.code === 'ENOENT') {
+                resolve([]);
+                return;
+            }
+            try {
+                resolve(JSON.parse(stdout || '[]'));
+            } catch {
+                resolve([]);
+            }
+        });
+    });
+}
+
+const SYMBOL_KIND = {
+    class: vscode.SymbolKind.Class,
+    method: vscode.SymbolKind.Method,
+    field: vscode.SymbolKind.Field,
+    function: vscode.SymbolKind.Function,
+    procedure: vscode.SymbolKind.Function,
+    variable: vscode.SymbolKind.Variable,
+};
+
+function symbolRange(s) {
+    const line = Math.max(0, s.line - 1);
+    const col = Math.max(0, s.col - 1);
+    return new vscode.Range(line, col, line, col + (s.len || 1));
+}
+
+const documentSymbolProvider = {
+    async provideDocumentSymbols(doc) {
+        const syms = await getSymbols(doc);
+        const top = [];
+        const classes = new Map();
+        for (const s of syms) {
+            const range = symbolRange(s);
+            const item = new vscode.DocumentSymbol(s.name, s.container || '', SYMBOL_KIND[s.kind] || vscode.SymbolKind.Variable, range, range);
+            if (s.container && classes.has(s.container)) {
+                classes.get(s.container).children.push(item);
+            } else {
+                top.push(item);
+                if (s.kind === 'class') classes.set(s.name, item);
+            }
+        }
+        return top;
+    },
+};
+
+const definitionProvider = {
+    async provideDefinition(doc, pos) {
+        const range = doc.getWordRangeAtPosition(pos, /[A-Za-z_][A-Za-z0-9_]*/);
+        if (!range) return null;
+        const word = doc.getText(range);
+        const syms = await getSymbols(doc);
+        // prefer a top-level definition; otherwise the first match by name
+        const hit = syms.find((s) => s.name === word && !s.container) || syms.find((s) => s.name === word);
+        return hit ? new vscode.Location(doc.uri, symbolRange(hit)) : null;
+    },
+};
+
 const formattingProvider = {
     provideDocumentFormattingEdits(doc) {
         return new Promise((resolve) => {
@@ -179,6 +246,8 @@ function activate(context) {
         vscode.languages.registerCompletionItemProvider('globw', completionProvider, '.'),
         vscode.languages.registerHoverProvider('globw', hoverProvider),
         vscode.languages.registerDocumentFormattingEditProvider('globw', formattingProvider),
+        vscode.languages.registerDocumentSymbolProvider('globw', documentSymbolProvider),
+        vscode.languages.registerDefinitionProvider('globw', definitionProvider),
         vscode.workspace.onDidOpenTextDocument((doc) => check(doc, diagnostics)),
         vscode.workspace.onDidSaveTextDocument((doc) => check(doc, diagnostics)),
         vscode.workspace.onDidChangeConfiguration((e) => {
