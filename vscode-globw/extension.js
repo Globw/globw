@@ -129,7 +129,7 @@ function wordAt(doc, pos) {
 }
 
 const completionProvider = {
-    provideCompletionItems() {
+    async provideCompletionItems(doc) {
         const items = [];
         for (const [name, sig] of catalogue) {
             const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
@@ -138,6 +138,21 @@ const completionProvider = {
         }
         for (const kw of KEYWORDS) {
             items.push(new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword));
+        }
+        // the file's own definitions, so completion knows your functions and variables
+        const seen = new Set();
+        for (const s of await getSymbols(doc)) {
+            if (seen.has(s.name)) continue;
+            seen.add(s.name);
+            const kind =
+                s.kind === 'class'
+                    ? vscode.CompletionItemKind.Class
+                    : s.kind === 'variable' || s.kind === 'field'
+                      ? vscode.CompletionItemKind.Variable
+                      : vscode.CompletionItemKind.Function;
+            const item = new vscode.CompletionItem(s.name, kind);
+            item.detail = s.container ? `${s.kind} · ${s.container}` : s.kind;
+            items.push(item);
         }
         return items;
     },

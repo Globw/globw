@@ -5,6 +5,8 @@
 - **Outline** of a file's functions, classes, methods and fields (from
   `gw --symbols`), in the breadcrumb bar and the Outline view.
 - **Go to Definition** (F12) for functions, procedures, classes and variables.
+- **Completion** now also suggests the file's own functions, classes and
+  variables, not only the built-ins.
 
 ## 1.46.0
 
