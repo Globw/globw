@@ -15,6 +15,10 @@
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
 </p>
 
+<p align="center">
+  <b><a href="docs/tutorial.md">Learn Globw in 10 minutes →</a></b>
+</p>
+
 ---
 
 ## What is Globw?
