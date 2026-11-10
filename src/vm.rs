@@ -471,7 +471,30 @@ struct Handler {
 
 impl<'m> Vm<'m> {
     fn error_at(&self, func: usize, ip: usize, message: impl Into<String>) -> Error {
-        Error::new(self.module.functions[func].positions[ip - 1], message)
+        let e = Error::new(self.module.functions[func].positions[ip - 1], message);
+        match self.backtrace(func, ip) {
+            Some(trace) => e.with_trace(trace),
+            None => e,
+        }
+    }
+
+    /// The call stack at the point of an uncaught run-time error, as text. None
+    /// when the error is in the main program (the single error line is enough).
+    fn backtrace(&self, func: usize, ip: usize) -> Option<String> {
+        if self.frames.is_empty() {
+            return None;
+        }
+        let name = |i: usize| -> String {
+            let n = &self.module.functions[i].name;
+            if n.is_empty() { "the main program".to_string() } else { format!("{}()", n) }
+        };
+        let line = |i: usize, ip: usize| self.module.functions[i].positions[ip.saturating_sub(1)].line;
+        let mut s = String::from("Call stack (most recent first):\n");
+        s.push_str(&format!("  in {} at line {}\n", name(func), line(func, ip)));
+        for fr in self.frames.iter().rev() {
+            s.push_str(&format!("  called from {} at line {}\n", name(fr.func), line(fr.func, fr.ip)));
+        }
+        Some(s)
     }
 
     /// Removes handlers left by a function that has just returned.

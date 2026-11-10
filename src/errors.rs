@@ -31,15 +31,22 @@ pub struct Error {
     pub pos: Pos,
     pub message: String,
     pub hint: Option<String>,
+    /// a run-time call stack ("backtrace"), already formatted, shown after the hint
+    pub trace: Option<String>,
 }
 
 impl Error {
     pub fn new(pos: Pos, message: impl Into<String>) -> Error {
-        Error { pos, message: message.into(), hint: None }
+        Error { pos, message: message.into(), hint: None, trace: None }
     }
 
     pub fn with_hint(mut self, hint: impl Into<String>) -> Error {
         self.hint = Some(hint.into());
+        self
+    }
+
+    pub fn with_trace(mut self, trace: impl Into<String>) -> Error {
+        self.trace = Some(trace.into());
         self
     }
 
@@ -84,6 +91,12 @@ impl Error {
             out.push_str("Hint: ");
             out.push_str(hint);
             out.push('\n');
+        }
+        if let Some(trace) = &self.trace {
+            out.push_str(trace);
+            if !trace.ends_with('\n') {
+                out.push('\n');
+            }
         }
         out
     }

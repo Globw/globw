@@ -55,6 +55,24 @@ fn repl_blocks_and_definitions() {
 }
 
 #[test]
+fn runtime_error_shows_a_backtrace() {
+    // an uncaught error inside nested calls prints the call stack
+    let path = std::env::temp_dir().join("gw_backtrace_test.gw");
+    std::fs::write(
+        &path,
+        "function inner(x as int) as int\n    return 10 div x\nend function\n\
+         function outer(n as int) as int\n    return inner(n)\nend function\noutput(outer(0))\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_gw")).arg(&path).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("division by zero"), "{}", stderr);
+    assert!(stderr.contains("Call stack"), "{}", stderr);
+    assert!(stderr.contains("in inner()") && stderr.contains("called from outer()"), "{}", stderr);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn symbols_lists_definitions() {
     // `gw --symbols` prints a file's definitions (for the editor outline / go-to-def)
     let (code, stdout, stderr) = globw(&["--symbols", "examples/classes.gw"]);
