@@ -55,6 +55,18 @@ fn repl_blocks_and_definitions() {
 }
 
 #[test]
+fn trace_prints_executed_lines() {
+    // --trace prints each executed source line to stderr; program output stays on stdout
+    let path = std::env::temp_dir().join("gw_trace_test.gw");
+    std::fs::write(&path, "variables:\n    s as int\ns = 0\noutput(s)\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_gw")).arg("--trace").arg(&path).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("s = 0") && stderr.contains("output(s)"), "{}", stderr);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn runtime_error_shows_a_backtrace() {
     // an uncaught error inside nested calls prints the call stack
     let path = std::env::temp_dir().join("gw_backtrace_test.gw");

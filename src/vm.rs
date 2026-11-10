@@ -398,6 +398,39 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         current: 0,
         channels: Vec::new(),
         prof: None,
+        trace: None,
+    };
+    let result = vm.execute(input, output);
+    let _ = output.flush();
+    if result.is_ok() {
+        vm.env.finish();
+    }
+    result
+}
+
+/// Runs the program, printing each source line as it executes (`--trace`): the
+/// line number, the call-depth indentation, and the line's text, to stderr.
+pub fn run_traced(
+    module: &Module,
+    files: &[crate::errors::SourceFile],
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+) -> Result<(), Error> {
+    let lines: Vec<Vec<String>> =
+        files.iter().map(|f| f.text.lines().map(|l| l.trim_end().to_string()).collect()).collect();
+    let mut vm = Vm {
+        module,
+        regs: Vec::with_capacity(1 << 12),
+        globals: vec![Value::Null; module.globals.len()],
+        frames: Vec::new(),
+        env: Env::default(),
+        handlers: Vec::new(),
+        tasks: Vec::new(),
+        ready: VecDeque::new(),
+        current: 0,
+        channels: Vec::new(),
+        prof: None,
+        trace: Some(lines),
     };
     let result = vm.execute(input, output);
     let _ = output.flush();
@@ -426,6 +459,7 @@ pub fn run_profiled(
         current: 0,
         channels: Vec::new(),
         prof: Some(HashMap::new()),
+        trace: None,
     };
     let result = vm.execute(input, output);
     let _ = output.flush();
@@ -457,6 +491,9 @@ struct Vm<'m> {
     channels: Vec<Channel>,
     /// when profiling: how many times each opcode ran
     prof: Option<HashMap<&'static str, u64>>,
+    /// when tracing (`--trace`): the source lines of each file, for printing the
+    /// line being executed
+    trace: Option<Vec<Vec<String>>>,
 }
 
 /// An installed `try` handler: where to resume and the VM depth to restore.
@@ -510,6 +547,7 @@ impl<'m> Vm<'m> {
         let mut code: &[Op] = &m.functions[0].code;
         let mut ip = 0usize;
         let mut base = 0usize;
+        let mut trace_last: (u16, u32) = (u16::MAX, 0); // last (file, line) traced
         self.regs.resize(m.functions[0].n_regs as usize, Value::Null);
         // task 0 is the main program; its live state is in the locals above and in
         // self, so its slot stays empty until it is suspended
@@ -574,6 +612,18 @@ impl<'m> Vm<'m> {
             ip += 1;
             if let Some(p) = self.prof.as_mut() {
                 *p.entry(op.name()).or_insert(0) += 1;
+            }
+            if let Some(files) = &self.trace {
+                let pos = m.functions[func].positions[ip - 1];
+                if pos.line != 0 && (pos.file, pos.line) != trace_last {
+                    trace_last = (pos.file, pos.line);
+                    let src = files
+                        .get(pos.file as usize)
+                        .and_then(|ls| ls.get(pos.line.saturating_sub(1) as usize))
+                        .map_or("", |s| s.trim());
+                    let indent = "  ".repeat(self.frames.len().min(24));
+                    eprintln!("{:>4} | {}{}", pos.line, indent, src);
+                }
             }
             let raised: Option<String> = loop {
                 match op {

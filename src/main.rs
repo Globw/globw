@@ -51,6 +51,7 @@ fn main() -> ExitCode {
     // the security boundary for running untrusted .gw files and gwget packages.
     let mut check_only = false;
     let mut profile = false;
+    let mut trace = false;
     let mut json = false;
     let mut dump_builtins = false;
     let mut dump_symbols = false;
@@ -66,6 +67,7 @@ fn main() -> ExitCode {
         match key {
             "--check" => check_only = true,
             "--profile" => profile = true,
+            "--trace" => trace = true,
             "--json" => json = true,
             "--builtins" => dump_builtins = true,
             "--symbols" => dump_symbols = true,
@@ -98,7 +100,7 @@ fn main() -> ExitCode {
         (false, Some(f)) => f,
         _ => {
             eprintln!(
-                "Usage: gw [options] program.gw\n\nOptions:\n  --repl           start an interactive session (REPL)\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --symbols        print this file's definitions as JSON (for editors)\n  --profile        run with an opcode profile\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw fmt [files]   re-indent .gw files (or standard input to standard output)\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
+                "Usage: gw [options] program.gw\n\nOptions:\n  --repl           start an interactive session (REPL)\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --symbols        print this file's definitions as JSON (for editors)\n  --profile        run with an opcode profile\n  --trace          run, printing each source line as it executes\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw fmt [files]   re-indent .gw files (or standard input to standard output)\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
             );
             return ExitCode::from(3);
         }
@@ -186,7 +188,11 @@ fn main() -> ExitCode {
             }
         };
     }
-    let result = globw::run(&module, &mut input, &mut output);
+    let result = if trace {
+        globw::run_traced(&module, &files, &mut input, &mut output)
+    } else {
+        globw::run(&module, &mut input, &mut output)
+    };
     let _ = output.flush();
     match result {
         Ok(()) => ExitCode::SUCCESS,

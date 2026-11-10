@@ -61,6 +61,16 @@ pub fn run_profiled(
 }
 
 /// Runs a compiled program, reading `input()` lines from `input`.
+/// Runs a program, tracing each executed source line to stderr (`--trace`).
+pub fn run_traced(
+    module: &bytecode::Module,
+    files: &[SourceFile],
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+) -> Result<(), Error> {
+    vm::run_traced(module, files, input, output)
+}
+
 pub fn run(module: &bytecode::Module, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {
     vm::run(module, input, output)
 }

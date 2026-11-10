@@ -1386,6 +1386,8 @@ gw --json program.gw     report errors as a JSON array (for editors / CI),
                          e.g. gw --check --json x.gw -> [] or [{"line":3,"col":5,
                          "len":7,"message":"...","hint":null,"file":"x.gw"}]
 gw --profile program.gw  run and count how often each opcode runs
+gw --trace program.gw    run, printing each executed source line to stderr
+                         (indented by call depth) — a simple step trace
 gw --builtins            print every built-in's name and signature as JSON (editors)
 gw --symbols program.gw  print the file's definitions as JSON (editor outline / go-to)
 ```
