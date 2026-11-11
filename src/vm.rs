@@ -507,29 +507,48 @@ struct Handler {
 }
 
 impl<'m> Vm<'m> {
-    fn error_at(&self, func: usize, ip: usize, message: impl Into<String>) -> Error {
+    fn error_at(&self, func: usize, ip: usize, base: usize, message: impl Into<String>) -> Error {
         let e = Error::new(self.module.functions[func].positions[ip - 1], message);
-        match self.backtrace(func, ip) {
+        match self.backtrace(func, ip, base) {
             Some(trace) => e.with_trace(trace),
             None => e,
         }
     }
 
+    fn line_at(&self, func: usize, ip: usize) -> u32 {
+        self.module.functions[func].positions[ip.saturating_sub(1)].line
+    }
+
+    /// A frame's label: the function name with its parameters and their current
+    /// values, like `inner(x=0)`, or "the main program".
+    fn frame_label(&self, func: usize, base: usize) -> String {
+        let f = &self.module.functions[func];
+        if f.name.is_empty() {
+            return "the main program".to_string();
+        }
+        let args: Vec<String> = (0..f.n_params as usize)
+            .map(|k| {
+                let name = f.locals.get(k).map_or("?", String::as_str);
+                let mut v = self.regs.get(base + k).map(display).unwrap_or_default();
+                if v.chars().count() > 40 {
+                    v = format!("{}…", v.chars().take(39).collect::<String>());
+                }
+                format!("{}={}", name, v)
+            })
+            .collect();
+        format!("{}({})", f.name, args.join(", "))
+    }
+
     /// The call stack at the point of an uncaught run-time error, as text. None
     /// when the error is in the main program (the single error line is enough).
-    fn backtrace(&self, func: usize, ip: usize) -> Option<String> {
+    fn backtrace(&self, func: usize, ip: usize, base: usize) -> Option<String> {
         if self.frames.is_empty() {
             return None;
         }
-        let name = |i: usize| -> String {
-            let n = &self.module.functions[i].name;
-            if n.is_empty() { "the main program".to_string() } else { format!("{}()", n) }
-        };
-        let line = |i: usize, ip: usize| self.module.functions[i].positions[ip.saturating_sub(1)].line;
         let mut s = String::from("Call stack (most recent first):\n");
-        s.push_str(&format!("  in {} at line {}\n", name(func), line(func, ip)));
+        s.push_str(&format!("  in {} at line {}\n", self.frame_label(func, base), self.line_at(func, ip)));
         for fr in self.frames.iter().rev() {
-            s.push_str(&format!("  called from {} at line {}\n", name(fr.func), line(fr.func, fr.ip)));
+            s.push_str(&format!("  called from {} at line {}\n", self.frame_label(fr.func, fr.base), self.line_at(fr.func, fr.ip)));
         }
         Some(s)
     }
@@ -1226,7 +1245,7 @@ impl<'m> Vm<'m> {
                         ip = h.catch_ip;
                         self.regs[base + h.err as usize] = Value::Str(msg.as_str().into());
                     }
-                    None => return Err(self.error_at(func, ip, msg)),
+                    None => return Err(self.error_at(func, ip, base, msg)),
                 }
             }
         }
@@ -1243,7 +1262,7 @@ mod tests {
     pub(crate) fn run_code(code: Vec<Op>, n_regs: u16, strings: &[&str], input: &str) -> Result<String, Error> {
         let positions = (0..code.len()).map(|k| Pos::new(k as u32 + 1, 0, 0)).collect();
         let module = Module {
-            functions: vec![Function { name: "main".into(), n_params: 0, n_regs, code, positions }],
+            functions: vec![Function { name: "main".into(), n_params: 0, n_regs, code, positions, locals: vec![] }],
             strings: strings.iter().map(|s| Rc::from(*s)).collect(),
             globals: vec![],
             class_fields: vec![],
@@ -1426,8 +1445,8 @@ mod tests {
         let pos = |n: usize| (0..n).map(|k| Pos::new(k as u32 + 1, 0, 0)).collect();
         Module {
             functions: vec![
-                Function { name: "main".into(), n_params: 0, n_regs: main_regs, positions: pos(main.len()), code: main },
-                Function { name: "f".into(), n_params: 1, n_regs: f_regs, positions: pos(f.len()), code: f },
+                Function { name: "main".into(), n_params: 0, n_regs: main_regs, positions: pos(main.len()), code: main, locals: vec![] },
+                Function { name: "f".into(), n_params: 1, n_regs: f_regs, positions: pos(f.len()), code: f, locals: vec![] },
             ],
             strings: vec![],
             globals: vec!["g".into()],

@@ -229,6 +229,10 @@ pub struct Function {
     pub code: Vec<Op>,
     /// source position of each instruction, for run-time errors
     pub positions: Vec<Pos>,
+    /// the source name of the variable in each register (parameters first, then
+    /// declared locals), for backtraces and the step trace; registers past this
+    /// list are temporaries with no name
+    pub locals: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

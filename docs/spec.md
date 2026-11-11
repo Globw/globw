@@ -1334,8 +1334,9 @@ Hint: add it to "variables:" at the top of the program
 - **While running**: index out of range, division by zero, overflow, invalid input, unassigned element or global, `step 0`, runaway recursion (more than 100,000 nested calls).
   - The program stops with the same format, pointing at the code being executed.
   - When the error happens inside a function call, a **call stack** is printed
-    after the hint ("Call stack (most recent first): in inner() at line 2,
-    called from outer() at line 5, …"), so you see how the program got there.
+    after the hint, with each function's parameters and their values ("Call stack
+    (most recent first): in inner(x=0) at line 2, called from outer(n=0) at line
+    5, …"), so you see how the program got there and with which arguments.
 - **Exit codes**: 0 = ok, 1 = error before running, 2 = error while running, 3 = usage error (missing file etc.).
 
 ## 8. Architecture

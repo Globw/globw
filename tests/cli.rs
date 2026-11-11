@@ -80,7 +80,8 @@ fn runtime_error_shows_a_backtrace() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("division by zero"), "{}", stderr);
     assert!(stderr.contains("Call stack"), "{}", stderr);
-    assert!(stderr.contains("in inner()") && stderr.contains("called from outer()"), "{}", stderr);
+    // the backtrace shows each frame's parameters and their values
+    assert!(stderr.contains("in inner(x=0)") && stderr.contains("called from outer(n=0)"), "{}", stderr);
     let _ = std::fs::remove_file(&path);
 }
 

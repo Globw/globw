@@ -183,6 +183,7 @@ impl<'a> FnCompiler<'a> {
             n_regs: self.max,
             code: self.code,
             positions: self.positions,
+            locals: f.locals.iter().map(|s| s.name.clone()).collect(),
         }
     }
 
