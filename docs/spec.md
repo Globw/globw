@@ -825,6 +825,15 @@ end loop
 - `serve.stop(s)` stops the server.
 - One request is "current" between `wait` and `reply`; reply before the next `wait`.
 
+**Web UI (`ui`).** `import ui` opens a web page in the browser, so you can build
+a graphical interface with HTML and CSS and keep the logic in Globw: serve the
+page (and small data endpoints) with `serve`, then open it with `ui`.
+
+- `ui.open(url)` opens `url` in the user's default browser.
+- `ui.app(url)` opens it as a chromeless "app" window (Chrome, Edge, Chromium or
+  Brave) if one is found, otherwise falls back to the default browser.
+- Both need `--allow-run` (they start the browser). See `examples/demos/webui.gw`.
+
 **Background processes (`proc`).** `import proc` runs other programs at the same
 time — concurrency at the level of the operating system (Globw's own code stays
 single-threaded, so this does not share memory; it runs separate programs in

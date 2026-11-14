@@ -1514,6 +1514,8 @@ use clock::*;
 // -------- running commands (the "shell" module) (helpers in shell.rs) --------
 mod shell;
 use shell::*;
+mod ui;
+use ui::*;
 
 // ---- module "ffi": call C functions from a native shared library (in ffi.rs) ----
 #[cfg(feature = "native")]
@@ -4993,6 +4995,11 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
         ShellRun => {
             if !c.run {
                 return Err(deny("shell.run", "--allow-run"));
+            }
+        }
+        UiOpen | UiApp => {
+            if !c.run {
+                return Err(deny("the ui module", "--allow-run"));
             }
         }
         ProcStart | ProcDone | ProcWait | ProcKill => {
@@ -8627,6 +8634,14 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             string(String::from_utf8(bytes).map_err(|_| "encode.from_base64: the decoded data is not text".to_string())?)
         }
         ShellRun => string(shell_run(text(&args[0]))?),
+        UiOpen => {
+            ui_open(text(&args[0]))?;
+            Value::Null
+        }
+        UiApp => {
+            ui_app(text(&args[0]))?;
+            Value::Null
+        }
 
         #[cfg(feature = "native")]
         FfiOpen => Value::Int(ffi_open(text(&args[0]))?),

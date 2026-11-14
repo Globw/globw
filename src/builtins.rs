@@ -143,6 +143,9 @@ pub enum Builtin {
     EncodeFromBase64,
     // module "shell" (run a system command)
     ShellRun,
+    // module "ui" (open a web UI in the browser)
+    UiOpen,
+    UiApp,
     // module "ffi" (call C functions from a native shared library)
     FfiOpen,
     FfiInt,
@@ -1064,6 +1067,8 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (EncodeBase64, "encode.base64", Sig::Fixed(&[S], Some(Str))),
     (EncodeFromBase64, "encode.from_base64", Sig::Fixed(&[S], Some(Str))),
     (ShellRun, "shell.run", Sig::Fixed(&[S], Some(Str))),
+    (UiOpen, "ui.open", Sig::Fixed(&[S], None)),
+    (UiApp, "ui.app", Sig::Fixed(&[S], None)),
     (FfiOpen, "ffi.open", Sig::Flexible { function: true }),
     (FfiInt, "ffi.int", Sig::Flexible { function: true }),
     (FfiInt32, "ffi.int32", Sig::Flexible { function: true }),
@@ -3511,7 +3516,7 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
 
 /// Built-in modules provided by the interpreter (imported with `import <name>`).
 pub const BUILTIN_MODULES: &[&str] = &[
-    "text", "hash", "web", "data", "clock", "encode", "shell", "ffi", "math", "bits", "base", "roman", "temp", "angle",
+    "text", "hash", "web", "data", "clock", "encode", "shell", "ui", "ffi", "math", "bits", "base", "roman", "temp", "angle",
     "percent", "geom", "length", "weight", "size", "duration", "geo", "ordinal", "fib", "prime", "str", "hex", "url",
     "case", "slug", "ascii", "morse", "caesar", "rot13", "leet", "nato", "color", "valid", "luhn", "isbn", "uuid",
     "crc", "env", "path", "os", "dir", "file", "tmp", "args", "csv", "stats", "tax", "compass",
