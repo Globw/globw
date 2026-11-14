@@ -1,6 +1,6 @@
-' Globw flagship demo: a liquid-glass data dashboard.
+' Globw demo: a data dashboard.
 ' Shows const, string interpolation, a list comprehension, and the gtq GUI
-' with Apple-style liquid glass - all in one file, no dependencies.
+' all in one file, no dependencies.
 import gtq
 variables:
     names as list of string
@@ -19,20 +19,20 @@ media = to_float(sum(scores)) / to_float(length(scores))
 window(720, 480, "Globw Dashboard")
 while(open())
     clear("#0b1020")
-    ' colourful shapes behind, so the frosted glass is visible
+    ' colourful shapes behind the cards
     for(i from 1 to length(names))
         circle(90.0 + i * 95.0, 120.0, 70.0, colors[i])
     end loop
-    ' header card in liquid glass
-    gtq.glass(24.0, 20.0, 672.0, 70.0, "#ffffff", 6)
+    ' header card
+    gtq.panel(24.0, 20.0, 672.0, 70.0, "#ffffff")
     gtq.label(44.0, 38.0, "Report classe - Globw", "#0f172a")
     head = "Media ${round_to(media, 1)}   |   Studenti >= 80: ${length(top)} / ${length(names)}"
     gtq.label(44.0, 62.0, head, "#334155")
-    ' one glass row per student with a score bar and a grade badge
+    ' one row per student with a score bar and a grade badge
     for(i from 1 to length(names))
         s = scores[i]
         bw = s * 4
-        gtq.glass(24.0, 110.0 + i * 56.0, 672.0, 48.0, "#cbd5e1", 5)
+        gtq.panel(24.0, 110.0 + i * 56.0, 672.0, 48.0, "#cbd5e1")
         gtq.label(44.0, 124.0 + i * 56.0, names[i], "#0f172a")
         rect(180.0, 122.0 + i * 56.0, bw, 22.0, colors[i])
         gtq.label(200.0 + bw, 124.0 + i * 56.0, "${s}", "#0f172a")

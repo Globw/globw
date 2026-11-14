@@ -804,8 +804,6 @@ pub enum Builtin {
     GtqMenuItem, GtqAccordion, GtqRating, GtqColorSwatch, GtqChipClose, GtqFab, GtqPagination,
     GtqButtonPrimary, GtqButtonGhost, GtqKnob, GtqScrollbarV, GtqDropdown, GtqCheckboxCard,
     GtqToggleIcon, GtqTextButton, GtqSliderMini, GtqStepperF, GtqCloseButton,
-    // gtq batch G: liquid glass
-    GtqGlass, GtqGlassRound, GtqGlassCircle,
     // module "net" (rich HTTP client) and unicode-aware string ops
     NetRequest, NetSend, NetStatus, NetHeader, NetOk, NetHost, NetPath, NetQuery,
     UnicodeUpper, UnicodeLower, UnicodeReverse, UnicodeTrim,
@@ -2184,10 +2182,6 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqSliderMini, "gtq.slider_mini", Sig::Fixed(&[R, R, R, R], Some(Real))),
     (GtqStepperF, "gtq.stepper_f", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
     (GtqCloseButton, "gtq.close_button", Sig::Fixed(&[R, R, R], Some(Bool))),
-    // gtq batch G: liquid glass
-    (GtqGlass, "gtq.glass", Sig::Fixed(&[R, R, R, R, S, I], None)),
-    (GtqGlassRound, "gtq.glass_round", Sig::Fixed(&[R, R, R, R, S, I, R], None)),
-    (GtqGlassCircle, "gtq.glass_circle", Sig::Fixed(&[R, R, R, S, I], None)),
     // module "net" (rich HTTP client)
     (NetRequest, "net.request", Sig::Fixed(&[S, S, S], Some(Str))),
     (NetSend, "net.send", Sig::Fixed(&[S, S, S, S, S], Some(Str))),
@@ -5372,30 +5366,6 @@ impl Env {
                 Value::Bool(clicked)
             }
 
-            // ---- gtq batch G: liquid glass ----
-            GtqGlass => {
-                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let tint = parse_color(text(&args[4]))?;
-                let blur = int(&args[5]);
-                let radius = (w.min(h) * 0.22).min(28.0);
-                self.window()?.canvas.glass(x, y, w, h, tint, blur, radius);
-                Value::Null
-            }
-            GtqGlassRound => {
-                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let tint = parse_color(text(&args[4]))?;
-                let blur = int(&args[5]);
-                let radius = real(&args[6]);
-                self.window()?.canvas.glass(x, y, w, h, tint, blur, radius);
-                Value::Null
-            }
-            GtqGlassCircle => {
-                let (x, y, r) = (real(&args[0]), real(&args[1]), real(&args[2]));
-                let tint = parse_color(text(&args[3]))?;
-                let blur = int(&args[4]);
-                self.window()?.canvas.glass(x, y, 2.0 * r, 2.0 * r, tint, blur, r);
-                Value::Null
-            }
             GtqIcon => {
                 let (x, y, sz) = (real(&args[0]), real(&args[1]), real(&args[2]));
                 let name = text(&args[3]).to_string();

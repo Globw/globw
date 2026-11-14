@@ -917,16 +917,6 @@ end loop
   `scrollbar_v`, `dropdown`, `checkbox_card`, `toggle_icon`, `text_button`,
   `slider_mini`, `stepper_f`, `close_button` (50).
 
-**Liquid glass.** `gtq` can render Apple-style frosted "liquid glass": it blurs
-whatever is already drawn behind the shape, lays a translucent tint on top, adds a
-top sheen and a lit top-left / shaded bottom-right rim, and **refracts the
-background near the curved edge** — bending and magnifying it, like a real lens.
-Draw it *after* the content it sits over.
-
-- `gtq.glass(x, y, w, h, tint, blur)` — a rounded glass panel (`blur` is the blur radius in pixels, e.g. 6).
-- `gtq.glass_round(x, y, w, h, tint, blur, radius)` — same, with an explicit corner radius.
-- `gtq.glass_circle(x, y, radius, tint, blur)` — a circular glass orb.
-
 **Rich HTTP client (`net`).** Beyond `web`'s simple get/post, `net` speaks the full
 set of methods, custom headers and URL parsing:
 
