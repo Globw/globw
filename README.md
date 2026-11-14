@@ -5,7 +5,7 @@
 <h1 align="center">Globw</h1>
 
 <p align="center">
-  A statically typed, interpreted language you write the way you think —
+  A statically typed, interpreted language you write the way you think -
   with graphics, networking, databases, audio, AI, physics and more already
   built in.
 </p>
