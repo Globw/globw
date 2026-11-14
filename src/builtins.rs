@@ -805,7 +805,7 @@ pub enum Builtin {
     GtqButtonPrimary, GtqButtonGhost, GtqKnob, GtqScrollbarV, GtqDropdown, GtqCheckboxCard,
     GtqToggleIcon, GtqTextButton, GtqSliderMini, GtqStepperF, GtqCloseButton,
     // gtq batch G: liquid glass
-    GtqGlass, GtqGlassRound, GtqGlassCircle, GtqGlassButton,
+    GtqGlass, GtqGlassRound, GtqGlassCircle,
     // module "net" (rich HTTP client) and unicode-aware string ops
     NetRequest, NetSend, NetStatus, NetHeader, NetOk, NetHost, NetPath, NetQuery,
     UnicodeUpper, UnicodeLower, UnicodeReverse, UnicodeTrim,
@@ -2188,7 +2188,6 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqGlass, "gtq.glass", Sig::Fixed(&[R, R, R, R, S, I], None)),
     (GtqGlassRound, "gtq.glass_round", Sig::Fixed(&[R, R, R, R, S, I, R], None)),
     (GtqGlassCircle, "gtq.glass_circle", Sig::Fixed(&[R, R, R, S, I], None)),
-    (GtqGlassButton, "gtq.glass_button", Sig::Fixed(&[R, R, R, R, S], Some(Bool))),
     // module "net" (rich HTTP client)
     (NetRequest, "net.request", Sig::Fixed(&[S, S, S], Some(Str))),
     (NetSend, "net.send", Sig::Fixed(&[S, S, S, S, S], Some(Str))),
@@ -5397,26 +5396,6 @@ impl Env {
                 self.window()?.canvas.glass(x, y, 2.0 * r, 2.0 * r, tint, blur, r);
                 Value::Null
             }
-            GtqGlassButton => {
-                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let label = text(&args[4]).to_string();
-                let (hover, down) = {
-                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
-                    let (mx, my) = g.mouse();
-                    let (mx, my) = (mx as f64, my as f64);
-                    (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
-                };
-                let pressed = hover && down && !self.prev_down;
-                let tint = parse_color(if hover { "#ffffff" } else { "#cbd5e1" })?;
-                let txtc = parse_color("#1e293b")?;
-                let radius = (h * 0.5).min(24.0);
-                let tw = self.fonts.width(&label).unwrap_or(0) as f64;
-                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
-                g.canvas.glass(x, y, w, h, tint, 6, radius);
-                self.fonts.draw(&mut g.canvas, (x + (w - tw) / 2.0).max(x + 2.0), y + h / 2.0 - 6.0, &label, txtc)?;
-                Value::Bool(pressed)
-            }
-
             GtqIcon => {
                 let (x, y, sz) = (real(&args[0]), real(&args[1]), real(&args[2]));
                 let name = text(&args[3]).to_string();

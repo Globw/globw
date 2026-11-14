@@ -926,7 +926,6 @@ Draw it *after* the content it sits over.
 - `gtq.glass(x, y, w, h, tint, blur)` — a rounded glass panel (`blur` is the blur radius in pixels, e.g. 6).
 - `gtq.glass_round(x, y, w, h, tint, blur, radius)` — same, with an explicit corner radius.
 - `gtq.glass_circle(x, y, radius, tint, blur)` — a circular glass orb.
-- `gtq.glass_button(x, y, w, h, label)` — a glass button; returns `true` on the frame it is clicked.
 
 **Rich HTTP client (`net`).** Beyond `web`'s simple get/post, `net` speaks the full
 set of methods, custom headers and URL parsing:
