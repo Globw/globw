@@ -832,7 +832,13 @@ page (and small data endpoints) with `serve`, then open it with `ui`.
 - `ui.open(url)` opens `url` in the user's default browser.
 - `ui.app(url)` opens it as a chromeless "app" window (Chrome, Edge, Chromium or
   Brave) if one is found, otherwise falls back to the default browser.
-- Both need `--allow-run` (they start the browser). See `examples/demos/webui.gw`.
+- `ui.serve(dir, port)` serves a whole folder of static files (HTML, CSS, JS,
+  images, fonts) on `127.0.0.1:port` with the right content types, opens the
+  browser on it, and keeps serving (this call does not return). `/` serves
+  `index.html`; `..` is refused. One line turns a folder into a running web app.
+- `ui.open`/`ui.app` need `--allow-run`; `ui.serve` also reads files and opens a
+  socket, so it needs `--allow-run --allow-read --allow-net`. For a dynamic UI
+  (with data endpoints) use `serve` instead; see `examples/demos/webui.gw`.
 
 **Background processes (`proc`).** `import proc` runs other programs at the same
 time — concurrency at the level of the operating system (Globw's own code stays

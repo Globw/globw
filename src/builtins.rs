@@ -146,6 +146,7 @@ pub enum Builtin {
     // module "ui" (open a web UI in the browser)
     UiOpen,
     UiApp,
+    UiServe,
     // module "ffi" (call C functions from a native shared library)
     FfiOpen,
     FfiInt,
@@ -1069,6 +1070,7 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (ShellRun, "shell.run", Sig::Fixed(&[S], Some(Str))),
     (UiOpen, "ui.open", Sig::Fixed(&[S], None)),
     (UiApp, "ui.app", Sig::Fixed(&[S], None)),
+    (UiServe, "ui.serve", Sig::Fixed(&[S, I], None)),
     (FfiOpen, "ffi.open", Sig::Flexible { function: true }),
     (FfiInt, "ffi.int", Sig::Flexible { function: true }),
     (FfiInt32, "ffi.int32", Sig::Flexible { function: true }),

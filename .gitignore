@@ -2,3 +2,4 @@
 *.vsix
 .superpowers/
 /installer/output/
+tmp_www/

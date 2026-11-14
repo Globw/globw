@@ -5002,6 +5002,17 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
                 return Err(deny("the ui module", "--allow-run"));
             }
         }
+        UiServe => {
+            if !c.net.granted() {
+                return Err(deny("ui.serve", "--allow-net"));
+            }
+            if !c.read.granted() {
+                return Err(deny("ui.serve", "--allow-read"));
+            }
+            if !c.run {
+                return Err(deny("ui.serve", "--allow-run"));
+            }
+        }
         ProcStart | ProcDone | ProcWait | ProcKill => {
             if !c.run {
                 return Err(deny("the proc module", "--allow-run"));
@@ -8640,6 +8651,10 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         }
         UiApp => {
             ui_app(text(&args[0]))?;
+            Value::Null
+        }
+        UiServe => {
+            ui_serve(text(&args[0]), int(&args[1]))?;
             Value::Null
         }
 
