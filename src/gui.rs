@@ -1493,6 +1493,114 @@ impl crate::builtins::Env {
     }
 }
 
+/// A window that is not the current one, with its own GUI state.
+pub struct WindowSlot {
+    pub graphics: crate::graphics::Graphics,
+    pub gui: GuiState,
+    pub prev_down: bool,
+}
+
+impl crate::builtins::Env {
+    /// The slot index of window number `id` (1 is the main window).
+    fn slot_of(&self, id: i64) -> Result<usize, String> {
+        let idx = usize::try_from(id - 1).map_err(|_| format!("there is no window {}", id))?;
+        let exists = idx == self.current && self.graphics.is_some() || self.windows.get(idx).is_some_and(Option::is_some);
+        if !exists {
+            return Err(format!("window {} is not open (it was closed, or never opened)", id));
+        }
+        Ok(idx)
+    }
+
+    /// Opens another window; returns its number (the main window is 1).
+    pub(crate) fn new_window(&mut self, w: i64, h: i64, title: &str) -> Result<i64, String> {
+        if w <= 0 || h <= 0 || w > 10_000 || h > 10_000 {
+            return Err(format!("the window size must be between 1 and 10000, here it is {} x {}", w, h));
+        }
+        let headless = match (&self.graphics, self.windows.first()) {
+            (Some(g), _) if self.current == 0 => g.is_headless(),
+            (_, Some(Some(main))) => main.graphics.is_headless(),
+            _ => return Err("open the main window first, with window(...)".to_string()),
+        };
+        if self.windows.is_empty() {
+            self.windows.push(None); // the main window's place
+        }
+        let mut g = if headless {
+            crate::graphics::Graphics::headless(w as usize, h as usize)
+        } else {
+            crate::graphics::Graphics::new(w as usize, h as usize, title)?
+        };
+        g.unthrottled();
+        let mut gui = GuiState::default();
+        gui.theme = self.gui.theme;
+        // a free number, or a new one
+        let idx = match self.windows.iter().enumerate().skip(1).find(|(i, s)| s.is_none() && *i != self.current) {
+            Some((i, _)) => i,
+            None => {
+                self.windows.push(None);
+                self.windows.len() - 1
+            }
+        };
+        self.windows[idx] = Some(WindowSlot { graphics: g, gui, prev_down: false });
+        Ok(idx as i64 + 1)
+    }
+
+    /// Makes window `id` the one the drawing and the widgets use.
+    pub(crate) fn use_window(&mut self, id: i64) -> Result<(), String> {
+        let idx = self.slot_of(id)?;
+        if idx == self.current {
+            return Ok(());
+        }
+        let incoming = self.windows[idx].take().expect("an open window");
+        if let Some(g) = self.graphics.take() {
+            let gui = std::mem::take(&mut self.gui);
+            self.windows[self.current] = Some(WindowSlot { graphics: g, gui, prev_down: self.prev_down });
+        }
+        self.graphics = Some(incoming.graphics);
+        self.gui = incoming.gui;
+        self.prev_down = incoming.prev_down;
+        self.current = idx;
+        // the classic widgets' palette follows the theme of this window
+        set_light(!self.gui.theme.dark);
+        Ok(())
+    }
+
+    /// Whether window `id` is open (the user has not closed it).
+    pub(crate) fn window_open(&self, id: i64) -> bool {
+        let Ok(idx) = usize::try_from(id - 1) else { return false };
+        if idx == self.current {
+            return self.graphics.as_ref().is_some_and(|g| g.is_open());
+        }
+        self.windows.get(idx).and_then(Option::as_ref).is_some_and(|s| s.graphics.is_open())
+    }
+
+    /// Closes window `id` (not the main one).
+    pub(crate) fn close_window_n(&mut self, id: i64) -> Result<(), String> {
+        if id == 1 {
+            return Err("gtq.close: the main window closes when the program ends (or the user closes it)".to_string());
+        }
+        let idx = self.slot_of(id)?;
+        if idx == self.current {
+            self.use_window(1)?;
+        }
+        self.windows[idx] = None;
+        Ok(())
+    }
+
+    /// `show()`: ends the frame of every window and shows them all.
+    pub(crate) fn show_all(&mut self) -> Result<(), String> {
+        let start = self.current;
+        let others: Vec<usize> = (0..self.windows.len()).filter(|&i| i != start && self.windows[i].is_some()).collect();
+        for idx in std::iter::once(start).chain(others) {
+            self.use_window(idx as i64 + 1)?;
+            self.prev_down = self.graphics.as_ref().is_some_and(crate::graphics::Graphics::click);
+            // the end of a GUI frame: menus on top, focus changes, pointer look
+            self.finish_gui_frame()?;
+            self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?.show();
+        }
+        self.use_window(start as i64 + 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2050,6 +2158,58 @@ world");
         assert_eq!(super::ui_color("#e2e8f0").unwrap(), 0x111827, "text turns dark");
         assert_eq!(super::ui_color("#ff8800").unwrap(), 0xff8800, "other colours stay");
         super::set_light(false);
+    }
+
+    #[test]
+    fn several_windows_keep_their_own_input_and_focus() {
+        let mut env = Env::default();
+        env.graphics = Some(Graphics::headless(300, 200));
+        let id = match env.call(Builtin::GtqWindow, &[Value::Int(200), Value::Int(100), Value::Str("Second".into())]).unwrap() {
+            Value::Int(n) => n,
+            other => panic!("{:?}", other),
+        };
+        assert_eq!(id, 2);
+        let field = |env: &mut Env, v: &str| -> String {
+            let a = [Value::Real(10.0), Value::Real(10.0), Value::Real(150.0), Value::Real(30.0), Value::Str(v.into())];
+            crate::vm::display(&env.call(Builtin::GtqTextbox, &a).unwrap())
+        };
+        let (mut main_text, mut second_text) = (String::from("main"), String::from("second"));
+        // the user clicks the field in window 2 and types; window 1 gets nothing
+        let frames = [
+            FrameInput { left: true, ..Default::default() },
+            FrameInput::default(),
+            FrameInput { chars: vec!['!'], ..Default::default() },
+        ];
+        for input in frames {
+            env.call(Builtin::GtqUse, &[Value::Int(2)]).unwrap();
+            env.graphics.as_mut().unwrap().simulate(150, 20, input);
+            env.call(Builtin::GtqUse, &[Value::Int(1)]).unwrap();
+            env.call(Builtin::Show, &[]).unwrap();
+            main_text = field(&mut env, &main_text);
+            env.call(Builtin::GtqUse, &[Value::Int(2)]).unwrap();
+            second_text = field(&mut env, &second_text);
+            env.call(Builtin::GtqUse, &[Value::Int(1)]).unwrap();
+        }
+        assert_eq!((main_text.as_str(), second_text.as_str()), ("main", "second!"));
+        // each window keeps its theme, also for the classic widgets
+        env.call(Builtin::GtqUse, &[Value::Int(2)]).unwrap();
+        env.call(Builtin::GtqTheme, &[Value::Str("light".into())]).unwrap();
+        env.call(Builtin::GtqUse, &[Value::Int(1)]).unwrap();
+        assert_eq!(super::ui_color("#1e293b").unwrap(), 0x1e293b, "window 1 is still dark");
+        env.call(Builtin::GtqUse, &[Value::Int(2)]).unwrap();
+        assert_eq!(super::ui_color("#1e293b").unwrap(), 0xffffff, "window 2 is light");
+        env.call(Builtin::GtqUse, &[Value::Int(1)]).unwrap();
+        // closing: window 2 is gone, the main one cannot be closed this way
+        let open = |env: &mut Env, n: i64| matches!(env.call(Builtin::GtqIsOpen, &[Value::Int(n)]).unwrap(), Value::Bool(true));
+        assert!(open(&mut env, 2));
+        env.call(Builtin::GtqClose, &[Value::Int(2)]).unwrap();
+        assert!(!open(&mut env, 2));
+        assert!(env.call(Builtin::GtqUse, &[Value::Int(2)]).unwrap_err().contains("not open"));
+        assert!(env.call(Builtin::GtqClose, &[Value::Int(1)]).is_err());
+        assert!(open(&mut env, 1));
+        // the freed number is used again
+        let again = env.call(Builtin::GtqWindow, &[Value::Int(50), Value::Int(50), Value::Str("Third".into())]).unwrap();
+        assert!(matches!(again, Value::Int(2)));
     }
 
     #[test]

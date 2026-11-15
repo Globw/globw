@@ -798,6 +798,10 @@ pub enum Builtin {
     GtqColumnW,
     GtqFormText,
     GtqFormPassword,
+    GtqWindow,
+    GtqUse,
+    GtqIsOpen,
+    GtqClose,
     GtqSubmitted,
     GtqTheme,
     GtqThemeColor,
@@ -2077,6 +2081,10 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqColumnW, "gtq.column_w", Sig::Fixed(&[], Some(Real))),
     (GtqFormText, "gtq.form_text", Sig::Fixed(&[S, S], Some(Str))),
     (GtqFormPassword, "gtq.form_password", Sig::Fixed(&[S, S], Some(Str))),
+    (GtqWindow, "gtq.window", Sig::Fixed(&[I, I, S], Some(Int))),
+    (GtqUse, "gtq.use", Sig::Fixed(&[I], None)),
+    (GtqIsOpen, "gtq.is_open", Sig::Fixed(&[I], Some(Bool))),
+    (GtqClose, "gtq.close", Sig::Fixed(&[I], None)),
     (GtqSubmitted, "gtq.submitted", Sig::Fixed(&[], Some(Bool))),
     (GtqTheme, "gtq.theme", Sig::Fixed(&[S], None)),
     (GtqThemeColor, "gtq.theme_color", Sig::Fixed(&[S], Some(Str))),
@@ -4132,6 +4140,11 @@ pub struct Env {
     pub(crate) prev_down: bool,
     /// focus, text editing and theme of the interactive `gtq` widgets
     pub(crate) gui: crate::gui::GuiState,
+    /// the windows that are not the current one, by number - 1 (the current
+    /// one's slot is empty: it lives in `graphics`, `gui` and `prev_down`)
+    pub(crate) windows: Vec<Option<crate::gui::WindowSlot>>,
+    /// the number - 1 of the current window
+    pub(crate) current: usize,
 }
 
 impl Default for Env {
@@ -4144,6 +4157,8 @@ impl Default for Env {
             rng: seed | 1,
             prev_down: false,
             gui: crate::gui::GuiState::default(),
+            windows: Vec::new(),
+            current: 0,
         }
     }
 }
@@ -4200,16 +4215,17 @@ impl Env {
                 if w <= 0 || h <= 0 || w > 10_000 || h > 10_000 {
                     return Err(format!("the window size must be between 1 and 10000, here it is {} x {}", w, h));
                 }
-                self.graphics = None; // close the previous window first
+                // a new main window: close the previous one and any extra windows
+                self.windows.clear();
+                self.current = 0;
+                self.graphics = None;
                 self.graphics = Some(Graphics::new(w as usize, h as usize, text(&args[2]))?);
+                self.windows.push(None);
                 Value::Null
             }
-            Open => Value::Bool(self.graphics.as_ref().is_some_and(|g| g.is_open())),
+            Open => Value::Bool(self.window_open(1)),
             Show => {
-                self.prev_down = self.graphics.as_ref().is_some_and(Graphics::click);
-                // the end of a GUI frame: menus on top, focus changes, pointer look
-                self.finish_gui_frame()?;
-                self.window()?.show();
+                self.show_all()?;
                 Value::Null
             }
             Clear => {
@@ -4567,6 +4583,16 @@ impl Env {
             GtqColumnW => Value::Real(self.column_part(false)?),
             GtqFormText => Value::Str(self.form_field(text(&args[0]), text(&args[1]), false)?.into()),
             GtqFormPassword => Value::Str(self.form_field(text(&args[0]), text(&args[1]), true)?.into()),
+            GtqWindow => Value::Int(self.new_window(int(&args[0]), int(&args[1]), text(&args[2]))?),
+            GtqUse => {
+                self.use_window(int(&args[0]))?;
+                Value::Null
+            }
+            GtqIsOpen => Value::Bool(self.window_open(int(&args[0]))),
+            GtqClose => {
+                self.close_window_n(int(&args[0]))?;
+                Value::Null
+            }
             GtqContextMenu => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
                 Value::Str(self.context_menu(x, y, w, h, &crate::gui::strings_of(&args[4]))?.into())
@@ -5549,14 +5575,17 @@ impl Env {
         })
     }
 
-    /// Closes the window, if any (used by `stop`).
+    /// Closes every window (used by `stop`).
     pub fn close_window(&mut self) {
         self.graphics = None;
+        self.windows.clear();
+        self.current = 0;
     }
 
     /// At the end of the program an open window keeps showing its last frame
     /// until the user closes it.
     pub fn finish(&mut self) {
+        let _ = self.use_window(1);
         if let Some(g) = self.graphics.as_mut() {
             g.keep_open();
         }

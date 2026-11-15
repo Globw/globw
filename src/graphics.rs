@@ -71,6 +71,11 @@ impl Graphics {
     pub fn click(&self) -> bool { false }
     pub fn keep_open(&mut self) {}
     pub fn set_pointer(&mut self, _p: Pointer) {}
+    pub fn is_headless(&self) -> bool { true }
+    pub fn unthrottled(&mut self) {}
+    pub fn headless(w: usize, h: usize) -> Graphics {
+        Graphics { canvas: Canvas::new(w, h), scene: Scene::default(), input: FrameInput::default(), blocked: Vec::new() }
+    }
 }
 
 #[cfg(feature = "native")]
@@ -209,6 +214,18 @@ impl Graphics {
             typed: Rc::new(RefCell::new(Vec::new())),
             pointer: Pointer::Arrow,
             blocked: Vec::new(),
+        }
+    }
+
+    pub fn is_headless(&self) -> bool {
+        self.window.is_none()
+    }
+
+    /// No frame-rate wait for this window (a secondary window: the main one
+    /// already paces the program).
+    pub fn unthrottled(&mut self) {
+        if let Some(w) = self.window.as_mut() {
+            w.set_target_fps(0);
         }
     }
 

@@ -51,6 +51,9 @@ failing line. A `launch.json` can grant permissions and give the `input()` text.
   their palette), and button labels are centred for any font.
 - Automatic layout: `gtq.column` / `gtq.row` stack widgets down a column, and
   `gtq.form_text` / `gtq.form_password` add a labelled field in one line.
+- More windows: `gtq.window` opens one and returns its number, `gtq.use`
+  switches the drawing to it, `gtq.is_open` / `gtq.close`; `show()` shows them
+  all, each with its own focus, menus and theme.
 - Demo: `examples/demos/contacts.gw`, a small address book.
 - `screenshot("file.png")` saves the graphics window as a PNG.
 
