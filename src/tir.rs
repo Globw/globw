@@ -526,13 +526,35 @@ pub enum TStmt {
     /// `fail message`: raises a run-time error
     Fail(TExpr, Pos),
     /// `a, b = tuple`: evaluate the tuple once, store each element in a place
-    Unpack(Vec<Place>, TExpr, Pos),
+    Unpack(Vec<TPat>, TExpr, Pos),
     /// runs function `func` (a module's start-up code) unless global `flag` is true
     LoadModule { flag: u16, func: usize, pos: Pos },
     /// `for(x in c)`; `to_real` converts int elements for a float variable
-    ForEach { var: Place, iter: TExpr, kind: IterKind, to_real: bool, body: Vec<TStmt>, pos: Pos },
+    /// `var` is `None` when the elements are unpacked into `unpack`; `pairs` is a
+    /// `for(k, v in dict)` that unpacks each key with its value.
+    ForEach {
+        var: Option<Place>,
+        iter: TExpr,
+        kind: IterKind,
+        to_real: bool,
+        body: Vec<TStmt>,
+        pos: Pos,
+        unpack: Vec<TPat>,
+        pairs: bool,
+    },
     Break(Pos),
     Continue(Pos),
+}
+
+/// One target of tuple unpacking.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TPat {
+    /// a variable, and whether the part is an int stored into a float
+    Var(Place, bool),
+    /// `_`: the part is skipped
+    Skip,
+    /// a nested tuple
+    Tuple(Vec<TPat>),
 }
 
 /// What a `for ... in` goes through.

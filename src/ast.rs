@@ -74,6 +74,15 @@ pub enum ExprKind {
     Cond(Box<Expr>, Box<Expr>, Box<Expr>),
 }
 
+/// One target of tuple unpacking: a variable, `_` (the part is skipped) or a
+/// nested tuple `(b, c)`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pat {
+    Name(String, Pos),
+    Skip,
+    Tuple(Vec<Pat>, Pos),
+}
+
 /// The left side of an assignment: `x`, `v[i]` or `m[i, j]`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Target {
@@ -98,7 +107,9 @@ pub enum StmtKind {
     For { var: String, var_pos: Pos, from: Expr, to: Expr, step: Option<Expr>, body: Vec<Stmt> },
     Repeat(Vec<Stmt>, Expr),
     /// `for(x in collection)`: lists, arrays, dictionary keys, string characters
-    ForEach { var: String, var_pos: Pos, iter: Expr, body: Vec<Stmt> },
+    /// With `unpack` (`for(k, v in d)`, `for(name, age in people)`) each element is
+    /// unpacked into those targets and `var` is unused.
+    ForEach { var: String, var_pos: Pos, iter: Expr, body: Vec<Stmt>, unpack: Vec<Pat> },
     Break,
     Continue,
     Call(String, Vec<Expr>),
@@ -112,8 +123,9 @@ pub enum StmtKind {
     Try { body: Vec<Stmt>, catch_name: String, catch_pos: Pos, catch: Vec<Stmt>, always: Vec<Stmt> },
     /// `fail "message"`: raises a run-time error on purpose
     Fail(Expr),
-    /// multiple assignment that unpacks a tuple: `a, b = point`
-    Unpack(Vec<(String, Pos)>, Expr),
+    /// multiple assignment that unpacks a tuple: `a, b = point`, `a, _ = t`,
+    /// `a, (b, c) = nested`
+    Unpack(Vec<Pat>, Expr),
     Return(Option<Expr>),
     /// a declaration that produces no runtime code, like `const NAME = value`
     /// (the value is substituted where the name is used)

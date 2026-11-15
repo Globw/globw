@@ -217,6 +217,9 @@ for(x in collection)            ' each element of a list or array,
     ...                         ' each key of a dictionary,
 end loop                        ' each character of a string
 
+for(k, v in dictionary)         ' each key with its value
+for(a, b in list_of_tuples)     ' each tuple, unpacked (§6.16)
+
 break                           ' leaves the innermost loop
 continue                        ' goes on with its next round
 ```
@@ -1246,7 +1249,13 @@ lo, hi = (hi, lo)              ' the right side is evaluated first, so this swap
 - **Literal:** `(a, b, ...)` with at least one comma. `(x)` alone is just grouping.
 - **Access:** `t.1`, `t.2`, ... by 1-based position (checked at compile time).
 - **Unpacking:** `a, b = t` assigns the elements to the variables, which must be
-  declared and match the element types; the counts must be equal.
+  declared and match the element types; the counts must be equal. `_` skips a
+  part (`a, _ = t`), a nested tuple unpacks with parentheses (`a, (b, c) = t`),
+  and the right side needs no parentheses (`a, b = b, a` swaps). An `int` part
+  stored into a `float` variable becomes a `float`.
+- **In loops:** `for(name, age in people)` unpacks each tuple of a list, and
+  `for(k, v in d)` gives each key of a dictionary with its value; `_` and nested
+  tuples work there too (`for(name, _ in people)`).
 - A tuple is printed like a list (`[3, 7]`).
 
 ### 6.17 Permissions (running untrusted code)

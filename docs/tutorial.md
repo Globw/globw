@@ -126,16 +126,15 @@ Lists, dictionaries, arrays and matrices. Lists and arrays are **1-based**.
 ```gw
 variables:
     grades as dict of string to list of int
-    names as list of string
-    i as int
+    name as string
+    marks as list of int
 
 grades["Anna"] = [8, 7, 9]
 grades["Luca"] = [6]
 append(grades["Luca"], 7)
 
-names = keys(grades)
-for(i from 1 to length(names))
-    output(names[i], ": ", join(grades[names[i]], " "))
+for(name, marks in grades)                  ' each key with its value
+    output(name, ": ", join(marks, " "))
 end loop
 
 output("Marco has ", length(get(grades, "Marco", [])), " grades")   ' get with a default

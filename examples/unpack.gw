@@ -1,0 +1,50 @@
+' Tuple unpacking: swap, skip with _, nested tuples, and for loops over pairs.
+
+variables:
+    a, b, c as int
+    x as float
+    name as string
+    age as int
+    p as tuple of (int, int)
+    q as tuple of (int, tuple of (int, int))
+    people as list of tuple of (string, int)
+    stock as dict of string to int
+
+function min_max(l as list of int) as tuple of (int, int)
+    return (minimum(l), maximum(l))
+end function
+
+a = 1
+b = 2
+a, b = b, a
+output("swap: ", a, " ", b)
+
+p = (10, 20)
+a, _ = p
+output("first only: ", a)
+
+q = (1, (2, 3))
+a, (b, c) = q
+output("nested: ", a, " ", b, " ", c)
+
+x, a = (5, 6)
+output("int into float: ", x)
+
+a, b = min_max([4, 9, 1, 7])
+output("min ", a, ", max ", b)
+
+append(people, ("Ada", 36))
+append(people, ("Alan", 41))
+for(name, age in people)
+    output(name, " is ", age)
+end loop
+
+stock["apples"] = 3
+stock["pears"] = 0
+for(name, a in stock)
+    output(name, ": ", if(a == 0) "sold out" else "${a} left")
+end loop
+
+for((name, _) in people)
+    output("hi ", name)
+end loop

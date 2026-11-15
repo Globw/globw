@@ -1,6 +1,6 @@
 //! Checking statements, including definite assignment of local variables.
 
-use crate::ast::{Expr, ExprKind, Shape, Stmt, StmtKind, Target};
+use crate::ast::{Expr, ExprKind, Pat, Shape, Stmt, StmtKind, Target};
 use crate::errors::{Error, Pos};
 use crate::tir::*;
 
@@ -36,7 +36,9 @@ impl<'p> Checker<'p> {
     fn stmt_kind(&mut self, s: &Stmt) -> Option<TStmt> {
         let pos = s.pos;
         match &s.kind {
-            StmtKind::ForEach { var, var_pos, iter, body } => self.for_each(var, *var_pos, iter, body, pos),
+            StmtKind::ForEach { var, var_pos, iter, body, unpack } => {
+                self.for_each(var, *var_pos, iter, body, unpack, pos)
+            }
             StmtKind::Break | StmtKind::Continue => {
                 let is_break = matches!(s.kind, StmtKind::Break);
                 if self.loops == 0 {
@@ -390,7 +392,7 @@ impl<'p> Checker<'p> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn for_each(&mut self, var: &str, var_pos: Pos, iter: &Expr, body: &[Stmt], pos: Pos) -> Option<TStmt> {
+    fn for_each(&mut self, var: &str, var_pos: Pos, iter: &Expr, body: &[Stmt], unpack: &[Pat], pos: Pos) -> Option<TStmt> {
         let it = self.expr(iter);
         let (elem, kind) = match it.ty {
             Type::Unknown => (Type::Unknown, IterKind::Items),
@@ -409,6 +411,9 @@ impl<'p> Checker<'p> {
                 }
             },
         };
+        if !unpack.is_empty() {
+            return self.for_each_unpack(it, elem, kind, body, unpack, var_pos, pos);
+        }
         let Some(p) = self.lookup(var) else {
             let err = self.undeclared(var, var_pos);
             self.report_structural(err);
@@ -430,10 +435,57 @@ impl<'p> Checker<'p> {
         }
         let body = self.block(body);
         self.assigned = before;
-        Some(TStmt::ForEach { var: p, iter: it, kind, to_real, body, pos })
+        Some(TStmt::ForEach { var: Some(p), iter: it, kind, to_real, body, pos, unpack: Vec::new(), pairs: false })
     }
 
-    fn unpack(&mut self, names: &[(String, Pos)], value: &crate::ast::Expr, pos: Pos) -> Option<TStmt> {
+    /// `for(a, b in collection)`: a list of tuples gives their parts, a dictionary
+    /// gives each key with its value.
+    #[allow(clippy::too_many_arguments)]
+    fn for_each_unpack(
+        &mut self,
+        it: TExpr,
+        elem: Type,
+        kind: IterKind,
+        body: &[Stmt],
+        unpack: &[Pat],
+        at: Pos,
+        pos: Pos,
+    ) -> Option<TStmt> {
+        let (parts, pairs) = match dict_parts(it.ty) {
+            Some((k, v)) => {
+                if unpack.len() != 2 {
+                    self.report(Error::new(
+                        at,
+                        "a dictionary unpacks into two names, the key and the value: for(k, v in d)",
+                    ));
+                    return None;
+                }
+                (vec![Type::Base(k), v], true)
+            }
+            None if elem == Type::Unknown => return None,
+            None => match tuple_parts(elem) {
+                Some(p) => (p, false),
+                None => {
+                    self.report(Error::new(
+                        at,
+                        format!(
+                            "for(a, b in ...) unpacks tuples or a dictionary, but the elements are {}",
+                            elem.plural()
+                        ),
+                    ));
+                    return None;
+                }
+            },
+        };
+        // the body may not run at all: the variables keep their state from before the loop
+        let before = self.assigned.clone();
+        let pats = self.bind_pats(unpack, &parts, at)?;
+        let body = self.block(body);
+        self.assigned = before;
+        Some(TStmt::ForEach { var: None, iter: it, kind, to_real: false, body, pos, unpack: pats, pairs })
+    }
+
+    fn unpack(&mut self, pats: &[Pat], value: &crate::ast::Expr, pos: Pos) -> Option<TStmt> {
         let v = self.expr(value);
         let parts = match crate::tir::tuple_parts(v.ty) {
             Some(p) => p,
@@ -444,33 +496,58 @@ impl<'p> Checker<'p> {
                 return None;
             }
         };
-        if parts.len() != names.len() {
+        let pats = self.bind_pats(pats, &parts, pos)?;
+        Some(TStmt::Unpack(pats, v, pos))
+    }
+
+    /// Checks unpacking targets against the part types of a tuple and marks the
+    /// variables as assigned.
+    fn bind_pats(&mut self, pats: &[Pat], parts: &[Type], pos: Pos) -> Option<Vec<TPat>> {
+        if parts.len() != pats.len() {
             self.report(Error::new(
                 pos,
-                format!("the tuple has {} parts but there are {} variables", parts.len(), names.len()),
+                format!("the tuple has {} parts but there are {} variables", parts.len(), pats.len()),
             ));
             return None;
         }
-        let mut places = Vec::with_capacity(names.len());
-        for ((name, npos), ety) in names.iter().zip(&parts) {
-            let Some(p) = self.lookup(name) else {
-                let err = self.undeclared(name, *npos);
-                self.report_structural(err);
-                return None;
-            };
-            match (self.var(p).full_type(), ety.base()) {
-                (dest, _) if dest != Type::Unknown && !fits(dest, *ety) => {
-                    self.report(Error::new(*npos, format!("\"{}\" is {}, but here it gets {}", name, dest.full_name(), ety.full_name())));
+        let mut out = Vec::with_capacity(pats.len());
+        for (pat, ety) in pats.iter().zip(parts) {
+            out.push(match pat {
+                Pat::Skip => TPat::Skip,
+                Pat::Name(name, npos) => {
+                    let Some(p) = self.lookup(name) else {
+                        let err = self.undeclared(name, *npos);
+                        self.report_structural(err);
+                        return None;
+                    };
+                    match (self.var(p).full_type(), ety.base()) {
+                        (dest, _) if dest != Type::Unknown && !fits(dest, *ety) => {
+                            self.report(Error::new(
+                                *npos,
+                                format!("\"{}\" is {}, but here it gets {}", name, dest.full_name(), ety.full_name()),
+                            ));
+                        }
+                        (Type::Unknown, Some(b)) => self.widen(p, b, *npos),
+                        _ => {}
+                    }
+                    if let Place::Local(i) = p {
+                        self.assigned[i as usize] = true;
+                    }
+                    let to_real = self.var(p).full_type() == Type::Base(BaseType::Real) && *ety == Type::Base(BaseType::Int);
+                    TPat::Var(p, to_real)
                 }
-                (Type::Unknown, Some(b)) => self.widen(p, b, *npos),
-                _ => {}
-            }
-            if let Place::Local(i) = p {
-                self.assigned[i as usize] = true;
-            }
-            places.push(p);
+                Pat::Tuple(sub, ppos) => match tuple_parts(*ety) {
+                    Some(sp) => TPat::Tuple(self.bind_pats(sub, &sp, *ppos)?),
+                    None => {
+                        if *ety != Type::Unknown {
+                            self.report(Error::new(*ppos, format!("this part is {}, not a tuple to unpack", ety.full_name())));
+                        }
+                        return None;
+                    }
+                },
+            });
         }
-        Some(TStmt::Unpack(places, v, pos))
+        Some(out)
     }
 
     fn try_stmt(

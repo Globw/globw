@@ -28,6 +28,10 @@ the logic in Globw.
   side give a `float`; chains like `if(x < 0) "neg" else if(x == 0) "zero" else "pos"`.
 - **`match` with ranges and comparisons**: `when 90 to 100`, `when < 0`,
   `when >= 18`, mixed with commas (`when < 0, > 100`); ranges work on text too.
+- **Tuple unpacking everywhere**: `a, b = b, a` swaps without parentheses,
+  `_` skips a part (`a, _ = t`), nested tuples unpack (`a, (b, c) = t`), and
+  loops unpack too — `for(name, age in people)` over a list of tuples and
+  `for(k, v in d)` over a dictionary's keys and values.
 - **Formatted interpolation**: `${value:spec}` inside text — `${price:.2}`,
   `${total:,}`, `${ratio:.1%}`, `${name:>8}`, `${n:05}` — and the matching
   `format(value, spec)` function (align, width, zero padding, thousands,

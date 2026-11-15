@@ -932,6 +932,28 @@ impl Parser {
         self.advance();
         self.expect(&Tok::LParen, "\"(\"")?;
         let var_pos = self.pos();
+        // `for(k, v in d)`, `for((a, b) in pairs)`: the elements are unpacked
+        let unpacking = matches!(self.tok(), Tok::LParen) || matches!(self.peek_tok(1), Tok::Comma);
+        if unpacking {
+            let mut unpack = vec![self.pattern()?];
+            while self.accept(&Tok::Comma) {
+                unpack.push(self.pattern()?);
+            }
+            if let [Pat::Tuple(parts, _)] = unpack.as_slice() {
+                unpack = parts.clone(); // for((a, b) in ...) is for(a, b in ...)
+            }
+            if !self.is_name("in") {
+                return self.fail("to unpack each element write for(a, b in collection)");
+            }
+            self.advance();
+            let iter = self.expr()?;
+            self.expect(&Tok::RParen, "\")\"")?;
+            self.end_stmt()?;
+            let body = self.block(&[Tok::EndLoop], opened, "for", "end loop", None)?;
+            self.advance();
+            self.end_stmt()?;
+            return Ok(StmtKind::ForEach { var: String::new(), var_pos, iter, body, unpack });
+        }
         let var = match self.tok().clone() {
             Tok::Name(n) => {
                 self.advance();
@@ -947,7 +969,7 @@ impl Parser {
             let body = self.block(&[Tok::EndLoop], opened, "for", "end loop", None)?;
             self.advance();
             self.end_stmt()?;
-            return Ok(StmtKind::ForEach { var, var_pos, iter, body });
+            return Ok(StmtKind::ForEach { var, var_pos, iter, body, unpack: Vec::new() });
         }
         if !self.is(&Tok::From) {
             return self.fail("expected \"from\" or \"in\": for(i from 1 to n) or for(x in list)");
@@ -965,26 +987,59 @@ impl Parser {
         Ok(StmtKind::For { var, var_pos, from, to, step, body })
     }
 
-    /// `a, b = tuple`: unpacks a tuple into several variables.
+    /// `a, b = tuple`: unpacks a tuple into several variables. `_` skips a part,
+    /// `(b, c)` unpacks a nested tuple, and `a, b = b, a` needs no parentheses.
     fn unpack_stmt(&mut self, first: String, pos: Pos) -> Result<StmtKind, Error> {
         self.advance(); // first name
-        let mut names = vec![(first, pos)];
+        let mut pats = vec![if first == "_" { Pat::Skip } else { Pat::Name(first, pos) }];
         while self.accept(&Tok::Comma) {
-            let p = self.pos();
-            match self.tok().clone() {
-                Tok::Name(n) if !n.contains('.') => {
-                    self.advance();
-                    names.push((n, p));
-                }
-                other => return self.fail(format!("expected a variable name, found {}", describe(&other))),
-            }
+            pats.push(self.pattern()?);
         }
         if !self.accept(&Tok::Assign) {
             return self.fail("expected = to unpack a tuple, like a, b = point");
         }
-        let value = self.expr()?;
+        let vpos = self.pos();
+        let first_value = self.expr()?;
+        let value = if self.is(&Tok::Comma) {
+            // a, b = b, a: the right side is a tuple without parentheses
+            let mut items = vec![first_value];
+            while self.accept(&Tok::Comma) {
+                items.push(self.expr()?);
+            }
+            Expr { kind: ExprKind::TupleLit(items), pos: vpos }
+        } else {
+            first_value
+        };
         self.end_stmt()?;
-        Ok(StmtKind::Unpack(names, value))
+        Ok(StmtKind::Unpack(pats, value))
+    }
+
+    /// One unpacking target: a variable name, `_`, or a nested `(a, b)`.
+    fn pattern(&mut self) -> Result<Pat, Error> {
+        let p = self.pos();
+        match self.tok().clone() {
+            Tok::Name(n) if n == "_" => {
+                self.advance();
+                Ok(Pat::Skip)
+            }
+            Tok::Name(n) if !n.contains('.') => {
+                self.advance();
+                Ok(Pat::Name(n, p))
+            }
+            Tok::LParen => {
+                self.advance();
+                let mut parts = vec![self.pattern()?];
+                while self.accept(&Tok::Comma) {
+                    parts.push(self.pattern()?);
+                }
+                self.expect(&Tok::RParen, "\")\" to close the nested tuple")?;
+                if parts.len() < 2 {
+                    return self.fail("a nested tuple has at least two parts, like (b, c)");
+                }
+                Ok(Pat::Tuple(parts, p))
+            }
+            other => self.fail(format!("expected a variable name, _ or (a, b), found {}", describe(&other))),
+        }
     }
 
     /// `match subject ... when v: ... when a, b: ... else: ... end match`.

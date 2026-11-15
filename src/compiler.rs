@@ -668,8 +668,8 @@ impl<'a> FnCompiler<'a> {
                 self.close_loop(check, end);
             }
             TStmt::For { var, from, to, step, body, pos } => self.for_loop(*var, from, to, step.as_ref(), body, *pos),
-            TStmt::ForEach { var, iter, kind, to_real, body, pos } => {
-                self.for_each(*var, iter, *kind, *to_real, body, *pos)
+            TStmt::ForEach { var, iter, kind, to_real, body, pos, unpack, pairs } => {
+                self.for_each(*var, iter, *kind, *to_real, body, *pos, unpack, *pairs)
             }
             TStmt::Break(pos) => {
                 self.pop_handlers(self.open_handlers - self.loops.last().expect("a loop").handlers, *pos);
@@ -691,20 +691,9 @@ impl<'a> FnCompiler<'a> {
                 let dst = self.temp();
                 self.emit(Op::CallMethod { slot: *slot as u32, first, argc: args.len() as u16, dst }, *pos);
             }
-            TStmt::Unpack(places, tuple, pos) => {
+            TStmt::Unpack(pats, tuple, pos) => {
                 let c = self.operand(tuple);
-                for (i, place) in places.iter().enumerate() {
-                    let idx = self.temp();
-                    self.emit(Op::LoadInt(idx, i as i64 + 1), *pos);
-                    let dst = match place {
-                        Place::Local(r) => *r,
-                        Place::Global(_) => self.temp(),
-                    };
-                    self.emit(Op::GetElem(dst, c, idx), *pos);
-                    if let Place::Global(g) = place {
-                        self.emit(Op::SetGlobal(*g, dst), *pos);
-                    }
-                }
+                self.unpack_into(pats, c, *pos);
             }
             TStmt::CallVal(func, args, pos) => {
                 let f = self.operand(func);
@@ -927,9 +916,69 @@ impl<'a> FnCompiler<'a> {
     /// `for(x in c)`: goes by position while the position is within the
     /// current length, so elements appended during the loop are visited too.
     /// Dictionaries go through a copy of their keys.
-    fn for_each(&mut self, var: Place, iter: &TExpr, kind: IterKind, to_real: bool, body: &[TStmt], pos: Pos) {
+    /// Stores the parts of the tuple in register `c` into the targets.
+    fn unpack_into(&mut self, pats: &[TPat], c: Reg, pos: Pos) {
+        for (i, pat) in pats.iter().enumerate() {
+            if *pat == TPat::Skip {
+                continue;
+            }
+            let idx = self.temp();
+            self.emit(Op::LoadInt(idx, i as i64 + 1), pos);
+            let part = self.temp();
+            self.emit(Op::GetElem(part, c, idx), pos);
+            self.bind(pat, part, pos);
+        }
+    }
+
+    /// Stores the value in register `src` into one unpacking target.
+    fn bind(&mut self, pat: &TPat, src: Reg, pos: Pos) {
+        match pat {
+            TPat::Skip => {}
+            TPat::Tuple(parts) => self.unpack_into(parts, src, pos),
+            TPat::Var(place, to_real) => {
+                let v = if *to_real {
+                    let t = self.temp();
+                    self.emit(Op::ToReal(t, src), pos);
+                    t
+                } else {
+                    src
+                };
+                match place {
+                    Place::Local(r) => {
+                        if *r != v {
+                            self.emit(Op::Move(*r, v), pos);
+                        }
+                    }
+                    Place::Global(g) => {
+                        self.emit(Op::SetGlobal(*g, v), pos);
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn for_each(
+        &mut self,
+        var: Option<Place>,
+        iter: &TExpr,
+        kind: IterKind,
+        to_real: bool,
+        body: &[TStmt],
+        pos: Pos,
+        unpack: &[TPat],
+        pairs: bool,
+    ) {
         let c = self.temp();
         self.expr_into(iter, c);
+        // for(k, v in d) also needs the dictionary itself, to read each value
+        let dict = if pairs {
+            let d = self.temp();
+            self.emit(Op::Move(d, c), pos);
+            Some(d)
+        } else {
+            None
+        };
         if kind == IterKind::Keys {
             self.emit(Op::Builtin { id: crate::builtins::Builtin::Keys.id(), first: c, argc: 1, dst: c }, pos);
         } else if kind == IterKind::Set {
@@ -941,7 +990,7 @@ impl<'a> FnCompiler<'a> {
         self.emit(Op::LoadInt(one, 1), pos);
         let n = self.temp();
         let x = match var {
-            Place::Local(r) if !to_real => r,
+            Some(Place::Local(r)) if !to_real => r,
             _ => self.temp(),
         };
         let top = self.here();
@@ -949,16 +998,25 @@ impl<'a> FnCompiler<'a> {
         let exit = self.emit(Op::JumpUnlessI(Cmp::LtEq, i, n, 0), pos);
         self.emit(if kind == IterKind::Chars { Op::CharAt(x, c, i) } else { Op::GetElem(x, c, i) }, pos);
         match var {
-            Place::Local(r) if to_real => {
+            Some(Place::Local(r)) if to_real => {
                 self.emit(Op::ToReal(r, x), pos);
             }
-            Place::Local(_) => {}
-            Place::Global(g) => {
+            Some(Place::Local(_)) => {}
+            Some(Place::Global(g)) => {
                 if to_real {
                     self.emit(Op::ToReal(x, x), pos);
                 }
                 self.emit(Op::SetGlobal(g, x), pos);
             }
+            None => match dict {
+                Some(d) => {
+                    let value = self.temp();
+                    self.emit(Op::GetKey(value, d, x), pos);
+                    self.bind(&unpack[0], x, pos);
+                    self.bind(&unpack[1], value, pos);
+                }
+                None => self.unpack_into(unpack, x, pos),
+            },
         }
         self.loop_body(body);
         let next = self.here();

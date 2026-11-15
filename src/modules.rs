@@ -438,8 +438,11 @@ impl Scope<'_> {
                 *body = self.block(std::mem::take(body));
                 self.expr(cond);
             }
-            StmtKind::ForEach { var, var_pos, iter, body } => {
-                *var = self.resolve(var, *var_pos, false);
+            StmtKind::ForEach { var, var_pos, iter, body, unpack } => {
+                if unpack.is_empty() {
+                    *var = self.resolve(var, *var_pos, false);
+                }
+                self.pats(unpack);
                 self.expr(iter);
                 *body = self.block(std::mem::take(body));
             }
@@ -465,13 +468,22 @@ impl Scope<'_> {
                 *always = self.block(std::mem::take(always));
             }
             StmtKind::Fail(e) => self.expr(e),
-            StmtKind::Unpack(names, e) => {
-                for (n, p) in names.iter_mut() {
-                    *n = self.resolve(n, *p, false);
-                }
+            StmtKind::Unpack(pats, e) => {
+                self.pats(pats);
                 self.expr(e);
             }
             StmtKind::LoadModule { .. } => {}
+        }
+    }
+
+    /// Resolves the variable names inside unpacking targets.
+    fn pats(&mut self, pats: &mut [crate::ast::Pat]) {
+        for p in pats.iter_mut() {
+            match p {
+                crate::ast::Pat::Name(n, pos) => *n = self.resolve(n, *pos, false),
+                crate::ast::Pat::Tuple(sub, _) => self.pats(sub),
+                crate::ast::Pat::Skip => {}
+            }
         }
     }
 
