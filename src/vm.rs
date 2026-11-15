@@ -335,11 +335,64 @@ fn repr_at(v: &Value, depth: usize) -> String {
     }
 }
 
+/// The compiler guarantees each instruction's operand types, so this never
+/// runs; it is kept out of line so the hot paths that check stay small.
+/// True for values that own no heap memory (dropping them does nothing).
+#[inline(always)]
+fn is_scalar(v: &Value) -> bool {
+    matches!(v, Value::Null | Value::Int(_) | Value::Real(_) | Value::Bool(_) | Value::Func(_))
+}
+
+/// Removes the registers from `base` on (a returning frame), running a
+/// destructor only for the values that own memory.
+#[inline(always)]
+fn release(regs: &mut Vec<Value>, base: usize) {
+    if base >= regs.len() {
+        return;
+    }
+    for v in &mut regs[base..] {
+        if !is_scalar(v) {
+            // SAFETY: each value is dropped once, then the length is cut below it
+            unsafe { std::ptr::drop_in_place(v) }
+        }
+    }
+    // SAFETY: the values past `base` were dropped (or own nothing)
+    unsafe { regs.set_len(base) }
+}
+
+/// Adds a callee's registers at the end: its `argc` arguments, copied from
+/// `start` (in the caller's registers), then "no value yet" up to `n_regs`.
+#[inline(always)]
+fn push_frame(regs: &mut Vec<Value>, start: usize, argc: usize, n_regs: usize) {
+    let new_base = regs.len();
+    assert!(start + argc <= new_base && argc <= n_regs, "internal error: bad call frame");
+    regs.reserve(n_regs);
+    // SAFETY: `reserve` made room for `n_regs` values past `new_base`; the
+    // arguments are read from below `new_base`; every slot up to the new length
+    // is written before the length is set
+    unsafe {
+        let p = regs.as_mut_ptr();
+        for k in 0..argc {
+            std::ptr::write(p.add(new_base + k), (*p.add(start + k)).clone());
+        }
+        for k in argc..n_regs {
+            std::ptr::write(p.add(new_base + k), Value::Null);
+        }
+        regs.set_len(new_base + n_regs);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn wrong_kind(expected: &str, found: &Value) -> ! {
+    panic!("internal error: expected {}, found {:?}", expected, found)
+}
+
 #[inline(always)]
 fn int(v: &Value) -> i64 {
     match v {
         Value::Int(n) => *n,
-        other => panic!("internal error: expected an integer, found {:?}", other),
+        other => wrong_kind("an integer", other),
     }
 }
 
@@ -347,7 +400,7 @@ fn int(v: &Value) -> i64 {
 fn real(v: &Value) -> f64 {
     match v {
         Value::Real(r) => *r,
-        other => panic!("internal error: expected a real, found {:?}", other),
+        other => wrong_kind("a real", other),
     }
 }
 
@@ -355,7 +408,7 @@ fn real(v: &Value) -> f64 {
 fn boolean(v: &Value) -> bool {
     match v {
         Value::Bool(b) => *b,
-        other => panic!("internal error: expected a boolean, found {:?}", other),
+        other => wrong_kind("a boolean", other),
     }
 }
 
@@ -363,10 +416,11 @@ fn boolean(v: &Value) -> bool {
 fn string(v: &Value) -> &str {
     match v {
         Value::Str(s) => s,
-        other => panic!("internal error: expected a string, found {:?}", other),
+        other => wrong_kind("a string", other),
     }
 }
 
+#[inline(always)]
 fn compare<T: PartialOrd + ?Sized>(c: Cmp, a: &T, b: &T) -> bool {
     match c {
         Cmp::Eq => a == b,
@@ -631,6 +685,35 @@ impl<'m> Vm<'m> {
                 self.regs[base + $r as usize]
             };
         }
+        // Writes a number or bool into a register. When the old value is a
+        // scalar too there is nothing to free, so its destructor is skipped.
+        macro_rules! put {
+            ($r:expr, $v:expr) => {{
+                let v: Value = $v;
+                let slot = &mut self.regs[base + $r as usize];
+                if matches!(slot, Value::Null | Value::Int(_) | Value::Real(_) | Value::Bool(_)) {
+                    // SAFETY: the old value owns no heap memory, so overwriting it
+                    // without running its destructor leaks nothing
+                    unsafe { std::ptr::write(slot, v) }
+                } else {
+                    *slot = v;
+                }
+            }};
+        }
+        // Stores any value into a register, skipping the old value's destructor
+        // when it is a scalar (which owns nothing).
+        macro_rules! set {
+            ($r:expr, $v:expr) => {{
+                let v: Value = $v;
+                let slot = &mut self.regs[base + $r as usize];
+                if is_scalar(slot) {
+                    // SAFETY: a scalar owns no heap memory: nothing leaks
+                    unsafe { std::ptr::write(slot, v) }
+                } else {
+                    *slot = v;
+                }
+            }};
+        }
         macro_rules! fail {
             ($msg:expr) => {
                 break Some(($msg).to_string())
@@ -731,24 +814,24 @@ impl<'m> Vm<'m> {
                     self.handlers.pop();
                 }
                 Op::Fail(r) => fail!(string(&reg!(r))),
-                Op::LoadInt(d, n) => reg!(d) = Value::Int(n),
-                Op::LoadReal(d, r) => reg!(d) = Value::Real(r),
-                Op::LoadBool(d, b) => reg!(d) = Value::Bool(b),
+                Op::LoadInt(d, n) => put!(d, Value::Int(n)),
+                Op::LoadReal(d, r) => put!(d, Value::Real(r)),
+                Op::LoadBool(d, b) => put!(d, Value::Bool(b)),
                 Op::LoadStr(d, i) => reg!(d) = Value::Str(m.strings[i as usize].clone()),
                 Op::Move(d, s) => {
                     let v = reg!(s).clone();
-                    reg!(d) = v;
+                    set!(d, v);
                 }
                 Op::AddI(d, a, b) => match int(&reg!(a)).checked_add(int(&reg!(b))) {
-                    Some(n) => reg!(d) = Value::Int(n),
+                    Some(n) => put!(d, Value::Int(n)),
                     None => fail!(OVERFLOW),
                 },
                 Op::SubI(d, a, b) => match int(&reg!(a)).checked_sub(int(&reg!(b))) {
-                    Some(n) => reg!(d) = Value::Int(n),
+                    Some(n) => put!(d, Value::Int(n)),
                     None => fail!(OVERFLOW),
                 },
                 Op::MulI(d, a, b) => match int(&reg!(a)).checked_mul(int(&reg!(b))) {
-                    Some(n) => reg!(d) = Value::Int(n),
+                    Some(n) => put!(d, Value::Int(n)),
                     None => fail!(OVERFLOW),
                 },
                 Op::DivI(d, a, b) => {
@@ -757,7 +840,7 @@ impl<'m> Vm<'m> {
                         fail!("division by zero");
                     }
                     match x.checked_div(y) {
-                        Some(n) => reg!(d) = Value::Int(n),
+                        Some(n) => put!(d, Value::Int(n)),
                         None => fail!(OVERFLOW),
                     }
                 }
@@ -767,19 +850,19 @@ impl<'m> Vm<'m> {
                         fail!("division by zero");
                     }
                     match x.checked_rem(y) {
-                        Some(n) => reg!(d) = Value::Int(n),
+                        Some(n) => put!(d, Value::Int(n)),
                         None => fail!(OVERFLOW),
                     }
                 }
-                Op::AddR(d, a, b) => reg!(d) = Value::Real(real(&reg!(a)) + real(&reg!(b))),
-                Op::SubR(d, a, b) => reg!(d) = Value::Real(real(&reg!(a)) - real(&reg!(b))),
-                Op::MulR(d, a, b) => reg!(d) = Value::Real(real(&reg!(a)) * real(&reg!(b))),
+                Op::AddR(d, a, b) => put!(d, Value::Real(real(&reg!(a)) + real(&reg!(b)))),
+                Op::SubR(d, a, b) => put!(d, Value::Real(real(&reg!(a)) - real(&reg!(b)))),
+                Op::MulR(d, a, b) => put!(d, Value::Real(real(&reg!(a)) * real(&reg!(b)))),
                 Op::DivR(d, a, b) => {
                     let y = real(&reg!(b));
                     if y == 0.0 {
                         fail!("division by zero");
                     }
-                    reg!(d) = Value::Real(real(&reg!(a)) / y);
+                    put!(d, Value::Real(real(&reg!(a)) / y));
                 }
                 Op::Concat(d, a, b) => {
                     let mut t = String::with_capacity(string(&reg!(a)).len() + string(&reg!(b)).len());
@@ -788,31 +871,31 @@ impl<'m> Vm<'m> {
                     reg!(d) = Value::Str(t.into());
                 }
                 Op::NegI(d, s) => match int(&reg!(s)).checked_neg() {
-                    Some(n) => reg!(d) = Value::Int(n),
+                    Some(n) => put!(d, Value::Int(n)),
                     None => fail!(OVERFLOW),
                 },
-                Op::NegR(d, s) => reg!(d) = Value::Real(-real(&reg!(s))),
-                Op::Not(d, s) => reg!(d) = Value::Bool(!boolean(&reg!(s))),
-                Op::ToReal(d, s) => reg!(d) = Value::Real(int(&reg!(s)) as f64),
+                Op::NegR(d, s) => put!(d, Value::Real(-real(&reg!(s)))),
+                Op::Not(d, s) => put!(d, Value::Bool(!boolean(&reg!(s)))),
+                Op::ToReal(d, s) => put!(d, Value::Real(int(&reg!(s)) as f64)),
                 Op::ToStr(d, s) => {
                     let t = display(&reg!(s));
                     reg!(d) = Value::Str(t.into());
                 }
                 Op::CmpI(c, d, a, b) => {
                     let r = compare(c, &int(&reg!(a)), &int(&reg!(b)));
-                    reg!(d) = Value::Bool(r);
+                    put!(d, Value::Bool(r));
                 }
                 Op::CmpR(c, d, a, b) => {
                     let r = compare(c, &real(&reg!(a)), &real(&reg!(b)));
-                    reg!(d) = Value::Bool(r);
+                    put!(d, Value::Bool(r));
                 }
                 Op::CmpS(c, d, a, b) => {
                     let r = compare::<str>(c, string(&reg!(a)), string(&reg!(b)));
-                    reg!(d) = Value::Bool(r);
+                    put!(d, Value::Bool(r));
                 }
                 Op::CmpB(c, d, a, b) => {
                     let r = compare(c, &boolean(&reg!(a)), &boolean(&reg!(b)));
-                    reg!(d) = Value::Bool(r);
+                    put!(d, Value::Bool(r));
                 }
                 Op::Jump(t) => ip = t as usize,
                 Op::JumpIfFalse(c, t) => {
@@ -835,25 +918,25 @@ impl<'m> Vm<'m> {
                         ip = t as usize;
                     }
                 }
-                Op::CmpIImm(c, d, a, n) => reg!(d) = Value::Bool(compare(c, &int(&reg!(a)), &n)),
+                Op::CmpIImm(c, d, a, n) => put!(d, Value::Bool(compare(c, &int(&reg!(a)), &n))),
                 Op::AddIImm(d, a, n) => match int(&reg!(a)).checked_add(n) {
-                    Some(v) => reg!(d) = Value::Int(v),
+                    Some(v) => put!(d, Value::Int(v)),
                     None => fail!(OVERFLOW),
                 },
                 Op::SubIImm(d, a, n) => match int(&reg!(a)).checked_sub(n) {
-                    Some(v) => reg!(d) = Value::Int(v),
+                    Some(v) => put!(d, Value::Int(v)),
                     None => fail!(OVERFLOW),
                 },
                 Op::MulIImm(d, a, n) => match int(&reg!(a)).checked_mul(n) {
-                    Some(v) => reg!(d) = Value::Int(v),
+                    Some(v) => put!(d, Value::Int(v)),
                     None => fail!(OVERFLOW),
                 },
                 Op::DivIImm(d, a, n) => match int(&reg!(a)).checked_div(n) {
-                    Some(v) => reg!(d) = Value::Int(v),
+                    Some(v) => put!(d, Value::Int(v)),
                     None => fail!(OVERFLOW),
                 },
                 Op::ModIImm(d, a, n) => match int(&reg!(a)).checked_rem(n) {
-                    Some(v) => reg!(d) = Value::Int(v),
+                    Some(v) => put!(d, Value::Int(v)),
                     None => fail!(OVERFLOW),
                 },
                 Op::ForInit { var, end, step, exit } => {
@@ -871,7 +954,7 @@ impl<'m> Vm<'m> {
                     // on overflow the counter is past any end value: the loop is over
                     if let Some(v) = int(&reg!(var)).checked_add(s) {
                         let e = int(&reg!(end));
-                        reg!(var) = Value::Int(v);
+                        put!(var, Value::Int(v));
                         if (s > 0 && v <= e) || (s < 0 && v >= e) {
                             ip = body as usize;
                         }
@@ -1012,7 +1095,7 @@ impl<'m> Vm<'m> {
                         Value::Str(t) => t.chars().count(),
                         other => panic!("internal error: length of {:?}", other),
                     };
-                    reg!(d) = Value::Int(n as i64);
+                    put!(d, Value::Int(n as i64));
                 }
                 Op::Append(l, s) => {
                     let v = reg!(s).clone();
@@ -1041,14 +1124,7 @@ impl<'m> Vm<'m> {
                     let new_base = self.regs.len();
                     let n_regs = callee.n_regs as usize;
                     let start = base + first as usize;
-                    self.regs.reserve(n_regs);
-                    for k in 0..argc as usize {
-                        let v = self.regs[start + k].clone();
-                        self.regs.push(v);
-                    }
-                    for _ in argc as usize..n_regs {
-                        self.regs.push(Value::Null);
-                    }
+                    push_frame(&mut self.regs, start, argc as usize, n_regs);
                     self.frames.push(Frame { func, ip, base, dst });
                     func = f;
                     code = &callee.code;
@@ -1066,10 +1142,10 @@ impl<'m> Vm<'m> {
                         }
                         c = m.class_parents[c as usize];
                     }
-                    reg!(d) = Value::Bool(found);
+                    put!(d, Value::Bool(found));
                 }
                 Op::LoadNull(d) => reg!(d) = Value::Null,
-                Op::IsNull(d, r) => reg!(d) = Value::Bool(matches!(reg!(r), Value::Null)),
+                Op::IsNull(d, r) => put!(d, Value::Bool(matches!(reg!(r), Value::Null))),
                 Op::LoadFunc(d, index) => reg!(d) = Value::Func(index),
                 Op::CallValue { func: fr, first, argc, dst } => {
                     if self.frames.len() >= MAX_CALL_DEPTH {
@@ -1083,14 +1159,7 @@ impl<'m> Vm<'m> {
                     let new_base = self.regs.len();
                     let n_regs = callee.n_regs as usize;
                     let start = base + first as usize;
-                    self.regs.reserve(n_regs);
-                    for k in 0..argc as usize {
-                        let v = self.regs[start + k].clone();
-                        self.regs.push(v);
-                    }
-                    for _ in argc as usize..n_regs {
-                        self.regs.push(Value::Null);
-                    }
+                    push_frame(&mut self.regs, start, argc as usize, n_regs);
                     self.frames.push(Frame { func, ip, base, dst });
                     func = f;
                     code = &callee.code;
@@ -1107,14 +1176,7 @@ impl<'m> Vm<'m> {
                     // push the arguments straight into the callee's registers, then
                     // fill the remaining locals with "no value yet" in one pass
                     let start = base + first as usize;
-                    self.regs.reserve(n_regs);
-                    for k in 0..argc as usize {
-                        let v = self.regs[start + k].clone();
-                        self.regs.push(v);
-                    }
-                    for _ in argc as usize..n_regs {
-                        self.regs.push(Value::Null);
-                    }
+                    push_frame(&mut self.regs, start, argc as usize, n_regs);
                     self.frames.push(Frame { func, ip, base, dst });
                     func = f as usize;
                     code = &callee.code;
@@ -1141,12 +1203,12 @@ impl<'m> Vm<'m> {
                     let v = std::mem::replace(&mut reg!(s), Value::Null);
                     match self.frames.pop() {
                         Some(fr) => {
-                            self.regs.truncate(base);
+                            release(&mut self.regs, base);
                             func = fr.func;
                             code = &m.functions[func].code;
                             ip = fr.ip;
                             base = fr.base;
-                            reg!(fr.dst) = v;
+                            set!(fr.dst, v);
                             self.drop_handlers_above();
                         }
                         None => finish_task!(),
@@ -1154,7 +1216,7 @@ impl<'m> Vm<'m> {
                 }
                 Op::RetNone => match self.frames.pop() {
                     Some(fr) => {
-                        self.regs.truncate(base);
+                        release(&mut self.regs, base);
                         func = fr.func;
                         code = &m.functions[func].code;
                         ip = fr.ip;
@@ -1188,7 +1250,7 @@ impl<'m> Vm<'m> {
                                 waiters: Vec::new(),
                             });
                             self.ready.push_back(handle);
-                            reg!(dst) = Value::Int(handle as i64);
+                            put!(dst, Value::Int(handle as i64));
                         }
                         Builtin::TaskYield => {
                             if let Some(next) = self.ready.pop_front() {
@@ -1219,14 +1281,14 @@ impl<'m> Vm<'m> {
                                 Value::Int(i) if i >= 0 && (i as usize) < self.tasks.len() => self.tasks[i as usize].done,
                                 _ => fail!("task.done: that is not a task handle"),
                             };
-                            reg!(dst) = Value::Bool(done);
+                            put!(dst, Value::Bool(done));
                         }
-                        Builtin::TaskId => reg!(dst) = Value::Int(self.current as i64),
-                        Builtin::TaskCount => reg!(dst) = Value::Int(self.tasks.len() as i64),
+                        Builtin::TaskId => put!(dst, Value::Int(self.current as i64)),
+                        Builtin::TaskCount => put!(dst, Value::Int(self.tasks.len() as i64)),
                         Builtin::TaskChannel => {
                             let h = self.channels.len();
                             self.channels.push(Channel { queue: VecDeque::new(), waiters: VecDeque::new() });
-                            reg!(dst) = Value::Int(h as i64);
+                            put!(dst, Value::Int(h as i64));
                         }
                         Builtin::TaskSend => {
                             let start = base + first as usize;
@@ -1268,7 +1330,7 @@ impl<'m> Vm<'m> {
                                 }
                                 _ => fail!("task.has: that is not a channel"),
                             };
-                            reg!(dst) = Value::Bool(has);
+                            put!(dst, Value::Bool(has));
                         }
                         _ => {
                             if matches!(b, Builtin::Message | Builtin::Confirm | Builtin::Ask) {

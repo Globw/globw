@@ -26,11 +26,21 @@ stack, the variables of every frame (lists, dictionaries and objects expand),
 hover values, and a stop on any uncaught run-time error with the variables of the
 failing line. A `launch.json` can grant permissions and give the `input()` text.
 
-**Faster.** The VM loop now comes in two copies: a plain one for normal runs and
-a watched one for `--profile`, `--trace` and the debugger. Normal runs no longer
-check for those on every instruction: interpreted loops run 12–22% faster
-(`bench/`: sum −21%, fibb −19%, mandel −17%, sieve −13%, fib −12%; nungw-bound
-benchmarks unchanged).
+**Faster.** Interpreted code runs 19–41% faster than in 0.1.5 (`bench/`, best
+of 7: fibb −41%, sumb −39%, sum −38%, mandel −29%, fib −24%, sieve −19%;
+nungw-bound benchmarks unchanged). Against CPython 3.14 that is now about 1.7×
+on recursive calls, 2.2× on float loops and 3.9× on integer loops.
+
+- The VM loop comes in two copies: a plain one for normal runs and a watched one
+  for `--profile`, `--trace` and the debugger, so normal runs no longer check
+  for those on every instruction.
+- Calls: a callee's registers are set up in one pass, and returning frees only
+  the registers that own memory (lists, text, objects).
+- Writing a number into a register skips the old value's destructor when that
+  value was a number too.
+- Type-mismatch panics (which the compiler rules out) are kept out of line; this
+  also made speed stable — before, unrelated code changes could move a benchmark
+  by up to 40% through different inlining.
 
 **Language.**
 

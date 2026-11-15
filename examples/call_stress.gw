@@ -1,0 +1,70 @@
+' Calls that pass and return values owning memory (lists, text, objects),
+' recursion, and errors caught in the middle of a recursion.
+
+variables:
+    words as list of string
+    b as Box
+    msg, joined as string
+    i, n as int
+
+class Box
+    variables:
+        items as list of string
+end class
+
+function grow(l as list of string, k as int) as list of string
+    variables:
+        copy as list of string
+        w as string
+    if(k == 0)
+        return l
+    end if
+    copy = [w for w in l]
+    append(copy, "w" + k)
+    return grow(copy, k - 1)
+end function
+
+function label(k as int) as string
+    if(k <= 1)
+        return "x"
+    end if
+    return label(k - 1) + "-" + k
+end function
+
+function fill(bx as Box, k as int) as Box
+    if(k == 0)
+        return bx
+    end if
+    append(bx.items, "i" + k)
+    return fill(bx, k - 1)
+end function
+
+function risky(k as int) as int
+    if(k == 0)
+        fail "bottom reached"
+    end if
+    return risky(k - 1) + 1
+end function
+
+for(i from 1 to 200)
+    words = grow(["start"], 25)
+end loop
+output(length(words), " ", words[2], " ", words[26])
+output(label(12))
+b = new Box()
+b = fill(b, 5)
+output(b.items)
+n = 0
+for(i from 1 to 50)
+    try
+        n = risky(30)
+    catch msg
+        n = n + 1
+    end try
+end loop
+output("caught ", n)
+joined = ""
+for(i from 1 to 3)
+    joined = joined + label(i) + ";"
+end loop
+output(joined)
