@@ -40,6 +40,11 @@ failing line. A `launch.json` can grant permissions and give the `input()` text.
   click and keyboard selection, letter jumps, the wheel, a scrollbar, sorting by
   a header click (numbers as numbers) that keeps the original row index, and
   `gtq.activated()` for a double-click or Enter.
+- Menus: `gtq.menubar` (titles, drop-downs, separators, shortcuts like
+  `Save|Ctrl+S` that also work from the keyboard) and `gtq.context_menu` (right
+  click). They are drawn on top of everything, and the widgets under an open
+  menu ignore the pointer, so a click on a menu item never reaches a button
+  under it.
 - `screenshot("file.png")` saves the graphics window as a PNG.
 
 **Faster.** Interpreted code runs 19–41% faster than in 0.1.5 (`bench/`, best

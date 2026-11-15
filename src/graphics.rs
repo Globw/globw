@@ -55,6 +55,7 @@ pub struct Graphics {
     pub canvas: Canvas,
     pub scene: Scene,
     pub input: FrameInput,
+    pub blocked: Vec<(f64, f64, f64, f64)>,
 }
 
 #[cfg(not(feature = "native"))]
@@ -66,6 +67,7 @@ impl Graphics {
     pub fn show(&mut self) {}
     pub fn key(&self, _name: &str) -> Result<bool, String> { Ok(false) }
     pub fn mouse(&self) -> (i64, i64) { (0, 0) }
+    pub fn raw_mouse(&self) -> (i64, i64) { (0, 0) }
     pub fn click(&self) -> bool { false }
     pub fn keep_open(&mut self) {}
     pub fn set_pointer(&mut self, _p: Pointer) {}
@@ -110,13 +112,14 @@ fn edit_key(k: Key) -> Option<EditKey> {
         Key::Enter | Key::NumPadEnter => EditKey::Enter,
         Key::Tab => EditKey::Tab,
         Key::Escape => EditKey::Escape,
-        Key::A => EditKey::Letter('a'),
-        Key::C => EditKey::Letter('c'),
-        Key::V => EditKey::Letter('v'),
-        Key::X => EditKey::Letter('x'),
-        Key::Z => EditKey::Letter('z'),
-        Key::Y => EditKey::Letter('y'),
-        _ => return None,
+        _ => {
+            const LETTERS: [Key; 26] = [
+                Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H, Key::I, Key::J, Key::K, Key::L, Key::M,
+                Key::N, Key::O, Key::P, Key::Q, Key::R, Key::S, Key::T, Key::U, Key::V, Key::W, Key::X, Key::Y, Key::Z,
+            ];
+            let i = LETTERS.iter().position(|&l| l == k)?;
+            EditKey::Letter((b'a' + i as u8) as char)
+        }
     })
 }
 
@@ -167,6 +170,8 @@ pub struct Graphics {
     pub input: FrameInput,
     typed: Rc<RefCell<Vec<char>>>,
     pointer: Pointer,
+    /// rectangles of the open menus: the widgets do not see the pointer there
+    pub blocked: Vec<(f64, f64, f64, f64)>,
 }
 
 #[cfg(feature = "native")]
@@ -186,6 +191,7 @@ impl Graphics {
             input: FrameInput::default(),
             typed,
             pointer: Pointer::Arrow,
+            blocked: Vec::new(),
         };
         g.show();
         Ok(g)
@@ -202,6 +208,7 @@ impl Graphics {
             input: FrameInput::default(),
             typed: Rc::new(RefCell::new(Vec::new())),
             pointer: Pointer::Arrow,
+            blocked: Vec::new(),
         }
     }
 
@@ -272,7 +279,18 @@ impl Graphics {
         Ok(self.window.as_ref().is_some_and(|w| ks.iter().any(|&k| w.is_key_down(k))))
     }
 
+    /// The pointer, as the widgets see it: far away while it is over an open
+    /// menu, so nothing under the menu reacts.
     pub fn mouse(&self) -> (i64, i64) {
+        let (x, y) = self.raw_mouse();
+        if self.blocked.iter().any(|&(bx, by, bw, bh)| (x as f64) >= bx && (x as f64) < bx + bw && (y as f64) >= by && (y as f64) < by + bh) {
+            return (-100_000, -100_000);
+        }
+        (x, y)
+    }
+
+    /// The real pointer position (for the menus themselves).
+    pub fn raw_mouse(&self) -> (i64, i64) {
         match &self.window {
             Some(w) => w.get_mouse_pos(MouseMode::Clamp).map_or((0, 0), |(x, y)| (x as i64, y as i64)),
             None => self.sim_mouse,

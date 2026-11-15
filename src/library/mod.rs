@@ -104,6 +104,21 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => ok(none(1), Type::Base(Str)),
             }
         }
+        GtqMenubar => {
+            arity(1)?;
+            if a[0] != Type::List(Some(Str)) {
+                return other("gtq.menubar needs a list of string, like [\"File: New, Open, -, Quit\", \"Help: About\"]");
+            }
+            ok(none(1), Type::Base(Str))
+        }
+        GtqContextMenu => {
+            arity(5)?;
+            let num = |t: &Type| matches!(t, Type::Base(Int | Real));
+            if !a[..4].iter().all(num) || a[4] != Type::List(Some(Str)) {
+                return other("gtq.context_menu(x, y, w, h, items): items is a list of string, like [\"Copy\", \"-\", \"Delete\"]");
+            }
+            ok(vec![Some(Real), Some(Real), Some(Real), Some(Real), None], Type::Base(Str))
+        }
         GtqListbox | GtqTable => {
             let table = b == GtqTable;
             arity(if table { 7 } else { 6 })?;

@@ -786,6 +786,8 @@ pub enum Builtin {
     GtqListbox,
     GtqTable,
     GtqActivated,
+    GtqMenubar,
+    GtqContextMenu,
     GtqSubmitted,
     GtqTheme,
     GtqThemeColor,
@@ -2053,6 +2055,8 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqListbox, "gtq.listbox", Sig::Flexible { function: true }),
     (GtqTable, "gtq.table", Sig::Flexible { function: true }),
     (GtqActivated, "gtq.activated", Sig::Fixed(&[], Some(Bool))),
+    (GtqMenubar, "gtq.menubar", Sig::Flexible { function: true }),
+    (GtqContextMenu, "gtq.context_menu", Sig::Flexible { function: true }),
     (GtqSubmitted, "gtq.submitted", Sig::Fixed(&[], Some(Bool))),
     (GtqTheme, "gtq.theme", Sig::Fixed(&[S], None)),
     (GtqThemeColor, "gtq.theme_color", Sig::Fixed(&[S], Some(Str))),
@@ -4183,15 +4187,8 @@ impl Env {
             Open => Value::Bool(self.graphics.as_ref().is_some_and(|g| g.is_open())),
             Show => {
                 self.prev_down = self.graphics.as_ref().is_some_and(Graphics::click);
-                if let Some(g) = self.graphics.as_mut() {
-                    // the end of a GUI frame: focus changes, then the pointer's look
-                    self.gui.end_frame(&g.input);
-                    g.set_pointer(if self.gui.over_text {
-                        crate::graphics::Pointer::Text
-                    } else {
-                        crate::graphics::Pointer::Arrow
-                    });
-                }
+                // the end of a GUI frame: menus on top, focus changes, pointer look
+                self.finish_gui_frame()?;
                 self.window()?.show();
                 Value::Null
             }
@@ -4535,6 +4532,11 @@ impl Env {
                 Value::Int(self.grid_view(x, y, w, h, Some(headers), rows, int(&args[6]))?)
             }
             GtqActivated => Value::Bool(self.gui.activated.is_some()),
+            GtqMenubar => Value::Str(self.menubar(&crate::gui::strings_of(&args[0]))?.into()),
+            GtqContextMenu => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                Value::Str(self.context_menu(x, y, w, h, &crate::gui::strings_of(&args[4]))?.into())
+            }
             GtqSubmitted => Value::Bool(self.gui.submitted.is_some()),
             GtqTheme => {
                 self.gui.theme = match text(&args[0]).trim().to_lowercase().as_str() {

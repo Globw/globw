@@ -320,6 +320,10 @@ pub struct GuiState {
     pub last_click: Option<(u64, usize, std::time::Instant)>,
     /// a list or table row was double-clicked or got Enter, this frame
     pub activated: Option<u64>,
+    /// the open menu, if any
+    pub menu: Option<OpenMenu>,
+    /// drop-downs to draw at the end of this frame
+    pub popups: Vec<Popup>,
     pub theme: Theme,
     /// when the caret last moved, for blinking
     pub blink: std::time::Instant,
@@ -343,6 +347,8 @@ impl Default for GuiState {
             sorts: std::collections::HashMap::new(),
             last_click: None,
             activated: None,
+            menu: None,
+            popups: Vec::new(),
             theme: Theme::dark(),
             blink: std::time::Instant::now(),
         }
@@ -1127,6 +1133,291 @@ impl crate::builtins::Env {
     }
 }
 
+const KIND_MENUBAR: u64 = 5;
+const KIND_CONTEXT: u64 = 6;
+
+/// One entry of a menu: "Label", "Label|Ctrl+S" (a shortcut) or "-" (a separator).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuItem {
+    pub label: String,
+    pub shortcut: Option<String>,
+    pub separator: bool,
+}
+
+pub fn parse_item(s: &str) -> MenuItem {
+    let s = s.trim();
+    if s == "-" {
+        return MenuItem { label: String::new(), shortcut: None, separator: true };
+    }
+    match s.split_once('|') {
+        Some((l, k)) => MenuItem { label: l.trim().to_string(), shortcut: Some(k.trim().to_string()), separator: false },
+        None => MenuItem { label: s.to_string(), shortcut: None, separator: false },
+    }
+}
+
+/// "File: New, Open, -, Quit" -> ("File", items).
+pub fn parse_menu(spec: &str) -> (String, Vec<MenuItem>) {
+    match spec.split_once(':') {
+        Some((title, rest)) => (title.trim().to_string(), rest.split(',').map(parse_item).filter(|i| i.separator || !i.label.is_empty()).collect()),
+        None => (spec.trim().to_string(), Vec::new()),
+    }
+}
+
+/// The letter of a "Ctrl+<letter>" shortcut.
+fn ctrl_letter(shortcut: &str) -> Option<char> {
+    let s = shortcut.trim().to_lowercase();
+    let rest = s.strip_prefix("ctrl+")?;
+    let mut cs = rest.chars();
+    match (cs.next(), cs.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => Some(c),
+        _ => None,
+    }
+}
+
+/// An open menu: which widget owns it, which of its menus, and where it is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OpenMenu {
+    pub owner: u64,
+    pub index: usize,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// A drop-down to draw at the end of the frame, above everything.
+#[derive(Debug, Clone)]
+pub struct Popup {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub items: Vec<MenuItem>,
+    pub hover: Option<usize>,
+}
+
+impl crate::builtins::Env {
+    /// The size of a drop-down and the y of each item from its top.
+    fn popup_layout(&mut self, items: &[MenuItem]) -> Result<(f64, f64, Vec<(f64, f64)>), String> {
+        let fh = self.fonts.height();
+        let (ih, sep) = ((fh * 1.75).round(), 9.0);
+        let mut w: f64 = 160.0;
+        for it in items {
+            let lw = self.fonts.width(&it.label)? as f64;
+            let kw = match &it.shortcut {
+                Some(k) => self.fonts.width(k)? as f64 + 32.0,
+                None => 0.0,
+            };
+            w = w.max(lw + kw + 40.0);
+        }
+        let mut y = 4.0;
+        let mut rows = Vec::new();
+        for it in items {
+            let h = if it.separator { sep } else { ih };
+            rows.push((y, h));
+            y += h;
+        }
+        Ok((w, y + 4.0, rows))
+    }
+
+    /// Opens a drop-down at (x, y) (kept inside the window); returns the item
+    /// clicked this frame, if any, and records the drop-down for drawing.
+    fn run_popup(&mut self, items: &[MenuItem], x: f64, y: f64, input: &FrameInput, (mx, my): (f64, f64)) -> Result<(Option<String>, bool), String> {
+        let (w, h, rows) = self.popup_layout(items)?;
+        let (cw, chh) = self.graphics.as_ref().map_or((w, h), |g| (g.canvas.w as f64, g.canvas.h as f64));
+        let x = x.min(cw - w - 2.0).max(0.0);
+        let y = if y + h > chh { (y - h).max(0.0) } else { y };
+        let inside = mx >= x && mx < x + w && my >= y && my < y + h;
+        let hover = if inside {
+            rows.iter().position(|&(ry, rh)| my >= y + ry && my < y + ry + rh).filter(|&i| !items[i].separator)
+        } else {
+            None
+        };
+        let mut chosen = None;
+        let mut close = false;
+        if input.left_pressed {
+            if let Some(i) = hover {
+                chosen = Some(items[i].label.clone());
+                close = true;
+                self.gui.claim();
+            } else if inside {
+                self.gui.claim(); // a separator or the border: nothing
+            } else {
+                close = true;
+            }
+        }
+        if input.keys.contains(&EditKey::Escape) {
+            close = true;
+        }
+        if !close {
+            self.gui.popups.push(Popup { x, y, w, h, items: items.to_vec(), hover });
+        }
+        Ok((chosen, close))
+    }
+
+    /// A menu bar along the top of the window. Each menu is "Title: item, item"
+    /// ("-" a separator, "Item|Ctrl+S" a shortcut). Returns the label of the
+    /// item chosen this frame (by click or shortcut), or "".
+    pub(crate) fn menubar(&mut self, specs: &[String]) -> Result<String, String> {
+        let id = widget_id(KIND_MENUBAR, 0.0, 0.0, 0.0, 0.0);
+        let menus: Vec<(String, Vec<MenuItem>)> = specs.iter().map(|s| parse_menu(s)).collect();
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let input = g.input.clone();
+        let (mx, my) = g.raw_mouse();
+        let (mx, my) = (mx as f64, my as f64);
+        let width = g.canvas.w as f64;
+        let fh = self.fonts.height();
+        let bar_h = (fh * 1.9).round();
+        let mut titles = Vec::new();
+        let mut tx = 6.0;
+        for (t, _) in &menus {
+            let tw = self.fonts.width(t)? as f64 + 24.0;
+            titles.push((tx, tw));
+            tx += tw;
+        }
+        let over = if my >= 0.0 && my < bar_h { titles.iter().position(|&(x, w)| mx >= x && mx < x + w) } else { None };
+        let mut result = String::new();
+
+        // shortcuts: Ctrl+letter, unless a text field needs it for editing
+        if input.ctrl {
+            let editing = self.gui.editor.is_some();
+            for k in &input.keys {
+                if let EditKey::Letter(c) = k {
+                    if editing && "acvxzy".contains(*c) {
+                        continue;
+                    }
+                    let hit = menus.iter().flat_map(|(_, items)| items).find(|it| it.shortcut.as_deref().and_then(ctrl_letter) == Some(*c));
+                    if let Some(it) = hit {
+                        result = it.label.clone();
+                    }
+                }
+            }
+        }
+
+        let mut open = self.gui.menu.filter(|m| m.owner == id).map(|m| m.index);
+        if input.left_pressed {
+            if let Some(i) = over {
+                self.gui.claim();
+                open = if open == Some(i) { None } else { Some(i) };
+                self.gui.menu = open.map(|i| OpenMenu { owner: id, index: i, x: titles[i].0, y: bar_h });
+            }
+        } else if let (Some(m), Some(i)) = (open, over) {
+            if i != m {
+                // moving along the bar switches menus, as in desktop apps
+                open = Some(i);
+                self.gui.menu = Some(OpenMenu { owner: id, index: i, x: titles[i].0, y: bar_h });
+            }
+        }
+        if let Some(i) = open {
+            let clicked_title = input.left_pressed && over.is_some();
+            if !clicked_title {
+                let (chosen, close) = self.run_popup(&menus[i].1, titles[i].0, bar_h, &input, (mx, my))?;
+                if let Some(c) = chosen {
+                    result = c;
+                }
+                if close {
+                    self.gui.menu = None;
+                    open = None;
+                }
+            } else {
+                let items = menus[i].1.clone();
+                self.run_popup(&items, titles[i].0, bar_h, &FrameInput::default(), (mx, my))?;
+            }
+        }
+
+        // the bar
+        let t = self.gui.theme;
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let c = &mut g.canvas;
+        c.rect(0.0, 0.0, width, bar_h, t.panel);
+        c.rect(0.0, bar_h - 1.0, width, 1.0, t.border);
+        for (i, (title, _)) in menus.iter().enumerate() {
+            let (x, w) = titles[i];
+            if open == Some(i) {
+                c.rect(x, 2.0, w, bar_h - 4.0, t.accent);
+            } else if over == Some(i) {
+                c.rect(x, 2.0, w, bar_h - 4.0, t.row_hover);
+            }
+            let fg = if open == Some(i) { t.accent_text } else { t.text };
+            self.fonts.draw(c, x + 12.0, (bar_h - fh) / 2.0, title, fg)?;
+        }
+        Ok(result)
+    }
+
+    /// A right-click menu for the area (x, y, w, h): it opens at the pointer;
+    /// returns the label of the item chosen this frame, or "".
+    pub(crate) fn context_menu(&mut self, x: f64, y: f64, w: f64, h: f64, items: &[String]) -> Result<String, String> {
+        let id = widget_id(KIND_CONTEXT, x, y, w, h);
+        let items: Vec<MenuItem> = items.iter().map(|s| parse_item(s)).collect();
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let input = g.input.clone();
+        let (mx, my) = g.raw_mouse();
+        let (mx, my) = (mx as f64, my as f64);
+        if input.right_pressed && mx >= x && mx < x + w && my >= y && my < y + h {
+            self.gui.menu = Some(OpenMenu { owner: id, index: 0, x: mx, y: my });
+            self.gui.claim();
+            // the right click that opens it is not a choice
+            let (px, py) = (mx, my);
+            self.run_popup(&items, px, py, &FrameInput::default(), (mx, my))?;
+            return Ok(String::new());
+        }
+        let Some(m) = self.gui.menu.filter(|m| m.owner == id) else {
+            return Ok(String::new());
+        };
+        let (chosen, close) = self.run_popup(&items, m.x, m.y, &input, (mx, my))?;
+        if close || input.right_pressed {
+            self.gui.menu = None;
+        }
+        Ok(chosen.unwrap_or_default())
+    }
+
+    /// The end of a GUI frame (in `show`): the open drop-downs are drawn above
+    /// everything, the widgets stop seeing the pointer over them, the focus
+    /// moves (Tab, clicks on nothing) and the pointer changes its look.
+    pub(crate) fn finish_gui_frame(&mut self) -> Result<(), String> {
+        let popups = std::mem::take(&mut self.gui.popups);
+        let t = self.gui.theme;
+        let fh = self.fonts.height();
+        if let Some(g) = self.graphics.as_mut() {
+            g.blocked = popups.iter().map(|p| (p.x, p.y, p.w, p.h)).collect();
+            let c = &mut g.canvas;
+            let saved = c.clip();
+            c.reset_clip();
+            for p in &popups {
+                // a soft shadow, the box, the items
+                c.rect(p.x + 3.0, p.y + 4.0, p.w, p.h, if t.dark { 0x05080f } else { 0xc7cad1 });
+                c.rect(p.x, p.y, p.w, p.h, t.panel);
+                c.rect(p.x, p.y, p.w, 1.0, t.border);
+                c.rect(p.x, p.y + p.h - 1.0, p.w, 1.0, t.border);
+                c.rect(p.x, p.y, 1.0, p.h, t.border);
+                c.rect(p.x + p.w - 1.0, p.y, 1.0, p.h, t.border);
+                let mut iy = p.y + 4.0;
+                let ih = (fh * 1.75).round();
+                for (i, it) in p.items.iter().enumerate() {
+                    if it.separator {
+                        c.rect(p.x + 8.0, iy + 4.0, p.w - 16.0, 1.0, t.border);
+                        iy += 9.0;
+                        continue;
+                    }
+                    let hot = p.hover == Some(i);
+                    if hot {
+                        c.rect(p.x + 4.0, iy, p.w - 8.0, ih, t.accent);
+                    }
+                    let fg = if hot { t.accent_text } else { t.text };
+                    self.fonts.draw(c, p.x + 16.0, iy + (ih - fh) / 2.0, &it.label, fg)?;
+                    if let Some(k) = &it.shortcut {
+                        let kw = self.fonts.width(k)? as f64;
+                        self.fonts.draw(c, p.x + p.w - 16.0 - kw, iy + (ih - fh) / 2.0, k, if hot { t.accent_text } else { t.muted })?;
+                    }
+                    iy += ih;
+                }
+            }
+            c.restore_clip(saved);
+            self.gui.end_frame(&g.input);
+            g.set_pointer(if self.gui.over_text { crate::graphics::Pointer::Text } else { crate::graphics::Pointer::Arrow });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1522,6 +1813,123 @@ world");
         assert!(l.opened);
     }
 
+    /// A program with a menu bar, a button right under the File menu, a text
+    /// field and an area with a right-click menu.
+    struct App {
+        env: Env,
+        chosen: String,
+        context: String,
+        pressed: bool,
+        field: String,
+    }
+
+    impl App {
+        fn new() -> App {
+            let mut env = Env::default();
+            env.graphics = Some(Graphics::headless(500, 400));
+            let mut a = App { env, chosen: String::new(), context: String::new(), pressed: false, field: "abc".into() };
+            a.draw();
+            a
+        }
+        fn list(items: &[&str]) -> Value {
+            Value::Seq(std::rc::Rc::new(std::cell::RefCell::new(items.iter().map(|s| Value::Str((*s).into())).collect())))
+        }
+        fn draw(&mut self) {
+            let menus = App::list(&["File: New, Open, Save|Ctrl+S, -, Quit", "Edit: Copy|Ctrl+C, Paste"]);
+            self.chosen = crate::vm::display(&self.env.call(Builtin::GtqMenubar, &[menus]).unwrap());
+            // a button where the File menu drops down
+            let b = [Value::Real(0.0), Value::Real(30.0), Value::Real(300.0), Value::Real(200.0), Value::Str("under".into())];
+            self.pressed = matches!(self.env.call(Builtin::GtqButton, &b).unwrap(), Value::Bool(true));
+            let f = [Value::Real(320.0), Value::Real(60.0), Value::Real(160.0), Value::Real(30.0), Value::Str(self.field.as_str().into())];
+            self.field = crate::vm::display(&self.env.call(Builtin::GtqTextbox, &f).unwrap());
+            let c = [Value::Real(320.0), Value::Real(200.0), Value::Real(160.0), Value::Real(150.0), App::list(&["Rename", "-", "Delete"])];
+            self.context = crate::vm::display(&self.env.call(Builtin::GtqContextMenu, &c).unwrap());
+        }
+        fn step(&mut self, x: i64, y: i64, input: FrameInput) {
+            self.env.graphics.as_mut().unwrap().simulate(x, y, input);
+            self.env.call(Builtin::Show, &[]).unwrap();
+            self.draw();
+        }
+        /// Presses and releases the left button at (x, y); true if anything
+        /// was chosen or the button fired during the two frames.
+        fn click(&mut self, x: i64, y: i64) -> (String, bool) {
+            self.step(x, y, FrameInput { left: true, ..Default::default() });
+            let r = (self.chosen.clone(), self.pressed);
+            self.step(x, y, FrameInput::default());
+            r
+        }
+        /// The y of the middle of item `i` of a drop-down opened at `top`.
+        fn item_y(&mut self, top: f64, i: usize) -> i64 {
+            let ih = (self.env.fonts.height() * 1.75).round();
+            (top + 4.0 + ih * i as f64 + ih / 2.0) as i64
+        }
+        fn bar_h(&mut self) -> f64 {
+            (self.env.fonts.height() * 1.9).round()
+        }
+    }
+
+    #[test]
+    fn menu_items_parse() {
+        let (t, items) = super::parse_menu("File: New, Save|Ctrl+S, -, Quit");
+        assert_eq!(t, "File");
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[1].shortcut.as_deref(), Some("Ctrl+S"));
+        assert!(items[2].separator);
+        assert_eq!(super::ctrl_letter("ctrl+s"), Some('s'));
+        assert_eq!(super::ctrl_letter("Alt+F4"), None);
+    }
+
+    #[test]
+    fn menubar_opens_chooses_and_blocks_what_is_under_it() {
+        let mut a = App::new();
+        let bar = a.bar_h();
+        // open File, then click "Open": the item is chosen, the button under it is not pressed
+        a.click(20, (bar / 2.0) as i64);
+        let y = a.item_y(bar, 1);
+        let (chosen, pressed) = a.click(40, y);
+        assert_eq!(chosen, "Open");
+        assert!(!pressed, "the click went to the menu, not to the button under it");
+        // the menu is closed now: the same spot presses the button
+        let (_, pressed) = a.click(40, y);
+        assert!(pressed);
+        // open, then Escape closes it without choosing
+        a.click(20, (bar / 2.0) as i64);
+        a.step(0, 0, FrameInput { keys: vec![EditKey::Escape], ..Default::default() });
+        let y0 = a.item_y(bar, 0);
+        let (chosen, _) = a.click(40, y0);
+        assert_eq!(chosen, "");
+    }
+
+    #[test]
+    fn shortcuts_fire_but_leave_editing_keys_to_a_focused_field() {
+        let mut a = App::new();
+        a.step(0, 0, FrameInput { keys: vec![EditKey::Letter('s')], ctrl: true, ..Default::default() });
+        assert_eq!(a.chosen, "Save");
+        a.step(0, 0, FrameInput { keys: vec![EditKey::Letter('c')], ctrl: true, ..Default::default() });
+        assert_eq!(a.chosen, "Copy", "no field has the focus: Ctrl+C is the menu's");
+        a.click(400, 75); // focus the field
+        a.step(0, 0, FrameInput { keys: vec![EditKey::Letter('c')], ctrl: true, ..Default::default() });
+        assert_eq!(a.chosen, "", "the focused field keeps Ctrl+C for copying");
+        a.step(0, 0, FrameInput { keys: vec![EditKey::Letter('s')], ctrl: true, ..Default::default() });
+        assert_eq!(a.chosen, "Save", "other shortcuts still work");
+    }
+
+    #[test]
+    fn context_menu_opens_on_right_click() {
+        let mut a = App::new();
+        a.step(350, 250, FrameInput { right: true, ..Default::default() });
+        a.step(350, 250, FrameInput::default());
+        assert_eq!(a.context, "");
+        let y = a.item_y(250.0, 0);
+        a.step(360, y, FrameInput { left: true, ..Default::default() });
+        assert_eq!(a.context, "Rename");
+        // a right click outside the area opens nothing
+        a.step(100, 380, FrameInput { right: true, ..Default::default() });
+        a.step(100, 380, FrameInput::default());
+        a.step(110, 390, FrameInput { left: true, ..Default::default() });
+        assert_eq!(a.context, "");
+    }
+
     #[test]
     fn the_program_can_change_the_text_of_the_focused_field() {
         let mut f = Form::new();
@@ -1614,6 +2022,43 @@ line 9");
             }
             let png = env.graphics.as_ref().unwrap().canvas.to_png();
             std::fs::write(format!("{}/gallery_lists_{}.png", dir, theme), png).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn gallery_menus() {
+        let dir = std::env::var("GLOBW_GALLERY").unwrap_or_else(|_| ".".into());
+        let list = |items: &[&str]| Value::Seq(std::rc::Rc::new(std::cell::RefCell::new(items.iter().map(|s| Value::Str((*s).into())).collect())));
+        for theme in ["dark", "light"] {
+            let mut env = Env::default();
+            env.graphics = Some(Graphics::headless(560, 300));
+            env.call(Builtin::GtqTheme, &[Value::Str(theme.into())]).unwrap();
+            let fh = env.fonts.height();
+            let (bar, ih) = ((fh * 1.9).round(), (fh * 1.75).round());
+            let save_y = (bar + 4.0 + ih * 2.5) as i64;
+            let frames = vec![
+                (20, (bar / 2.0) as i64, FrameInput { left: true, ..Default::default() }),
+                (20, (bar / 2.0) as i64, FrameInput::default()),
+                (60, save_y, FrameInput::default()),
+            ];
+            for (x, y, input) in frames {
+                env.graphics.as_mut().unwrap().simulate(x, y, input);
+                env.call(Builtin::Show, &[]).unwrap();
+                let bg = env.call(Builtin::GtqThemeColor, &[Value::Str("window".into())]).unwrap();
+                env.call(Builtin::Clear, &[bg]).unwrap();
+                let menus = list(&["File: New|Ctrl+N, Open...|Ctrl+O, Save|Ctrl+S, Save as..., -, Quit|Ctrl+Q", "Edit: Undo|Ctrl+Z, Redo|Ctrl+Y, -, Cut, Copy, Paste", "View: Dark theme, Light theme", "Help: About Globw"]);
+                env.call(Builtin::GtqMenubar, &[menus]).unwrap();
+                let c = [Value::Real(330.0), Value::Real(100.0), Value::Real(200.0), Value::Real(150.0), list(&["Rename", "Duplicate", "-", "Remove|Ctrl+D"])];
+                env.call(Builtin::GtqContextMenu, &c).unwrap();
+                let f = [Value::Real(20.0), Value::Real(250.0), Value::Real(300.0), Value::Real(32.0), Value::Str("a field under the menu".into())];
+                env.call(Builtin::GtqTextbox, &f).unwrap();
+            }
+            // the frame ends: the open menus are drawn on top
+            env.graphics.as_mut().unwrap().simulate(60, save_y, FrameInput::default());
+            env.call(Builtin::Show, &[]).unwrap();
+            let png = env.graphics.as_ref().unwrap().canvas.to_png();
+            std::fs::write(format!("{}/gallery_menus_{}.png", dir, theme), png).unwrap();
         }
     }
 }
