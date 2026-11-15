@@ -6,6 +6,7 @@ pub mod bytecode;
 pub mod canvas;
 pub mod checker;
 pub mod compiler;
+pub mod debug;
 pub mod dialogs;
 pub mod errors;
 pub mod fonts;
@@ -69,6 +70,16 @@ pub fn run_traced(
     output: &mut dyn Write,
 ) -> Result<(), Error> {
     vm::run_traced(module, files, input, output)
+}
+
+/// Runs a program under a debugger (see `debug::DebugHook`).
+pub fn run_debug<'m>(
+    module: &'m bytecode::Module,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    hook: Box<dyn debug::DebugHook + 'm>,
+) -> Result<(), Error> {
+    vm::run_debug(module, input, output, hook)
 }
 
 pub fn run(module: &bytecode::Module, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {

@@ -1,8 +1,8 @@
 {
   "name": "globw",
   "displayName": "Globw",
-  "description": "Syntax, run, live errors, completion, hover, formatting, outline and go-to-definition for Globw (.gw)",
-  "version": "1.47.0",
+  "description": "Syntax, run, debugger, live errors, completion, hover, formatting, outline and go-to-definition for Globw (.gw)",
+  "version": "1.48.0",
   "license": "Apache-2.0",
   "icon": "images/logo-square.png",
   "publisher": "globw",
@@ -19,6 +19,7 @@
   },
   "categories": [
     "Programming Languages",
+    "Debuggers",
     "Formatters",
     "Snippets"
   ],
@@ -31,7 +32,9 @@
   ],
   "main": "./extension.js",
   "activationEvents": [
-    "onLanguage:globw"
+    "onLanguage:globw",
+    "onDebugResolve:globw",
+    "onDebugDynamicConfigurations:globw"
   ],
   "contributes": {
     "languages": [
@@ -64,12 +67,23 @@
         "title": "Run Globw program",
         "category": "Globw",
         "icon": "$(play)"
+      },
+      {
+        "command": "globw.debug",
+        "title": "Debug Globw program",
+        "category": "Globw",
+        "icon": "$(debug-alt)"
       }
     ],
     "menus": {
       "editor/title": [
         {
           "command": "globw.run",
+          "when": "editorLangId == globw",
+          "group": "navigation"
+        },
+        {
+          "command": "globw.debug",
           "when": "editorLangId == globw",
           "group": "navigation"
         }
@@ -79,7 +93,7 @@
       {
         "command": "globw.run",
         "key": "f5",
-        "when": "editorLangId == globw"
+        "when": "editorLangId == globw && !inDebugMode"
       }
     ],
     "configuration": {
@@ -91,7 +105,73 @@
           "description": "Path to the gw executable. Empty: use target/release/gw in the workspace, or `gw` from PATH."
         }
       }
-    }
+    },
+    "breakpoints": [
+      {
+        "language": "globw"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "globw",
+        "label": "Globw",
+        "languages": [
+          "globw"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The .gw file to debug.",
+                "default": "${file}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop at the first line of the program.",
+                "default": false
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Permissions, as on the command line: --allow-read, --allow-write, --allow-net, --allow-run, --allow-all.",
+                "default": []
+              },
+              "input": {
+                "type": "string",
+                "description": "The text that input() reads while debugging, one line per answer (write \\n between lines).",
+                "default": ""
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "globw",
+            "request": "launch",
+            "name": "Debug Globw program",
+            "program": "${file}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Globw: Debug the current file",
+            "description": "Debug the .gw file open in the editor",
+            "body": {
+              "type": "globw",
+              "request": "launch",
+              "name": "Debug Globw program",
+              "program": "^\"\\${file}\""
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "test": "node --test test/parse.test.js test/grammar.test.js"

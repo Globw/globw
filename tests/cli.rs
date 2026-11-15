@@ -1165,3 +1165,166 @@ fn serve_files_json_and_query() {
     assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
     assert!(escape.starts_with("HTTP/1.1 403"), "{escape}");
 }
+
+/// A minimal Debug Adapter Protocol client for `gw --dap`, like an editor.
+struct Dap {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    rx: std::sync::mpsc::Receiver<serde_json::Value>,
+    seq: i64,
+    output: String,
+}
+
+impl Dap {
+    fn start() -> Dap {
+        use std::io::{BufRead, Read};
+        use std::process::Stdio;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_gw"))
+            .arg("--dap")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || loop {
+            let mut len = 0usize;
+            loop {
+                let mut line = String::new();
+                if out.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+                let line = line.trim();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some(v) = line.strip_prefix("Content-Length:") {
+                    len = v.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0u8; len];
+            out.read_exact(&mut body).unwrap();
+            if tx.send(serde_json::from_slice(&body).unwrap()).is_err() {
+                return;
+            }
+        });
+        Dap { child, stdin, rx, seq: 0, output: String::new() }
+    }
+
+    /// The next message that `pred` accepts (output events are collected on the way).
+    fn wait(&mut self, what: &str, pred: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+        loop {
+            let m = self.rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_else(|_| panic!("no {}", what));
+            if m["event"] == "output" {
+                self.output.push_str(m["body"]["output"].as_str().unwrap_or(""));
+            }
+            if pred(&m) {
+                return m;
+            }
+        }
+    }
+
+    fn request(&mut self, command: &str, arguments: serde_json::Value) -> serde_json::Value {
+        use std::io::Write;
+        self.seq += 1;
+        let seq = self.seq;
+        let body = serde_json::json!({"seq": seq, "type": "request", "command": command, "arguments": arguments}).to_string();
+        write!(self.stdin, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        self.stdin.flush().unwrap();
+        let r = self.wait(command, |m| m["type"] == "response" && m["request_seq"] == seq);
+        assert_eq!(r["success"], true, "{} failed: {}", command, r);
+        r["body"].clone()
+    }
+
+    fn stopped(&mut self) -> serde_json::Value {
+        self.wait("stop", |m| m["event"] == "stopped")
+    }
+
+    /// The top frame's line and its local variables as "name=value".
+    fn top(&mut self) -> (u64, Vec<String>, Vec<String>) {
+        let st = self.request("stackTrace", serde_json::json!({"threadId": 1}));
+        let frames = st["stackFrames"].as_array().unwrap().clone();
+        let names = frames.iter().map(|f| f["name"].as_str().unwrap().to_string()).collect();
+        let scopes = self.request("scopes", serde_json::json!({"frameId": frames[0]["id"]}));
+        let r = scopes["scopes"][0]["variablesReference"].clone();
+        let vars = self.request("variables", serde_json::json!({"variablesReference": r}));
+        let vars = vars["variables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| format!("{}={}", v["name"].as_str().unwrap(), v["value"].as_str().unwrap()))
+            .collect();
+        (frames[0]["line"].as_u64().unwrap(), names, vars)
+    }
+
+    fn launch(&mut self, program: &std::path::Path, breakpoints: &[u32]) {
+        self.request("initialize", serde_json::json!({"adapterID": "globw"}));
+        self.request("launch", serde_json::json!({"program": program}));
+        let bps: Vec<_> = breakpoints.iter().map(|l| serde_json::json!({"line": l})).collect();
+        self.request("setBreakpoints", serde_json::json!({"source": {"path": program}, "breakpoints": bps}));
+        self.request("configurationDone", serde_json::json!({}));
+    }
+
+    fn finish(mut self) -> String {
+        self.wait("terminated", |m| m["event"] == "terminated");
+        self.request("disconnect", serde_json::json!({}));
+        let _ = self.child.wait();
+        self.output.replace("\r\n", "\n")
+    }
+}
+
+fn temp_program(name: &str, src: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("gw-dap-{}-{}", name, std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}.gw", name));
+    std::fs::write(&path, src).unwrap();
+    path
+}
+
+#[test]
+fn debugger_breakpoints_stepping_and_variables() {
+    let src = "variables:\n    total, i as int\n\nfunction square(n as int) as int\n    variables:\n        r as int\n    r = n * n\n    return r\nend function\n\ntotal = 0\nfor(i from 1 to 3)\n    total = total + square(i)\nend loop\noutput(\"total \", total)\n";
+    let program = temp_program("steps", src);
+    let mut dap = Dap::start();
+    dap.launch(&program, &[7]);
+    // the breakpoint inside square: two frames, the argument is visible
+    assert_eq!(dap.stopped()["body"]["reason"], "breakpoint");
+    let (line, frames, vars) = dap.top();
+    assert_eq!((line, frames), (7, vec!["square".to_string(), "main program".to_string()]));
+    assert_eq!(vars, vec!["n=1"]);
+    // step over: the next line of square, with r now set
+    dap.request("next", serde_json::json!({"threadId": 1}));
+    assert_eq!(dap.stopped()["body"]["reason"], "step");
+    let (line, _, vars) = dap.top();
+    assert_eq!((line, vars), (8, vec!["n=1".to_string(), "r=1".to_string()]));
+    // step out: back in the main program, at the call
+    dap.request("stepOut", serde_json::json!({"threadId": 1}));
+    dap.stopped();
+    let (line, frames, _) = dap.top();
+    assert_eq!((line, frames.len()), (13, 1));
+    // continue: the breakpoint again, on the next round
+    dap.request("continue", serde_json::json!({"threadId": 1}));
+    dap.stopped();
+    assert_eq!(dap.top().2, vec!["n=2"]);
+    // clear the breakpoints and run to the end
+    dap.request("setBreakpoints", serde_json::json!({"source": {"path": program}, "breakpoints": []}));
+    dap.request("continue", serde_json::json!({"threadId": 1}));
+    assert_eq!(dap.finish(), "total 14\n");
+}
+
+#[test]
+fn debugger_stops_on_a_run_time_error() {
+    let src = "variables:\n    d, x as int\n\nfunction divide(a as int, b as int) as int\n    return a div b\nend function\n\nd = 0\nx = divide(10, d)\n";
+    let program = temp_program("crash", src);
+    let mut dap = Dap::start();
+    dap.launch(&program, &[]);
+    let stop = dap.stopped();
+    assert_eq!(stop["body"]["reason"], "exception");
+    assert_eq!(stop["body"]["text"], "division by zero");
+    let (line, frames, vars) = dap.top();
+    assert_eq!((line, frames.len(), vars), (5, 2, vec!["a=10".to_string(), "b=0".to_string()]));
+    dap.request("continue", serde_json::json!({"threadId": 1}));
+    assert!(dap.finish().contains("division by zero"));
+}

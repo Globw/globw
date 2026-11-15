@@ -399,8 +399,9 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         channels: Vec::new(),
         prof: None,
         trace: None,
+        debug: None,
     };
-    let result = vm.execute(input, output);
+    let result = vm.execute::<false>(input, output);
     let _ = output.flush();
     if result.is_ok() {
         vm.env.finish();
@@ -431,8 +432,40 @@ pub fn run_traced(
         channels: Vec::new(),
         prof: None,
         trace: Some(lines),
+        debug: None,
     };
-    let result = vm.execute(input, output);
+    let result = vm.execute::<true>(input, output);
+    let _ = output.flush();
+    if result.is_ok() {
+        vm.env.finish();
+    }
+    result
+}
+
+/// Runs the program under a debugger: `hook` is called at every new source line
+/// and may stop there to inspect the state (see `crate::debug`).
+pub fn run_debug<'m>(
+    module: &'m Module,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    hook: Box<dyn crate::debug::DebugHook + 'm>,
+) -> Result<(), Error> {
+    let mut vm = Vm {
+        module,
+        regs: Vec::with_capacity(1 << 12),
+        globals: vec![Value::Null; module.globals.len()],
+        frames: Vec::new(),
+        env: Env::default(),
+        handlers: Vec::new(),
+        tasks: Vec::new(),
+        ready: VecDeque::new(),
+        current: 0,
+        channels: Vec::new(),
+        prof: None,
+        trace: None,
+        debug: Some(hook),
+    };
+    let result = vm.execute::<true>(input, output);
     let _ = output.flush();
     if result.is_ok() {
         vm.env.finish();
@@ -460,8 +493,9 @@ pub fn run_profiled(
         channels: Vec::new(),
         prof: Some(HashMap::new()),
         trace: None,
+        debug: None,
     };
-    let result = vm.execute(input, output);
+    let result = vm.execute::<true>(input, output);
     let _ = output.flush();
     if result.is_ok() {
         vm.env.finish();
@@ -494,6 +528,8 @@ struct Vm<'m> {
     /// when tracing (`--trace`): the source lines of each file, for printing the
     /// line being executed
     trace: Option<Vec<Vec<String>>>,
+    /// when debugging: the debugger, called at every new source line
+    debug: Option<Box<dyn crate::debug::DebugHook + 'm>>,
 }
 
 /// An installed `try` handler: where to resume and the VM depth to restore.
@@ -512,6 +548,20 @@ impl<'m> Vm<'m> {
         match self.backtrace(func, ip, base) {
             Some(trace) => e.with_trace(trace),
             None => e,
+        }
+    }
+
+    /// The state a debugger can read, at the instruction just before `ip`.
+    fn debug_state(&self, func: usize, ip: usize, base: usize, returned: bool) -> crate::debug::DebugState<'_> {
+        let mut frames = vec![(func, ip, base)];
+        frames.extend(self.frames.iter().rev().map(|fr| (fr.func, fr.ip, fr.base)));
+        crate::debug::DebugState {
+            module: self.module,
+            regs: &self.regs,
+            globals: &self.globals,
+            frames,
+            depth: self.frames.len(),
+            returned,
         }
     }
 
@@ -560,13 +610,16 @@ impl<'m> Vm<'m> {
         }
     }
 
-    fn execute(&mut self, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {
+    /// Runs the program. `WATCH` builds the copy of the loop that profiles,
+    /// traces or debugs; the plain copy (`false`) has none of those checks.
+    fn execute<const WATCH: bool>(&mut self, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {
         let m = self.module;
         let mut func = 0usize;
         let mut code: &[Op] = &m.functions[0].code;
         let mut ip = 0usize;
         let mut base = 0usize;
         let mut trace_last: (u16, u32) = (u16::MAX, 0); // last (file, line) traced
+        let mut debug_last: (u16, u32, usize) = (u16::MAX, 0, 0); // last (file, line, depth) debugged
         self.regs.resize(m.functions[0].n_regs as usize, Value::Null);
         // task 0 is the main program; its live state is in the locals above and in
         // self, so its slot stays empty until it is suspended
@@ -629,19 +682,39 @@ impl<'m> Vm<'m> {
         loop {
             let op = code[ip];
             ip += 1;
-            if let Some(p) = self.prof.as_mut() {
-                *p.entry(op.name()).or_insert(0) += 1;
-            }
-            if let Some(files) = &self.trace {
-                let pos = m.functions[func].positions[ip - 1];
-                if pos.line != 0 && (pos.file, pos.line) != trace_last {
-                    trace_last = (pos.file, pos.line);
-                    let src = files
-                        .get(pos.file as usize)
-                        .and_then(|ls| ls.get(pos.line.saturating_sub(1) as usize))
-                        .map_or("", |s| s.trim());
-                    let indent = "  ".repeat(self.frames.len().min(24));
-                    eprintln!("{:>4} | {}{}", pos.line, indent, src);
+            // profiling, tracing and debugging: compiled only into the watched
+            // copy of this loop, so a normal run pays nothing for them
+            if WATCH {
+                if let Some(p) = self.prof.as_mut() {
+                    *p.entry(op.name()).or_insert(0) += 1;
+                }
+                if let Some(files) = &self.trace {
+                    let pos = m.functions[func].positions[ip - 1];
+                    if pos.line != 0 && (pos.file, pos.line) != trace_last {
+                        trace_last = (pos.file, pos.line);
+                        let src = files
+                            .get(pos.file as usize)
+                            .and_then(|ls| ls.get(pos.line.saturating_sub(1) as usize))
+                            .map_or("", |s| s.trim());
+                        let indent = "  ".repeat(self.frames.len().min(24));
+                        eprintln!("{:>4} | {}{}", pos.line, indent, src);
+                    }
+                }
+                if self.debug.is_some() {
+                    let pos = m.functions[func].positions[ip - 1];
+                    let depth = self.frames.len();
+                    if pos.line != 0 && (pos.file, pos.line, depth) != debug_last {
+                        let returned = debug_last.0 != u16::MAX && depth < debug_last.2;
+                        debug_last = (pos.file, pos.line, depth);
+                        let mut hook = self.debug.take().expect("a debugger");
+                        let state = self.debug_state(func, ip, base, returned);
+                        let action = hook.on_line(&state);
+                        drop(state);
+                        self.debug = Some(hook);
+                        if action == crate::debug::DebugAction::Terminate {
+                            return Ok(());
+                        }
+                    }
                 }
             }
             let raised: Option<String> = loop {
@@ -1245,7 +1318,14 @@ impl<'m> Vm<'m> {
                         ip = h.catch_ip;
                         self.regs[base + h.err as usize] = Value::Str(msg.as_str().into());
                     }
-                    None => return Err(self.error_at(func, ip, base, msg)),
+                    None => {
+                        if let Some(mut hook) = self.debug.take() {
+                            // let the debugger show the failing line and its variables
+                            let state = self.debug_state(func, ip, base, false);
+                            hook.on_error(&state, &msg);
+                        }
+                        return Err(self.error_at(func, ip, base, msg));
+                    }
                 }
             }
         }

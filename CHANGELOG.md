@@ -20,6 +20,18 @@ the logic in Globw.
 - New demo `examples/demos/webui.gw` (HTML/CSS/JS in `webui/`, a JSON API in
   Globw) and a "Web interfaces" section in the tutorial.
 
+**Debugger.** `gw --dap` speaks the Debug Adapter Protocol, and the VS Code
+extension (1.48.0) uses it: breakpoints, step over / into / out, pause, the call
+stack, the variables of every frame (lists, dictionaries and objects expand),
+hover values, and a stop on any uncaught run-time error with the variables of the
+failing line. A `launch.json` can grant permissions and give the `input()` text.
+
+**Faster.** The VM loop now comes in two copies: a plain one for normal runs and
+a watched one for `--profile`, `--trace` and the debugger. Normal runs no longer
+check for those on every instruction: interpreted loops run 12–22% faster
+(`bench/`: sum −21%, fibb −19%, mandel −17%, sieve −13%, fib −12%; nungw-bound
+benchmarks unchanged).
+
 **Language.**
 
 - **Conditional values**: `if(cond) a else b` is an expression —

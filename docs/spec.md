@@ -1463,6 +1463,11 @@ gw --json program.gw     report errors as a JSON array (for editors / CI),
 gw --profile program.gw  run and count how often each opcode runs
 gw --trace program.gw    run, printing each executed source line to stderr
                          (indented by call depth) — a simple step trace
+gw --dap                 the debugger for editors: speaks the Debug Adapter
+                         Protocol on stdin/stdout (breakpoints, step over/into/
+                         out, pause, the call stack, the variables of each frame
+                         and the globals, and a stop on any uncaught run-time
+                         error). VS Code starts it through the Globw extension.
 gw --builtins            print every built-in's name and signature as JSON (editors)
 gw --symbols program.gw  print the file's definitions as JSON (editor outline / go-to)
 ```

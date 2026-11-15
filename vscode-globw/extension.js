@@ -1,4 +1,4 @@
-// VS Code support for Globw: run button / F5, errors underlined on open and save
+// VS Code support for Globw: run button / F5, debugger (gw --dap), errors underlined on open and save
 // (via `gw --check --json`), and completion + hover for the builtins (from
 // `gw --builtins`).
 
@@ -122,6 +122,52 @@ async function run() {
     const cmd = process.platform === 'win32' ? `& "${exe}" "${doc.fileName}"` : `"${exe}" "${doc.fileName}"`;
     terminal.sendText(cmd);
 }
+
+/** Saves the file and starts the debugger on it (breakpoints, stepping, variables). */
+async function debug() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'globw') return;
+    const doc = editor.document;
+    if (doc.isUntitled) {
+        vscode.window.showWarningMessage('Globw: save the file as .gw before debugging it.');
+        return;
+    }
+    await doc.save();
+    const folder = vscode.workspace.getWorkspaceFolder(doc.uri);
+    await vscode.debug.startDebugging(folder, {
+        type: 'globw',
+        request: 'launch',
+        name: `Debug ${path.basename(doc.fileName)}`,
+        program: doc.fileName,
+    });
+}
+
+/** Runs `gw --dap`: the debugger speaks the Debug Adapter Protocol itself. */
+const debugAdapterFactory = {
+    createDebugAdapterDescriptor() {
+        return new vscode.DebugAdapterExecutable(globwPath(), ['--dap']);
+    },
+};
+
+/** F5 in "Run and Debug" without a launch.json: debug the open .gw file. */
+const debugConfigurationProvider = {
+    resolveDebugConfiguration(folder, config) {
+        if (!config.type && !config.request && !config.name) {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && editor.document.languageId === 'globw') {
+                config.type = 'globw';
+                config.request = 'launch';
+                config.name = 'Debug Globw program';
+                config.program = '${file}';
+            }
+        }
+        if (!config.program) {
+            vscode.window.showInformationMessage('Globw: open a .gw file to debug it.');
+            return undefined;
+        }
+        return config;
+    },
+};
 
 /** The word (possibly module-qualified, like `nungw.sqrt`) at a position. */
 function wordAt(doc, pos) {
@@ -259,6 +305,9 @@ function activate(context) {
     context.subscriptions.push(
         diagnostics,
         vscode.commands.registerCommand('globw.run', run),
+        vscode.commands.registerCommand('globw.debug', debug),
+        vscode.debug.registerDebugAdapterDescriptorFactory('globw', debugAdapterFactory),
+        vscode.debug.registerDebugConfigurationProvider('globw', debugConfigurationProvider),
         vscode.languages.registerCompletionItemProvider('globw', completionProvider, '.'),
         vscode.languages.registerHoverProvider('globw', hoverProvider),
         vscode.languages.registerDocumentFormattingEditProvider('globw', formattingProvider),

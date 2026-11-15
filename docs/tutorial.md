@@ -220,6 +220,13 @@ always
 end try
 ```
 
+To see what a program is really doing, debug it in VS Code: click in the margin
+of a line to put a **breakpoint** (a red dot), then the **debug** button next to
+▶. The program stops there; the side panel shows the call stack and every
+variable (lists, dictionaries and objects open up), and the toolbar steps
+**over** a line, **into** a function or **out** of it. If the program crashes,
+the debugger stops on the failing line with its variables still there to read.
+
 ## 9. Web interfaces
 
 Want a graphical interface with real HTML and CSS? Put the look in a folder

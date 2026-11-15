@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.48.0
+
+- **Debugger** (needs gw 0.1.6): breakpoints, step over / into / out, pause, the
+  call stack and the variables of each frame (lists, dictionaries and objects
+  expand), hover to see a variable's value, and a stop on any uncaught run-time
+  error. Start it with the debug button in the editor title bar, or from
+  *Run and Debug* (a `launch.json` can set permissions and the `input()` text).
+- F5 keeps running the program, and inside a debug session it continues.
+
 ## 1.47.0
 
 - **Outline** of a file's functions, classes, methods and fields (from

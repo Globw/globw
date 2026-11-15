@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, BufWriter, Write};
+mod dap;
 use std::process::ExitCode;
 
 /// `globw add <url>`: downloads a .gw module into a local `libs/` folder, where
@@ -46,6 +47,10 @@ fn main() -> ExitCode {
     }
     if args.first().map(String::as_str) == Some("fmt") {
         return globw_fmt(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("--dap") {
+        // the debugger for editors: Debug Adapter Protocol on stdin/stdout
+        return dap::serve();
     }
     // Permissions are denied by default; each --allow-* flag grants one. This is
     // the security boundary for running untrusted .gw files and gwget packages.
