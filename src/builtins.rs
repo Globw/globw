@@ -783,6 +783,9 @@ pub enum Builtin {
     GtqTextbox,
     GtqPassword,
     GtqTextarea,
+    GtqListbox,
+    GtqTable,
+    GtqActivated,
     GtqSubmitted,
     GtqTheme,
     GtqThemeColor,
@@ -2047,6 +2050,9 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqTextbox, "gtq.textbox", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
     (GtqPassword, "gtq.password", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
     (GtqTextarea, "gtq.textarea", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
+    (GtqListbox, "gtq.listbox", Sig::Flexible { function: true }),
+    (GtqTable, "gtq.table", Sig::Flexible { function: true }),
+    (GtqActivated, "gtq.activated", Sig::Fixed(&[], Some(Bool))),
     (GtqSubmitted, "gtq.submitted", Sig::Fixed(&[], Some(Bool))),
     (GtqTheme, "gtq.theme", Sig::Fixed(&[S], None)),
     (GtqThemeColor, "gtq.theme_color", Sig::Fixed(&[S], Some(Str))),
@@ -4514,6 +4520,21 @@ impl Env {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
                 Value::Str(self.text_area(x, y, w, h, text(&args[4]))?.into())
             }
+            GtqListbox => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let rows = crate::gui::strings_of(&args[4]).into_iter().map(|s| vec![s]).collect();
+                Value::Int(self.grid_view(x, y, w, h, None, rows, int(&args[5]))?)
+            }
+            GtqTable => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                let headers = crate::gui::strings_of(&args[4]);
+                let rows = match &args[5] {
+                    Value::Seq(q) => q.borrow().iter().map(crate::gui::strings_of).collect(),
+                    _ => Vec::new(),
+                };
+                Value::Int(self.grid_view(x, y, w, h, Some(headers), rows, int(&args[6]))?)
+            }
+            GtqActivated => Value::Bool(self.gui.activated.is_some()),
             GtqSubmitted => Value::Bool(self.gui.submitted.is_some()),
             GtqTheme => {
                 self.gui.theme = match text(&args[0]).trim().to_lowercase().as_str() {

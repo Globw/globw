@@ -104,6 +104,28 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => ok(none(1), Type::Base(Str)),
             }
         }
+        GtqListbox | GtqTable => {
+            let table = b == GtqTable;
+            arity(if table { 7 } else { 6 })?;
+            let num = |t: &Type| matches!(t, Type::Base(Int | Real));
+            let strings = Type::List(Some(Str));
+            let usage = if table {
+                "gtq.table(x, y, w, h, headers, rows, selected): headers is a list of string, rows a list of list of string, selected an int"
+            } else {
+                "gtq.listbox(x, y, w, h, items, selected): items is a list of string, selected an int"
+            };
+            let rows_ok = if table {
+                a[4] == strings && crate::tir::list_elem(a[5]) == Some(strings)
+            } else {
+                a[4] == strings
+            };
+            if !a[..4].iter().all(num) || !rows_ok || a[a.len() - 1] != Type::Base(Int) {
+                return other(usage);
+            }
+            let mut conv = vec![Some(Real); 4];
+            conv.extend(std::iter::repeat(None).take(a.len() - 4));
+            ok(conv, Type::Base(Int))
+        }
         EnumText => {
             arity(2)?;
             ok(none(2), Type::Base(Str))

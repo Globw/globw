@@ -314,6 +314,12 @@ pub struct GuiState {
     pub over_text: bool,
     /// the scroll (x, y) of each scrolling widget, by id
     pub scrolls: std::collections::HashMap<u64, (f64, f64)>,
+    /// the sort (column, descending) of each table, by id
+    pub sorts: std::collections::HashMap<u64, (usize, bool)>,
+    /// the last click on a list row (widget, row, when), for double-clicks
+    pub last_click: Option<(u64, usize, std::time::Instant)>,
+    /// a list or table row was double-clicked or got Enter, this frame
+    pub activated: Option<u64>,
     pub theme: Theme,
     /// when the caret last moved, for blinking
     pub blink: std::time::Instant,
@@ -334,6 +340,9 @@ impl Default for GuiState {
             submitted: None,
             over_text: false,
             scrolls: std::collections::HashMap::new(),
+            sorts: std::collections::HashMap::new(),
+            last_click: None,
+            activated: None,
             theme: Theme::dark(),
             blink: std::time::Instant::now(),
         }
@@ -425,6 +434,7 @@ impl GuiState {
         self.order.clear();
         self.claimed = false;
         self.submitted = None;
+        self.activated = None;
         self.over_text = false;
     }
 }
@@ -859,6 +869,264 @@ impl crate::builtins::Env {
     }
 }
 
+const KIND_LIST: u64 = 3;
+const KIND_TABLE: u64 = 4;
+
+/// Compares two cells for sorting: as numbers when both are numbers, else as
+/// text ignoring case.
+fn cell_order(a: &str, b: &str) -> std::cmp::Ordering {
+    match (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
+        (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        _ => a.to_lowercase().cmp(&b.to_lowercase()),
+    }
+}
+
+/// The display order of the rows (original indices), sorted by a column.
+pub fn sorted_order(rows: &[Vec<String>], sort: Option<(usize, bool)>) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    if let Some((col, desc)) = sort {
+        let cell = |r: usize| rows[r].get(col).map(String::as_str).unwrap_or("");
+        order.sort_by(|&a, &b| {
+            let o = cell_order(cell(a), cell(b));
+            if desc {
+                o.reverse()
+            } else {
+                o
+            }
+        });
+    }
+    order
+}
+
+/// Strings of a Globw list of strings.
+pub(crate) fn strings_of(v: &crate::vm::Value) -> Vec<String> {
+    match v {
+        crate::vm::Value::Seq(q) => q.borrow().iter().map(crate::vm::display).collect(),
+        _ => Vec::new(),
+    }
+}
+
+impl crate::builtins::Env {
+    /// A scrolling list of rows (a list box, or a table when `headers` is given):
+    /// click or arrows to select, double-click or Enter to activate, the wheel
+    /// to scroll, a header click to sort. `selected` and the result are 1-based
+    /// indices into the original `rows` (0: none).
+    pub(crate) fn grid_view(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        headers: Option<Vec<String>>,
+        rows: Vec<Vec<String>>,
+        selected: i64,
+    ) -> Result<i64, String> {
+        let kind = if headers.is_some() { KIND_TABLE } else { KIND_LIST };
+        let id = widget_id(kind, x, y, w, h);
+        let focused = self.gui.register(id);
+        if focused {
+            self.gui.select_on_focus = false;
+            self.gui.editor = None;
+        }
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let input = g.input.clone();
+        let (mx, my) = g.mouse();
+        let (mx, my) = (mx as f64, my as f64);
+        let hover = mx >= x && mx < x + w && my >= y && my < y + h;
+        let fh = self.fonts.height();
+        let rh = (fh * 1.6).round().max(1.0);
+        let head_h = if headers.is_some() { rh } else { 0.0 };
+        let (body_y, body_h) = (y + head_h, (h - head_h).max(1.0));
+        let pad = 8.0;
+        let ncols = headers.as_ref().map_or(1, Vec::len).max(rows.iter().map(Vec::len).max().unwrap_or(1)).max(1);
+
+        // column widths: content-sized, the last one takes the rest
+        let mut widths = vec![0.0f64; ncols];
+        if let Some(hs) = &headers {
+            for (c, t) in hs.iter().enumerate() {
+                widths[c] = widths[c].max(self.fonts.width(t)? as f64 + 2.0 * pad + 12.0);
+            }
+        }
+        for r in rows.iter().take(300) {
+            for (c, t) in r.iter().enumerate().take(ncols) {
+                widths[c] = widths[c].max(self.fonts.width(t)? as f64 + 2.0 * pad);
+            }
+        }
+        let inner_w = w - 8.0;
+        let total: f64 = widths.iter().sum();
+        if total < inner_w {
+            widths[ncols - 1] += inner_w - total;
+        } else if total > 0.0 {
+            let k = inner_w / total;
+            widths.iter_mut().for_each(|c| *c *= k);
+        }
+        let mut col_x = vec![x];
+        for c in &widths {
+            col_x.push(col_x.last().copied().unwrap_or(x) + c);
+        }
+
+        let sort = self.gui.sorts.get(&id).copied();
+        let order = sorted_order(&rows, sort);
+        let n = rows.len();
+        let mut pos = usize::try_from(selected - 1).ok().filter(|&s| s < n).and_then(|s| order.iter().position(|&o| o == s));
+        let (_, mut sy) = self.gui.scrolls.get(&id).copied().unwrap_or((0.0, 0.0));
+        let mut follow = false;
+
+        if hover && input.scroll != 0.0 {
+            sy -= input.scroll as f64 * rh * WHEEL_LINES;
+        }
+        if input.left_pressed && hover {
+            self.gui.claim();
+            if self.gui.focus != Some(id) {
+                self.gui.focus = Some(id);
+                self.gui.editor = None;
+            }
+            if my < body_y {
+                // a header: sort by it (again: the other way)
+                if let Some(c) = (0..ncols).find(|&c| mx >= col_x[c] && mx < col_x[c + 1]) {
+                    let next = match sort {
+                        Some((sc, false)) if sc == c => (c, true),
+                        _ => (c, false),
+                    };
+                    self.gui.sorts.insert(id, next);
+                }
+            } else {
+                let row = ((my - body_y + sy) / rh).floor();
+                if row >= 0.0 && (row as usize) < n {
+                    let row = row as usize;
+                    let now = std::time::Instant::now();
+                    if let Some((lid, lrow, at)) = self.gui.last_click {
+                        if lid == id && lrow == row && now.duration_since(at).as_millis() < 450 {
+                            self.gui.activated = Some(id);
+                        }
+                    }
+                    self.gui.last_click = Some((id, row, now));
+                    pos = Some(row);
+                }
+            }
+        }
+        if self.gui.focus == Some(id) && n > 0 {
+            let page = ((body_h / rh).floor() as usize).max(1);
+            for &k in &input.keys {
+                let p = pos.unwrap_or(0);
+                pos = Some(match k {
+                    EditKey::Up => p.saturating_sub(1),
+                    EditKey::Down if pos.is_some() => (p + 1).min(n - 1),
+                    EditKey::Down => 0,
+                    EditKey::Home => 0,
+                    EditKey::End => n - 1,
+                    EditKey::PageUp => p.saturating_sub(page),
+                    EditKey::PageDown => (p + page).min(n - 1),
+                    EditKey::Enter => {
+                        if pos.is_some() {
+                            self.gui.activated = Some(id);
+                        }
+                        continue;
+                    }
+                    _ => continue,
+                });
+                follow = true;
+            }
+            // typing a letter jumps to the next row that starts with it
+            for ch in &input.chars {
+                let lower = ch.to_lowercase().to_string();
+                let start = pos.map_or(0, |p| p + 1);
+                if let Some(k) = (0..n).map(|i| (start + i) % n).find(|&i| {
+                    rows[order[i]].first().is_some_and(|t| t.to_lowercase().starts_with(&lower))
+                }) {
+                    pos = Some(k);
+                    follow = true;
+                }
+            }
+        }
+        if follow {
+            if let Some(p) = pos {
+                let top = p as f64 * rh;
+                if top < sy {
+                    sy = top;
+                }
+                if top + rh > sy + body_h {
+                    sy = top + rh - body_h;
+                }
+            }
+        }
+        let total_h = n as f64 * rh;
+        sy = sy.min((total_h - body_h).max(0.0)).max(0.0);
+        self.gui.scrolls.insert(id, (0.0, sy));
+        let focused = self.gui.focus == Some(id);
+
+        // draw
+        let t = self.gui.theme;
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let c = &mut g.canvas;
+        c.rect(x, y, w, h, t.panel);
+        let saved = c.clip();
+        if let Some(hs) = &headers {
+            c.rect(x, y, w, head_h, t.field);
+            for col in 0..ncols {
+                c.set_clip(col_x[col], y, widths[col] - 1.0, head_h);
+                let label = hs.get(col).map(String::as_str).unwrap_or("");
+                self.fonts.draw(c, col_x[col] + pad, y + (head_h - fh) / 2.0, label, t.muted)?;
+                if let Some((_, desc)) = sort.filter(|s| s.0 == col) {
+                    // a small triangle: up when ascending, down when descending
+                    let (ax, ay) = (col_x[col + 1] - 14.0, y + head_h / 2.0 - 2.0);
+                    for i in 0..5 {
+                        let half = if desc { 4.0 - i as f64 } else { i as f64 };
+                        c.rect(ax - half, ay + i as f64, 2.0 * half + 1.0, 1.0, t.muted);
+                    }
+                }
+                c.restore_clip(saved);
+                if col > 0 {
+                    c.rect(col_x[col], y + 4.0, 1.0, head_h - 8.0, t.border);
+                }
+            }
+            c.rect(x, y + head_h - 1.0, w, 1.0, t.border);
+        }
+        c.set_clip(x + 1.0, body_y, w - 2.0, body_h - 1.0);
+        let first = (sy / rh).floor() as usize;
+        let last = (((sy + body_h) / rh).ceil() as usize).min(n);
+        let hover_row = if hover && my >= body_y { Some(((my - body_y + sy) / rh).floor() as usize) } else { None };
+        for (i, &orig) in order.iter().enumerate().take(last).skip(first) {
+            let ry = body_y + i as f64 * rh - sy;
+            let is_sel = pos == Some(i);
+            let bg = if is_sel {
+                if focused { t.accent } else { t.selection }
+            } else if hover_row == Some(i) {
+                t.row_hover
+            } else if i % 2 == 1 {
+                t.row_alt
+            } else {
+                t.panel
+            };
+            c.rect(x, ry, w, rh, bg);
+            let fg = if is_sel && focused { t.accent_text } else { t.text };
+            for col in 0..ncols {
+                let cell = rows[orig].get(col).map(String::as_str).unwrap_or("");
+                let inner = c.clip();
+                let (cx0, cy0) = (col_x[col].max(inner.0 as f64), ry.max(inner.1 as f64));
+                let cx1 = (col_x[col + 1] - 2.0).min(inner.2 as f64);
+                let cy1 = (ry + rh).min(inner.3 as f64);
+                c.set_clip(cx0, cy0, (cx1 - cx0).max(0.0), (cy1 - cy0).max(0.0));
+                self.fonts.draw(c, col_x[col] + pad, ry + (rh - fh) / 2.0, cell, fg)?;
+                c.restore_clip(inner);
+            }
+        }
+        c.restore_clip(saved);
+        if total_h > body_h {
+            let track = body_h - 6.0;
+            let thumb = (track * body_h / total_h).max(20.0);
+            let top = body_y + 3.0 + (track - thumb) * (sy / (total_h - body_h));
+            c.rect(x + w - 6.0, top, 4.0, thumb, t.border);
+        }
+        let edge = if focused { t.focus } else { t.border };
+        c.rect(x, y, w, 1.0, edge);
+        c.rect(x, y + h - 1.0, w, 1.0, edge);
+        c.rect(x, y, 1.0, h, edge);
+        c.rect(x + w - 1.0, y, 1.0, h, edge);
+        Ok(pos.map_or(0, |p| order[p] as i64 + 1))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1151,6 +1419,109 @@ world");
         assert!(n.text.ends_with("line 60!"));
     }
 
+    /// A program with a list box and a table.
+    struct Lists {
+        env: Env,
+        pick: i64,
+        row: i64,
+        opened: bool,
+    }
+
+    impl Lists {
+        fn new() -> Lists {
+            let mut env = Env::default();
+            env.graphics = Some(Graphics::headless(500, 400));
+            let mut l = Lists { env, pick: 0, row: 0, opened: false };
+            l.draw();
+            l
+        }
+        fn list(items: &[&str]) -> Value {
+            Value::Seq(std::rc::Rc::new(std::cell::RefCell::new(items.iter().map(|s| Value::Str((*s).into())).collect())))
+        }
+        fn draw(&mut self) {
+            let fruit = Lists::list(&["apple", "banana", "cherry", "blueberry", "date"]);
+            let a = [Value::Real(10.0), Value::Real(10.0), Value::Real(200.0), Value::Real(150.0), fruit, Value::Int(self.pick)];
+            self.pick = match self.env.call(Builtin::GtqListbox, &a).unwrap() {
+                Value::Int(n) => n,
+                _ => unreachable!(),
+            };
+            let headers = Lists::list(&["Name", "Age"]);
+            let rows = Value::Seq(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                Lists::list(&["Ada", "36"]),
+                Lists::list(&["Alan", "41"]),
+                Lists::list(&["Grace", "9"]),
+            ])));
+            let a = [Value::Real(10.0), Value::Real(200.0), Value::Real(300.0), Value::Real(150.0), headers, rows, Value::Int(self.row)];
+            self.row = match self.env.call(Builtin::GtqTable, &a).unwrap() {
+                Value::Int(n) => n,
+                _ => unreachable!(),
+            };
+            self.opened = matches!(self.env.call(Builtin::GtqActivated, &[]).unwrap(), Value::Bool(true));
+        }
+        fn step(&mut self, x: i64, y: i64, input: FrameInput) {
+            self.env.graphics.as_mut().unwrap().simulate(x, y, input);
+            self.env.call(Builtin::Show, &[]).unwrap();
+            self.draw();
+        }
+        fn click(&mut self, x: i64, y: i64) {
+            self.step(x, y, FrameInput { left: true, ..Default::default() });
+            self.step(x, y, FrameInput::default());
+        }
+        fn key(&mut self, k: EditKey) {
+            self.step(0, 0, FrameInput { keys: vec![k], ..Default::default() });
+        }
+        /// The y of the middle of row `i` (0-based, as displayed) of the list.
+        fn list_row(&mut self, i: usize) -> i64 {
+            let rh = (self.env.fonts.height() * 1.6).round();
+            (10.0 + rh * i as f64 + rh / 2.0) as i64
+        }
+    }
+
+    #[test]
+    fn list_click_keys_letters_and_double_click() {
+        let mut l = Lists::new();
+        let y = l.list_row(1);
+        l.click(50, y);
+        assert_eq!(l.pick, 2, "the second item: banana");
+        l.key(EditKey::Down);
+        l.key(EditKey::Down);
+        assert_eq!(l.pick, 4);
+        l.key(EditKey::Home);
+        assert_eq!(l.pick, 1);
+        // typing "b" jumps to the next item starting with b
+        l.step(0, 0, FrameInput { chars: vec!['b'], ..Default::default() });
+        assert_eq!(l.pick, 2);
+        l.step(0, 0, FrameInput { chars: vec!['b'], ..Default::default() });
+        assert_eq!(l.pick, 4, "then to blueberry");
+        // a double-click activates, for one frame
+        let y = l.list_row(2);
+        l.click(50, y);
+        assert!(!l.opened);
+        l.step(50, y, FrameInput { left: true, ..Default::default() });
+        assert!(l.opened);
+        l.step(50, y, FrameInput::default());
+        assert!(!l.opened);
+    }
+
+    #[test]
+    fn table_sorts_by_header_but_returns_the_original_row() {
+        let mut l = Lists::new();
+        let rh = (l.env.fonts.height() * 1.6).round();
+        let head = (200.0 + rh / 2.0) as i64;
+        let first_row = (200.0 + rh + rh / 2.0) as i64;
+        // sort by Age (the second column): 9, 36, 41
+        l.click(250, head);
+        l.click(50, first_row);
+        assert_eq!(l.row, 3, "Grace (age 9) is the third row of the data");
+        // again: descending, 41 first
+        l.click(250, head);
+        l.click(50, first_row);
+        assert_eq!(l.row, 2, "Alan");
+        // Enter on the focused table activates the selected row
+        l.key(EditKey::Enter);
+        assert!(l.opened);
+    }
+
     #[test]
     fn the_program_can_change_the_text_of_the_focused_field() {
         let mut f = Form::new();
@@ -1201,6 +1572,48 @@ line 9");
             }
             let png = env.graphics.as_ref().unwrap().canvas.to_png();
             std::fs::write(format!("{}/gallery_{}.png", dir, theme), png).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn gallery_lists() {
+        let dir = std::env::var("GLOBW_GALLERY").unwrap_or_else(|_| ".".into());
+        let list = |items: &[&str]| Value::Seq(std::rc::Rc::new(std::cell::RefCell::new(items.iter().map(|s| Value::Str((*s).into())).collect())));
+        for theme in ["dark", "light"] {
+            let mut env = Env::default();
+            env.graphics = Some(Graphics::headless(620, 260));
+            env.call(Builtin::GtqTheme, &[Value::Str(theme.into())]).unwrap();
+            let (mut pick, mut row) = (3i64, 0i64);
+            let rh = (env.fonts.height() * 1.6).round();
+            let frames = vec![
+                (420, (20.0 + rh / 2.0) as i64, FrameInput { left: true, ..Default::default() }), // sort by Age
+                (420, (20.0 + rh / 2.0) as i64, FrameInput::default()),
+                (300, (20.0 + rh * 2.5) as i64, FrameInput { left: true, ..Default::default() }), // select a row
+                (300, (20.0 + rh * 2.5) as i64, FrameInput::default()),
+                (300, (20.0 + rh * 4.5) as i64, FrameInput::default()), // hover another
+            ];
+            let fruit = ["apple", "banana", "cherry", "date", "elderberry", "fig", "grape", "kiwi", "lemon", "mango"];
+            for (x, y, input) in frames {
+                env.graphics.as_mut().unwrap().simulate(x, y, input);
+                env.call(Builtin::Show, &[]).unwrap();
+                let bg = env.call(Builtin::GtqThemeColor, &[Value::Str("window".into())]).unwrap();
+                env.call(Builtin::Clear, &[bg]).unwrap();
+                let a = [Value::Real(20.0), Value::Real(20.0), Value::Real(170.0), Value::Real(220.0), list(&fruit), Value::Int(pick)];
+                pick = match env.call(Builtin::GtqListbox, &a).unwrap() { Value::Int(n) => n, _ => 0 };
+                let rows = Value::Seq(std::rc::Rc::new(std::cell::RefCell::new(vec![
+                    list(&["Ada Lovelace", "36", "London"]),
+                    list(&["Alan Turing", "41", "Wilmslow"]),
+                    list(&["Grace Hopper", "85", "Arlington"]),
+                    list(&["Katherine Johnson", "101", "Newport News"]),
+                    list(&["Edsger Dijkstra", "72", "Nuenen"]),
+                    list(&["Barbara Liskov", "86", "Boston"]),
+                ])));
+                let a = [Value::Real(210.0), Value::Real(20.0), Value::Real(390.0), Value::Real(220.0), list(&["Name", "Age", "City"]), rows, Value::Int(row)];
+                row = match env.call(Builtin::GtqTable, &a).unwrap() { Value::Int(n) => n, _ => 0 };
+            }
+            let png = env.graphics.as_ref().unwrap().canvas.to_png();
+            std::fs::write(format!("{}/gallery_lists_{}.png", dir, theme), png).unwrap();
         }
     }
 }

@@ -36,6 +36,10 @@ failing line. A `launch.json` can grant permissions and give the `input()` text.
 - `gtq.textarea`: a multi-line text area with the same editing, Enter for new
   lines, Up/Down and Page Up/Down, and a scroll that follows the caret and the
   mouse wheel.
+- `gtq.listbox` and `gtq.table`: scrolling lists and tables of strings, with
+  click and keyboard selection, letter jumps, the wheel, a scrollbar, sorting by
+  a header click (numbers as numbers) that keeps the original row index, and
+  `gtq.activated()` for a double-click or Enter.
 - `screenshot("file.png")` saves the graphics window as a PNG.
 
 **Faster.** Interpreted code runs 19–41% faster than in 0.1.5 (`bench/`, best
