@@ -1,6 +1,7 @@
-' A web interface served by Globw: HTML and CSS for the look, Globw for the logic.
-' The page is the UI; Globw answers requests. Run it with:
-'     gw --allow-net --allow-run examples/demos/webui.gw
+' A web interface for a Globw program. The look lives in webui/ (HTML, CSS, JS);
+' the logic lives here: Globw serves those files and answers a small JSON API.
+' Run it with:
+'     gw --allow-net --allow-read --allow-run examples/demos/webui.gw
 import serve
 import ui
 import data
@@ -8,31 +9,30 @@ import data
 variables:
     s as int
     req as string
-    path as string
-    page as string
+    route as string
+    sides as int
+    rolls as int
+    roll as dict of string to int
 
-' Strings are single-line, so the page is built by concatenation.
-page = "<!doctype html><html><head><meta charset='utf-8'><title>Globw Web UI</title>"
-page = page + "<style>body{font-family:system-ui,sans-serif;background:#0e0e12;color:#eee;display:grid;place-items:center;height:100vh;margin:0}"
-page = page + ".card{background:#1a1a22;padding:44px 52px;border-radius:16px;text-align:center;box-shadow:0 24px 70px #0009}"
-page = page + "h1{margin:0 0 6px}p{color:#9a94a0;margin:0}"
-page = page + "button{background:#e8413f;color:#fff;border:0;border-radius:10px;padding:12px 22px;font-size:16px;cursor:pointer;margin-top:20px}"
-page = page + "#out{font-size:64px;font-weight:800;margin-top:14px;min-height:72px}</style></head><body>"
-page = page + "<div class='card'><h1>Globw Web UI</h1><p>HTML + CSS for the look, Globw for the logic.</p>"
-page = page + "<div id='out'>-</div><button onclick='roll()'>Roll a die</button></div>"
-page = page + "<script>async function roll(){const r=await fetch('/api/roll');document.getElementById('out').textContent=await r.text();}</script>"
-page = page + "</body></html>"
-
+rolls = 0
 s = serve.start(8099)
 output("Serving on http://localhost:8099/  -  press Ctrl-C to stop")
-ui.open("http://localhost:8099/")          ' open it in the browser
+ui.app("http://localhost:8099/")              ' open it as an app window
 
 while(true)
     req = serve.wait(s)
-    path = data.text(req, "path")
-    if(path == "/api/roll")
-        serve.reply(s, 200, to_text(random(1, 6)))   ' Globw rolls the die
+    route = data.text(req, "route")           ' the path without ?query
+    if(route == "/api/roll")
+        sides = 6
+        if(data.has(req, "query.sides"))
+            sides = to_int(data.text(req, "query.sides"))
+        end if
+        rolls = rolls + 1
+        roll["sides"] = sides
+        roll["value"] = random(1, sides)
+        roll["rolls"] = rolls
+        serve.reply_as(s, 200, "application/json", data.to_json(roll))
     else
-        serve.reply(s, 200, page)
+        serve.file(s, "webui", route)         ' index.html, style.css, app.js
     end if
 end loop

@@ -198,7 +198,43 @@ always
 end try
 ```
 
-## 9. Your toolbox
+## 9. Web interfaces
+
+Want a graphical interface with real HTML and CSS? Put the look in a folder
+(`www/index.html`, `style.css`, `app.js`) and keep the logic in Globw: serve the
+files, answer a few JSON routes, and open it as an app window.
+
+```gw
+import serve
+import data
+import ui
+
+variables:
+    s as int
+    req as string
+    route as string
+    answer as dict of string to string
+
+s = serve.start(8080)
+ui.app("http://localhost:8080/")
+while(true)
+    req = serve.wait(s)
+    route = data.text(req, "route")
+    if(route == "/api/hello")
+        answer["message"] = "Hello, " + data.text(req, "query.name")
+        serve.reply_as(s, 200, "application/json", data.to_json(answer))
+    else
+        serve.file(s, "www", route)
+    end if
+end loop
+```
+
+The page's JavaScript calls `fetch("/api/hello?name=Ada")` and gets
+`{"message": "Hello, Ada"}`. Run it with
+`gw --allow-net --allow-read --allow-run app.gw`. For a site with no logic at all,
+one line is enough: `ui.serve("www", 8080)`.
+
+## 10. Your toolbox
 
 - `gw program.gw` — run. `gw --repl` — an interactive session where you can try
   expressions, declarations and even multi-line `function`/`for` blocks.

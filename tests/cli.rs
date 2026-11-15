@@ -1075,3 +1075,57 @@ fn builtins_catalogue_is_json() {
     assert!(stdout.contains("\"name\":\"ffi.open\""), "lists ffi.open");
     assert!(stdout.contains("\"name\":\"shell.run\",\"sig\":\"(string) -> string\""), "renders a fixed signature");
 }
+
+/// One raw HTTP/1.1 GET to 127.0.0.1:port, returning the whole response text.
+fn http_get(port: u16, path: &str) -> String {
+    use std::io::{Read, Write};
+    for _ in 0..80 {
+        if let Ok(mut c) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+            let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            c.write_all(req.as_bytes()).unwrap();
+            let mut out = String::new();
+            let _ = c.read_to_string(&mut out);
+            return out;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("the Globw server did not start on port {port}");
+}
+
+#[test]
+fn serve_files_json_and_query() {
+    // a dynamic web UI: static files from a folder, a JSON API, and the query
+    // string decoded into req.query
+    let dir = std::env::temp_dir().join(format!("gw_serve_test_{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("www")).unwrap();
+    std::fs::write(dir.join("www/index.html"), "<h1>home</h1>").unwrap();
+    std::fs::write(dir.join("www/style.css"), "h1{color:red}").unwrap();
+    std::fs::write(
+        dir.join("app.gw"),
+        "import serve\nimport data\nvariables:\n    s as int\n    req as string\n    route as string\n\
+         s = serve.start(18765)\nwhile(true)\n    req = serve.wait(s)\n    route = data.text(req, \"route\")\n\
+             if(route == \"/api/echo\")\n        serve.reply_as(s, 200, \"application/json\", data.to_json(data.text(req, \"query.msg\")))\n\
+             else\n        serve.file(s, \"www\", route)\n    end if\nend loop\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gw"))
+        .args(["--allow-net", "--allow-read"])
+        .arg(dir.join("app.gw"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let home = http_get(18765, "/");
+    let css = http_get(18765, "/style.css");
+    let api = http_get(18765, "/api/echo?msg=hi%20there");
+    let missing = http_get(18765, "/nope.png");
+    let escape = http_get(18765, "/../app.gw");
+    let _ = child.kill();
+    let _ = child.wait();
+    let lower = |s: &str| s.to_ascii_lowercase();
+    assert!(home.starts_with("HTTP/1.1 200") && lower(&home).contains("content-type: text/html") && home.contains("<h1>home</h1>"), "{home}");
+    assert!(lower(&css).contains("content-type: text/css") && css.contains("h1{color:red}"), "{css}");
+    assert!(lower(&api).contains("content-type: application/json") && api.contains("\"hi there\""), "{api}");
+    assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
+    assert!(escape.starts_with("HTTP/1.1 403"), "{escape}");
+}

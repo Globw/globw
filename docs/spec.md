@@ -820,10 +820,22 @@ end loop
 ```
 
 - `serve.start(port)` starts listening on `127.0.0.1:port` and returns a server handle.
-- `serve.wait(s)` blocks until a request arrives and returns it as **JSON** — `{"method":…, "path":…, "body":…}` — read with the `data` module.
-- `serve.reply(s, status, body)` answers the current request (HTML by default).
+- `serve.wait(s)` blocks until a request arrives and returns it as **JSON**, read with the `data` module:
+  `{"method":…, "path":…, "route":…, "query":{…}, "body":…}`. `path` is the URL as sent
+  (`/api/roll?sides=20`); `route` is the path without the query, decoded (`/api/roll`);
+  `query` holds the query parameters, decoded (`data.text(req, "query.sides")` → `"20"`).
+- `serve.reply(s, status, body)` answers the current request with HTML.
+- `serve.reply_as(s, status, type, body)` answers with any content type — for a JSON API:
+  `serve.reply_as(s, 200, "application/json", data.to_json(result))`.
+- `serve.file(s, dir, path)` answers with the file `path` names inside the folder `dir`,
+  with the right content type (HTML, CSS, JS, JSON, images, fonts, wasm, audio, video):
+  `/` and folders serve their `index.html`, a missing file is a 404, and `..` is refused
+  (403). It needs `--allow-read` for `dir` as well as `--allow-net`.
 - `serve.stop(s)` stops the server.
-- One request is "current" between `wait` and `reply`; reply before the next `wait`.
+- One request is "current" between `wait` and a reply; reply before the next `wait`.
+- A typical web interface: the look in a folder of HTML/CSS/JS served with `serve.file`,
+  the logic as a few JSON routes answered with `serve.reply_as`. See
+  `examples/demos/webui.gw` (and the `ui` module below to open it).
 
 **Web UI (`ui`).** `import ui` opens a web page in the browser, so you can build
 a graphical interface with HTML and CSS and keep the logic in Globw: serve the

@@ -1432,6 +1432,31 @@ thread_local! {
     static SERVERS: RefCell<Vec<Option<ServerState>>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Answers the pending request of server `handle` with `status`, a content type
+/// and a body. `what` names the builtin in error messages.
+#[cfg(feature = "native")]
+fn serve_respond(handle: i64, status: i64, ctype: &str, body: Vec<u8>, what: &str) -> Result<(), String> {
+    if !(100..=599).contains(&status) {
+        return Err(format!("{what}: the status must be an HTTP code between 100 and 599"));
+    }
+    SERVERS.with(|s| {
+        let mut s = s.borrow_mut();
+        let st = usize::try_from(handle)
+            .ok()
+            .and_then(|i| s.get_mut(i))
+            .and_then(|o| o.as_mut())
+            .ok_or_else(|| format!("{what}: this is not a running server"))?;
+        let req = st
+            .pending
+            .take()
+            .ok_or_else(|| format!("{what}: there is no request to reply to (call serve.wait first)"))?;
+        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes())
+            .map_err(|_| format!("{what}: \"{ctype}\" is not a valid content type"))?;
+        let resp = tiny_http::Response::from_data(body).with_status_code(status as u16).with_header(header);
+        req.respond(resp).map_err(|e| format!("{what}: {e}"))
+    })
+}
+
 // ---- the "proc" module (background processes) ----
 
 thread_local! {
@@ -5006,9 +5031,7 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
             if !c.net.granted() {
                 return Err(deny("ui.serve", "--allow-net"));
             }
-            if !c.read.granted() {
-                return Err(deny("ui.serve", "--allow-read"));
-            }
+            check_path(&c.read, text(&args[0]), "ui.serve", "--allow-read")?;
             if !c.run {
                 return Err(deny("ui.serve", "--allow-run"));
             }
@@ -5025,10 +5048,16 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
             }
         }
         WebGet | WebPost | WebStatus | WebDownload => check_host(&c.net, text(&args[0]), "the web module")?,
-        ServeStart | ServeWait | ServeReply | ServeStop => {
+        ServeStart | ServeWait | ServeReply | ServeStop | ServeReplyAs => {
             if !c.net.granted() {
                 return Err(deny("the serve module", "--allow-net"));
             }
+        }
+        ServeFile => {
+            if !c.net.granted() {
+                return Err(deny("the serve module", "--allow-net"));
+            }
+            check_path(&c.read, text(&args[1]), "serve.file", "--allow-read")?;
         }
         NetRequest | NetSend | NetStatus | NetHeader | NetOk => {
             if !c.net.granted() {
@@ -8452,7 +8481,9 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
 
         // module "serve" (HTTP server)
         #[cfg(not(feature = "native"))]
-        ServeStart | ServeWait | ServeReply | ServeStop => return Err(SERVE_OFF.to_string()),
+        ServeStart | ServeWait | ServeReply | ServeStop | ServeReplyAs | ServeFile => {
+            return Err(SERVE_OFF.to_string())
+        }
         #[cfg(feature = "native")]
         ServeStart => {
             let port = int(&args[0]);
@@ -8483,7 +8514,18 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 st.pending = Some(req);
                 let mut m = serde_json::Map::new();
                 m.insert("method".to_string(), Json::String(method));
+                let (route, qs) = match path.split_once('?') {
+                    Some((r, q)) => (r.to_string(), q.to_string()),
+                    None => (path.clone(), String::new()),
+                };
+                let mut query = serde_json::Map::new();
+                for pair in qs.split('&').filter(|p| !p.is_empty()) {
+                    let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                    query.insert(url_unescape(k, true), Json::String(url_unescape(v, true)));
+                }
                 m.insert("path".to_string(), Json::String(path));
+                m.insert("route".to_string(), Json::String(url_unescape(&route, false)));
+                m.insert("query".to_string(), Json::Object(query));
                 m.insert("body".to_string(), Json::String(body));
                 Ok::<String, String>(serde_json::to_string(&Json::Object(m)).unwrap_or_default())
             })?;
@@ -8491,22 +8533,20 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         }
         #[cfg(feature = "native")]
         ServeReply => {
-            SERVERS.with(|s| {
-                let mut s = s.borrow_mut();
-                let st = usize::try_from(int(&args[0]))
-                    .ok()
-                    .and_then(|i| s.get_mut(i))
-                    .and_then(|o| o.as_mut())
-                    .ok_or("serve.reply: this is not a running server")?;
-                let req = st.pending.take().ok_or("serve.reply: there is no request to reply to (call serve.wait first)")?;
-                let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
-                    .expect("valid header");
-                let resp = tiny_http::Response::from_string(text(&args[2]))
-                    .with_status_code(int(&args[1]) as u16)
-                    .with_header(header);
-                req.respond(resp).map_err(|e| format!("serve.reply: {}", e))?;
-                Ok::<(), String>(())
-            })?;
+            let body = text(&args[2]).as_bytes().to_vec();
+            serve_respond(int(&args[0]), int(&args[1]), "text/html; charset=utf-8", body, "serve.reply")?;
+            Value::Null
+        }
+        #[cfg(feature = "native")]
+        ServeReplyAs => {
+            let body = text(&args[3]).as_bytes().to_vec();
+            serve_respond(int(&args[0]), int(&args[1]), text(&args[2]), body, "serve.reply_as")?;
+            Value::Null
+        }
+        #[cfg(feature = "native")]
+        ServeFile => {
+            let (code, ctype, body) = static_file(text(&args[1]), text(&args[2]));
+            serve_respond(int(&args[0]), code as i64, ctype, body, "serve.file")?;
             Value::Null
         }
         #[cfg(feature = "native")]

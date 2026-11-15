@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Globw dice</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="card">
+    <p class="eyebrow">web UI · logic in Globw</p>
+    <h1>Roll a die</h1>
+    <p class="lead">The page is HTML and CSS. Every roll is computed by the Globw program serving it.</p>
+
+    <div class="sides" role="group" aria-label="Die">
+      <button data-sides="4">d4</button>
+      <button data-sides="6" class="on">d6</button>
+      <button data-sides="12">d12</button>
+      <button data-sides="20">d20</button>
+    </div>
+
+    <output id="value" aria-live="polite">–</output>
+    <button id="roll" class="roll">Roll</button>
+
+    <ul id="history" class="history" aria-label="Previous rolls"></ul>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

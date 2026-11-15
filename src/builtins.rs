@@ -758,6 +758,8 @@ pub enum Builtin {
     ServeWait,
     ServeReply,
     ServeStop,
+    ServeReplyAs,
+    ServeFile,
     // module "proc" (background processes, OS-level concurrency)
     ProcStart,
     ProcDone,
@@ -2010,6 +2012,8 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (ServeWait, "serve.wait", Sig::Fixed(&[I], Some(Str))),
     (ServeReply, "serve.reply", Sig::Fixed(&[I, I, S], None)),
     (ServeStop, "serve.stop", Sig::Fixed(&[I], None)),
+    (ServeReplyAs, "serve.reply_as", Sig::Fixed(&[I, I, S, S], None)),
+    (ServeFile, "serve.file", Sig::Fixed(&[I, S, S], None)),
 
     // module "proc" (background processes)
     (ProcStart, "proc.start", Sig::Fixed(&[S], Some(Int))),

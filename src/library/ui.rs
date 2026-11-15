@@ -1,6 +1,6 @@
 //! The "ui" module's helpers: open a URL in the browser, so a Globw program can
-//! serve a web interface (HTML/CSS/JS) with the `serve` module and show it. The
-//! page is the UI, Globw is the logic.
+//! serve a web interface (HTML/CSS/JS) and show it, plus the static-file logic
+//! shared by `ui.serve` and `serve.file`. The page is the UI, Globw is the logic.
 
 use std::process::Command;
 
@@ -42,6 +42,28 @@ pub(super) fn ui_app(url: &str) -> Result<(), String> {
     ui_open(url)
 }
 
+/// Decodes `%XX` escapes in a URL piece (and `+` as a space, for query strings).
+/// Invalid escapes are kept as written; invalid UTF-8 is replaced.
+pub(super) fn url_unescape(s: &str, plus_is_space: bool) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'%' && i + 2 < b.len() {
+            let hex = |x: u8| (x as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if c == b'+' && plus_is_space { b' ' } else { c });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// The content type to serve a file as, from its extension.
 #[cfg(feature = "native")]
 fn mime_of(path: &std::path::Path) -> &'static str {
@@ -60,38 +82,53 @@ fn mime_of(path: &std::path::Path) -> &'static str {
         "woff2" => "font/woff2",
         "woff" => "font/woff",
         "ttf" => "font/ttf",
-        "txt" | "md" => "text/plain; charset=utf-8",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "mp4" => "video/mp4",
+        "txt" | "md" | "gw" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
 
+/// The response for the static file a request `url` names inside `dir`:
+/// `(status, content type, body)`. `/` and folders ending in `/` serve their
+/// `index.html`; `..`, empty segments and drive letters are refused (403); a
+/// missing file is a 404.
+#[cfg(feature = "native")]
+pub(super) fn static_file(dir: &str, url: &str) -> (u16, &'static str, Vec<u8>) {
+    const TEXT: &str = "text/plain; charset=utf-8";
+    let path = url.split(['?', '#']).next().unwrap_or("/");
+    let mut rel = url_unescape(path.trim_start_matches('/'), false);
+    if rel.is_empty() || rel.ends_with('/') {
+        rel.push_str("index.html");
+    }
+    if rel.split(['/', '\\']).any(|seg| seg == ".." || seg.is_empty()) || rel.contains(':') {
+        return (403, TEXT, b"403 Forbidden".to_vec());
+    }
+    let full = std::path::Path::new(dir).join(&rel);
+    match std::fs::read(&full) {
+        Ok(bytes) => (200, mime_of(&full), bytes),
+        Err(_) => (404, TEXT, b"404 Not Found".to_vec()),
+    }
+}
+
 /// Serves the files in `dir` on `127.0.0.1:port` with the right content types,
-/// opens the browser on it, and keeps serving (this call does not return). `/`
-/// serves `index.html`. Path traversal (`..`) is refused.
+/// opens the browser on it, and keeps serving (this call does not return).
 #[cfg(feature = "native")]
 pub(super) fn ui_serve(dir: &str, port: i64) -> Result<(), String> {
+    if !(1..=65535).contains(&port) {
+        return Err("ui.serve: the port must be between 1 and 65535".to_string());
+    }
+    if !std::path::Path::new(dir).is_dir() {
+        return Err(format!("ui.serve: \"{}\" is not a folder", dir));
+    }
     let server = tiny_http::Server::http(("127.0.0.1", port as u16))
         .map_err(|e| format!("ui.serve: cannot listen on port {} ({})", port, e))?;
-    let root = std::path::Path::new(dir);
     let _ = ui_open(&format!("http://localhost:{}/", port)); // the port is bound; show it
     for req in server.incoming_requests() {
-        let url = req.url().split('?').next().unwrap_or("/").to_string();
-        let rel = url.trim_start_matches('/');
-        let rel = if rel.is_empty() { "index.html" } else { rel };
-        let safe = !rel.split('/').any(|seg| seg == ".." || seg.is_empty());
-        let resp = if safe {
-            match std::fs::read(root.join(rel)) {
-                Ok(bytes) => {
-                    let ct = mime_of(&root.join(rel));
-                    let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], ct.as_bytes()).unwrap();
-                    tiny_http::Response::from_data(bytes).with_header(header)
-                }
-                Err(_) => tiny_http::Response::from_data(b"404 Not Found".to_vec()).with_status_code(404),
-            }
-        } else {
-            tiny_http::Response::from_data(b"403 Forbidden".to_vec()).with_status_code(403)
-        };
-        let _ = req.respond(resp);
+        let (code, ct, body) = static_file(dir, req.url());
+        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], ct.as_bytes()).expect("valid header");
+        let _ = req.respond(tiny_http::Response::from_data(body).with_status_code(code).with_header(header));
     }
     Ok(())
 }
