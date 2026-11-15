@@ -483,10 +483,16 @@ fn format_source(src: &str) -> String {
         }
         // `while(...)` after `repeat` is the loop's closer, not an opener
         let closes_repeat = first == "while" && stack.last() == Some(&"repeat");
+        // inside `match`, each `when`/`else` arm is one level in and its body two:
+        // an arm closes the previous one, and `end match` closes both
+        let arm = matches!(first.as_str(), "when" | "else") && stack.last() == Some(&"arm");
+        if arm || (first == "end" && stack.last() == Some(&"arm")) {
+            stack.pop();
+        }
         if first == "end" || closes_repeat {
             stack.pop();
         }
-        let dedent_kw = matches!(first.as_str(), "else" | "catch" | "always");
+        let dedent_kw = !arm && matches!(first.as_str(), "else" | "catch" | "always");
         let level = (stack.len() as i32 + i32::from(in_vars) - i32::from(dedent_kw)).max(0);
         for _ in 0..level {
             out.push_str("    ");
@@ -504,6 +510,8 @@ fn format_source(src: &str) -> String {
                 "class" => stack.push("class"),
                 "try" => stack.push("try"),
                 "repeat" => stack.push("repeat"),
+                "match" => stack.push("match"),
+                "when" | "else" if matches!(stack.last(), Some(&"match")) => stack.push("arm"),
                 _ => {}
             }
         }

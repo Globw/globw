@@ -433,6 +433,8 @@ pub enum TExprKind {
     Char(Box<TExpr>, Box<TExpr>),
     ToReal(Box<TExpr>),
     ToStr(Box<TExpr>),
+    /// `if(cond) a else b`: evaluates `a` or `b` (both already of the result type)
+    Cond(Box<TExpr>, Box<TExpr>, Box<TExpr>),
     /// the `BaseType` is the type of both operands (after conversions)
     Binary(BinOp, BaseType, Box<TExpr>, Box<TExpr>),
     Neg(BaseType, Box<TExpr>),

@@ -70,6 +70,8 @@ pub enum ExprKind {
     TupleLit(Vec<Expr>),
     /// one element of a tuple, by 1-based position: `t.1`
     TupleGet(Box<Expr>, usize),
+    /// a conditional value: `if(cond) a else b` (only the chosen side runs)
+    Cond(Box<Expr>, Box<Expr>, Box<Expr>),
 }
 
 /// The left side of an assignment: `x`, `v[i]` or `m[i, j]`.

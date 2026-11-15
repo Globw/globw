@@ -20,6 +20,19 @@ the logic in Globw.
 - New demo `examples/demos/webui.gw` (HTML/CSS/JS in `webui/`, a JSON API in
   Globw) and a "Web interfaces" section in the tutorial.
 
+**Language.**
+
+- **Conditional values**: `if(cond) a else b` is an expression —
+  `max = if(a > b) a else b`. Only the chosen side runs (so
+  `if(d == 0) 0 else x div d` never divides by zero); an `int` and a `float`
+  side give a `float`; chains like `if(x < 0) "neg" else if(x == 0) "zero" else "pos"`.
+- **`match` with ranges and comparisons**: `when 90 to 100`, `when < 0`,
+  `when >= 18`, mixed with commas (`when < 0, > 100`); ranges work on text too.
+- **Formatted interpolation**: `${value:spec}` inside text — `${price:.2}`,
+  `${total:,}`, `${ratio:.1%}`, `${name:>8}`, `${n:05}` — and the matching
+  `format(value, spec)` function (align, width, zero padding, thousands,
+  decimals, percent).
+
 **Removed.** The `gtq` liquid-glass widgets (`gtq.glass`, `gtq.glass_round`,
 `gtq.glass_circle`, `gtq.glass_button`). The dashboard demo uses `gtq.panel`.
 

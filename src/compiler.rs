@@ -354,6 +354,7 @@ impl<'a> FnCompiler<'a> {
                 self.emit(Op::ToStr(d, r), pos);
             }
             TExprKind::Binary(op @ (BinOp::And | BinOp::Or), _, a, b) => self.logic(*op, a, b, d, pos),
+            TExprKind::Cond(c, a, b) => self.cond_value(c, a, b, d, pos),
             TExprKind::Binary(op, BaseType::Int, a, b) if self.try_int_imm(*op, a, b, d, pos) => {}
             TExprKind::Binary(op, t, a, b) => {
                 let x = self.operand(a);
@@ -550,6 +551,24 @@ impl<'a> FnCompiler<'a> {
         self.expr_into(b, r);
         let end = self.here();
         self.patch(jump, end);
+        if r != d {
+            self.emit(Op::Move(d, r), pos);
+        }
+    }
+
+    /// `if(c) a else b` into register `d`: only the chosen side is evaluated.
+    fn cond_value(&mut self, c: &TExpr, a: &TExpr, b: &TExpr, d: Reg, pos: Pos) {
+        // writing straight into a variable could clobber a value the other side reads
+        let r = if d < self.n_locals { self.temp() } else { d };
+        let cr = self.operand(c);
+        let to_else = self.emit(Op::JumpIfFalse(cr, 0), pos);
+        self.expr_into(a, r);
+        let to_end = self.emit(Op::Jump(0), pos);
+        let else_at = self.here();
+        self.patch(to_else, else_at);
+        self.expr_into(b, r);
+        let end = self.here();
+        self.patch(to_end, end);
         if r != d {
             self.emit(Op::Move(d, r), pos);
         }

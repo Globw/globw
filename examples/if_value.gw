@@ -1,0 +1,27 @@
+' if used as a value: if(cond) a else b. Only the chosen side runs.
+
+variables:
+    a, b, n, i as int
+    x as float
+    label as string
+    items as list of string
+function boom() as int
+    output("boom ran!")
+    return 1
+end function
+a = 7
+b = 3
+n = if(a > b) a else b
+output("max: ", n)
+x = if(a > 100) 1 else 2.5
+output("mixed: ", x)
+for(i from 1 to 4)
+    label = if(i == 1) "one" else if(i == 2) "two" else "many"
+    append(items, label)
+end loop
+output(items)
+output("short-circuit: ", if(a > 0) 42 else boom())
+output("safe divide: ", if(b == 0) 0 else a div b)
+output("in text: ${if(a mod 2 == 0) "even" else "odd"}")
+a = if(a > 5) a - 5 else a
+output("self-assign: ", a)

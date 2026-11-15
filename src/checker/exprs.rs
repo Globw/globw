@@ -324,6 +324,43 @@ impl<'p> Checker<'p> {
                 ));
                 unknown(pos)
             }
+            ExprKind::Cond(c, a, b) => {
+                let c = self.expr(c);
+                if !matches!(c.ty, Type::Base(BaseType::Bool) | Type::Unknown) {
+                    self.report(Error::new(
+                        c.pos,
+                        format!("the condition of if(...) must be true or false, here it is {}", c.ty.full_name()),
+                    ));
+                }
+                let (a, b) = (self.expr(a), self.expr(b));
+                if a.ty == Type::Unknown || b.ty == Type::Unknown {
+                    return unknown(pos);
+                }
+                let num = |t: Type| matches!(t, Type::Base(BaseType::Int | BaseType::Real));
+                let (a, b, ty) = if a.ty == b.ty {
+                    let ty = a.ty;
+                    (a, b, ty)
+                } else if num(a.ty) && num(b.ty) {
+                    (convert(a, Some(BaseType::Real)), convert(b, Some(BaseType::Real)), Type::Base(BaseType::Real))
+                } else if a.ty == Type::None && matches!(b.ty, Type::Object(_) | Type::Func(_)) {
+                    let ty = b.ty;
+                    (a, b, ty)
+                } else if b.ty == Type::None && matches!(a.ty, Type::Object(_) | Type::Func(_)) {
+                    let ty = a.ty;
+                    (a, b, ty)
+                } else {
+                    self.report(Error::new(
+                        pos,
+                        format!(
+                            "both values of if(...) ... else ... must have the same type, here they are {} and {}",
+                            a.ty.full_name(),
+                            b.ty.full_name()
+                        ),
+                    ));
+                    return unknown(pos);
+                };
+                TExpr { kind: TExprKind::Cond(Box::new(c), Box::new(a), Box::new(b)), ty, pos }
+            }
             ExprKind::Binary(op, a, b) => {
                 let a = self.expr(a);
                 let b = self.expr(b);

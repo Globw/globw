@@ -517,6 +517,11 @@ impl Scope<'_> {
             ExprKind::Int(_) | ExprKind::Real(_) | ExprKind::Str(_) | ExprKind::Bool(_) | ExprKind::NoneLit => {}
             ExprKind::TupleLit(items) => items.iter_mut().for_each(|e| self.expr(e)),
             ExprKind::TupleGet(b, _) => self.expr(b),
+            ExprKind::Cond(c, a, b) => {
+                self.expr(c);
+                self.expr(a);
+                self.expr(b);
+            }
         }
     }
 }

@@ -72,6 +72,29 @@ end loop
 There is also `while(condition) … end loop`, and `repeat … while(condition)`
 for a loop that always runs at least once. `break` and `continue` work as usual.
 
+`match` picks a branch by value, range or comparison, `if(...) a else b` gives a
+value directly, and `${value:spec}` formats numbers inside text:
+
+```gw
+variables:
+    score as int
+    grade as string
+
+score = 72
+match score
+    when 90 to 100
+        grade = "A"
+    when 60 to 89
+        grade = "pass"
+    when < 0, > 100
+        grade = "invalid"
+    else
+        grade = "try again"
+end match
+output(grade, " - ", if(score >= 60) "well done" else "keep going")
+output("Score per question: ${score / 7:.2}")     ' Score per question: 10.29
+```
+
 ## 4. Functions and procedures
 
 A **function** returns a value and declares its return type after the

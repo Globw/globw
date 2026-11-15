@@ -1,0 +1,16 @@
+' Formatting values: ${value:spec} inside text, and format(value, spec).
+
+variables:
+    price, ratio as float
+    n as int
+    name as string
+    d as dict of string to int
+price = 3.14159
+ratio = 0.4567
+n = 1234567
+name = "Ada"
+d["a:b"] = 5
+output("price ${price:.2} | n ${n:,} | ratio ${ratio:.1%}")
+output("[${name:>6}] [${name:<6}] [${name:*^9}] [${42:05}]")
+output("dict ${d["a:b"]} | expr ${n * 2:,} | plain ${price}")
+output(format(2.5, "8.3"))

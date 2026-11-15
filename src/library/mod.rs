@@ -104,6 +104,14 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => ok(none(1), Type::Base(Str)),
             }
         }
+        Format => {
+            arity(2)?;
+            match (a[0], a[1]) {
+                (Type::Base(Int | Real | Str | Bool), Type::Base(Str)) => ok(none(2), Type::Base(Str)),
+                (_, Type::Base(Str)) => other("format works with a number, a text or a bool, like format(price, \".2\")"),
+                _ => other("format needs the format as text, like format(x, \".2\")"),
+            }
+        }
         TaskSpawn => {
             arity(1)?;
             match a[0] {
@@ -1541,6 +1549,8 @@ mod shell;
 use shell::*;
 mod ui;
 use ui::*;
+mod fmtspec;
+use fmtspec::*;
 
 // ---- module "ffi": call C functions from a native shared library (in ffi.rs) ----
 #[cfg(feature = "native")]
@@ -7502,6 +7512,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             v => Value::Real(real(v)),
         },
         ToText => string(display(&args[0])),
+        Format => string(format_value(&args[0], text(&args[1]))?),
         Char => {
             let n = int(&args[0]);
             let c = u32::try_from(n)

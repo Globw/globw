@@ -1,0 +1,7 @@
+max: 7
+mixed: 2.5
+['one', 'two', 'many', 'many']
+short-circuit: 42
+safe divide: 2
+in text: odd
+self-assign: 2

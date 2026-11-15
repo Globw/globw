@@ -109,6 +109,42 @@ fn fmt_reindents_and_is_idempotent() {
 }
 
 #[test]
+fn fmt_indents_match_arms() {
+    // a `match` inside an `if`: arms one level in, their bodies two, `else` arm too
+    let flat = "if(true)
+match n
+when < 0, > 9
+output(1)
+when 1 to 5
+if(n == 2)
+output(2)
+end if
+else
+output(3)
+end match
+end if
+";
+    let want = "if(true)
+    match n
+        when < 0, > 9
+            output(1)
+        when 1 to 5
+            if(n == 2)
+                output(2)
+            end if
+        else
+            output(3)
+    end match
+end if
+";
+    let (code, stdout, stderr) = globw_stdin(&["fmt"], flat);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, want);
+    let (_, again, _) = globw_stdin(&["fmt"], &stdout);
+    assert_eq!(again, want);
+}
+
+#[test]
 fn runs_a_program() {
     let (code, stdout, _) = globw(&["examples/hello.gw"]);
     assert_eq!(code, 0);

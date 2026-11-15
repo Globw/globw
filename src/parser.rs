@@ -996,7 +996,6 @@ impl Parser {
         let subject = self.expr()?;
         self.end_stmt()?;
         self.enter()?;
-        let eq = |a: Expr, b: Expr| Expr { kind: ExprKind::Binary(BinOp::Eq, Box::new(a), Box::new(b)), pos };
         let mut branches: Vec<(Expr, Vec<Stmt>)> = Vec::new();
         let mut else_body: Option<Vec<Stmt>> = None;
         self.skip_newlines();
@@ -1014,19 +1013,13 @@ impl Parser {
                     return self.fail("when cannot come after else in a match");
                 }
                 self.advance();
-                let mut values = vec![self.expr()?];
+                let mut cond = self.match_pattern(&subject, pos)?;
                 while self.accept(&Tok::Comma) {
-                    values.push(self.expr()?);
+                    let next = self.match_pattern(&subject, pos)?;
+                    cond = Expr { kind: ExprKind::Binary(BinOp::Or, Box::new(cond), Box::new(next)), pos };
                 }
                 self.end_stmt()?;
                 let body = self.match_arm_body()?;
-                let mut cond = eq(subject.clone(), values[0].clone());
-                for v in values.into_iter().skip(1) {
-                    cond = Expr {
-                        kind: ExprKind::Binary(BinOp::Or, Box::new(cond), Box::new(eq(subject.clone(), v))),
-                        pos,
-                    };
-                }
                 branches.push((cond, body));
             } else if self.is(&Tok::Else) {
                 self.advance();
@@ -1041,6 +1034,24 @@ impl Parser {
         self.advance(); // end match
         self.end_stmt()?;
         Ok(StmtKind::If { branches, else_body })
+    }
+
+    /// One pattern of a `when` arm, as the condition it stands for: a value
+    /// (`when 5`), a range (`when 1 to 9`, both ends included) or a comparison
+    /// (`when < 0`, `when >= 18`).
+    fn match_pattern(&mut self, subject: &Expr, pos: Pos) -> Result<Expr, Error> {
+        let bin = |op: BinOp, a: Expr, b: Expr| Expr { kind: ExprKind::Binary(op, Box::new(a), Box::new(b)), pos };
+        if let Some(op) = self.comparison_op() {
+            self.advance();
+            let v = self.expr()?;
+            return Ok(bin(op, subject.clone(), v));
+        }
+        let a = self.expr()?;
+        if self.accept(&Tok::To) {
+            let b = self.expr()?;
+            return Ok(bin(BinOp::And, bin(BinOp::GtEq, subject.clone(), a), bin(BinOp::LtEq, subject.clone(), b)));
+        }
+        Ok(bin(BinOp::Eq, subject.clone(), a))
     }
 
     /// The statements of one `when`/`else` arm, up to the next arm or `end match`.
@@ -1368,9 +1379,27 @@ impl Parser {
         }
     }
 
+    /// A conditional value `if(cond) a else b`, after the `if`. Kept out of
+    /// `atom` (and never inlined) so the frame of `atom`, which recurses once per
+    /// nesting level, stays small.
+    #[inline(never)]
+    fn cond_value(&mut self) -> Result<ExprKind, Error> {
+        self.expect(&Tok::LParen, "\"(\" after if, like if(x > 0) a else b")?;
+        let cond = self.expr()?;
+        self.expect(&Tok::RParen, "\")\" after the condition")?;
+        let yes = self.expr()?;
+        if !self.is(&Tok::Else) {
+            return self.fail("an if used as a value needs an else: if(cond) a else b");
+        }
+        self.advance();
+        let no = self.expr()?;
+        Ok(ExprKind::Cond(Box::new(cond), Box::new(yes), Box::new(no)))
+    }
+
     fn atom(&mut self) -> Result<Expr, Error> {
         let t = self.advance();
         let kind = match t.tok {
+            Tok::If => self.cond_value()?,
             Tok::Int(n) => ExprKind::Int(n),
             Tok::Real(r) => ExprKind::Real(r),
             Tok::Str(s) => ExprKind::Str(s),
@@ -1543,6 +1572,7 @@ mod tests {
             ExprKind::NoneLit => "none".to_string(),
             ExprKind::TupleLit(items) => format!("({})", list(items)),
             ExprKind::TupleGet(b, n) => format!("{}.{}", sx(b), n),
+            ExprKind::Cond(c, a, b) => format!("(if {} {} {})", sx(c), sx(a), sx(b)),
         }
     }
 

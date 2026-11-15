@@ -1,0 +1,34 @@
+' match with ranges (when a to b), comparisons (when < 0) and plain values.
+
+variables:
+    score as int
+    t as float
+    word as string
+for(score in [-5, 0, 7, 55, 90, 100, 130])
+    match score
+        when < 0, > 100
+            output(score, ": invalid")
+        when 90 to 100
+            output(score, ": A")
+        when 60 to 89
+            output(score, ": pass")
+        when 0
+            output(score, ": zero")
+        else
+            output(score, ": fail")
+    end match
+end loop
+t = 37.8
+match t
+    when >= 37.5
+        output("fever")
+    else
+        output("ok")
+end match
+word = "kiwi"
+match word
+    when "apple", "kiwi"
+        output("fruit")
+    when "a" to "f"
+        output("early word")
+end match

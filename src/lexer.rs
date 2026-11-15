@@ -147,6 +147,39 @@ pub fn miscased_value_keyword(name: &str) -> Option<String> {
     miscased(name, &["true", "false", "not", "div", "mod"])
 }
 
+/// Splits the inside of `${...}` into the value and an optional format spec at
+/// the last `:` that is outside strings and brackets: `price:.2` → (`price`, `.2`).
+fn split_format_spec(src: &str) -> (String, Option<String>) {
+    let chars: Vec<char> = src.chars().collect();
+    let (mut depth, mut in_str, mut at) = (0i32, false, None);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_str {
+            if c == '\\' {
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_str = false;
+            }
+        } else {
+            match c {
+                '"' => in_str = true,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ':' if depth == 0 => at = Some(i),
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    match at {
+        Some(k) => (chars[..k].iter().collect(), Some(chars[k + 1..].iter().collect::<String>().trim().to_string())),
+        None => (src.to_string(), None),
+    }
+}
+
 pub fn tokenize(source: &str) -> Result<Vec<Token>, Error> {
     let mut s = Scanner {
         chars: source.trim_start_matches('\u{feff}').chars().collect(),
@@ -368,6 +401,12 @@ impl Scanner {
             match part {
                 Part::Lit(s) => self.push(Tok::Str(s), line, col, 1),
                 Part::Expr(src) => {
+                    // `${value:spec}` formats the value: format((value), "spec")
+                    let (src, spec) = split_format_spec(&src);
+                    if spec.is_some() {
+                        self.push(Tok::Name("format".to_string()), line, col, 1);
+                        self.push(Tok::LParen, line, col, 1);
+                    }
                     self.push(Tok::LParen, line, col, 1);
                     let toks = tokenize(&src).map_err(|_| {
                         Error::new(Pos::new(line, col, 1), format!("invalid expression inside ${{ }}: {}", src.trim()))
@@ -380,6 +419,11 @@ impl Scanner {
                         self.push(t.tok, line, col, 1);
                     }
                     self.push(Tok::RParen, line, col, 1);
+                    if let Some(spec) = spec {
+                        self.push(Tok::Comma, line, col, 1);
+                        self.push(Tok::Str(spec), line, col, 1);
+                        self.push(Tok::RParen, line, col, 1);
+                    }
                 }
             }
         }
