@@ -1,0 +1,9 @@
+start: red
+then: green - next: yellow
+priority: medium
+level is medium / high / [  medium]
+low
+medium
+high (top)
+3 levels
+deploy: now!

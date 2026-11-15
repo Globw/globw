@@ -52,6 +52,8 @@ fn text(t: &Tok) -> &'static str {
         Tok::Continue => "continue",
         Tok::Class => "class",
         Tok::EndClass => "end class",
+        Tok::Enum => "enum",
+        Tok::EndEnum => "end enum",
         Tok::New => "new",
         Tok::Is => "is",
         Tok::None => "none",
@@ -193,6 +195,11 @@ impl Parser {
             p.imports.extend(self.import()?);
             self.skip_newlines();
         }
+        // enums may come before the variables that use them
+        while self.is(&Tok::Enum) {
+            p.enums.push(self.enum_def()?);
+            self.skip_newlines();
+        }
         while self.is(&Tok::Global) {
             self.advance();
             if !self.is(&Tok::Variables) {
@@ -206,6 +213,8 @@ impl Parser {
         while !self.is(&Tok::Eof) {
             if self.is(&Tok::Class) {
                 p.classes.push(self.class_def()?);
+            } else if self.is(&Tok::Enum) {
+                p.enums.push(self.enum_def()?);
             } else if self.is(&Tok::Function) || self.is(&Tok::Procedure) {
                 let sub = self.subprogram()?;
                 p.subprograms.push(sub);
@@ -527,6 +536,58 @@ impl Parser {
             }
             _ => self.fail("array size must be an integer greater than 0"),
         }
+    }
+
+    /// `enum Color red, green, blue` on one line, or a block of names (commas or
+    /// one per line) closed by `end enum`.
+    fn enum_def(&mut self) -> Result<EnumDef, Error> {
+        let pos = self.pos();
+        self.advance(); // enum
+        let name = match self.tok().clone() {
+            Tok::Name(n) if !n.contains('.') => {
+                self.advance();
+                n
+            }
+            other => return self.fail(format!("expected the enum name, found {}", describe(&other))),
+        };
+        let mut members = Vec::new();
+        let one_line = !self.is(&Tok::Newline) && !self.is(&Tok::Eof);
+        loop {
+            if !one_line {
+                self.skip_newlines();
+                if self.is(&Tok::EndEnum) {
+                    self.advance();
+                    break;
+                }
+                if self.is(&Tok::Eof) {
+                    return self.fail(format!("enum {} is not closed: add \"end enum\"", name));
+                }
+            }
+            loop {
+                let mpos = self.pos();
+                match self.tok().clone() {
+                    Tok::Name(n) if !n.contains('.') => {
+                        self.advance();
+                        members.push((n, mpos));
+                    }
+                    other => {
+                        return self.fail(format!("expected a value name of enum {}, found {}", name, describe(&other)))
+                    }
+                }
+                if !self.accept(&Tok::Comma) {
+                    break;
+                }
+            }
+            if one_line {
+                break;
+            }
+            self.end_stmt()?;
+        }
+        self.end_stmt()?;
+        if members.is_empty() {
+            return Err(Error::new(pos, format!("enum {} needs at least one value", name)));
+        }
+        Ok(EnumDef { name, members, pos })
     }
 
     fn class_def(&mut self) -> Result<Class, Error> {

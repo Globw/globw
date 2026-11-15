@@ -183,7 +183,16 @@ impl<'p> Checker<'p> {
             ));
             return unknown(pos);
         }
-        let targs: Vec<TExpr> = args.iter().map(|a| self.expr(a)).collect();
+        let mut targs: Vec<TExpr> = args.iter().map(|a| self.expr(a)).collect();
+        // to_text and format show an enum value by its name
+        if matches!(b, Builtin::ToText | Builtin::Format) {
+            if let Some(first) = targs.first_mut() {
+                if super::exprs::shows_enum(first.ty) {
+                    let t = std::mem::replace(first, unknown(pos));
+                    *first = super::exprs::to_str(t);
+                }
+            }
+        }
         let types: Vec<Type> = targs.iter().map(|t| t.ty).collect();
         match b.check(&types) {
             Ok(checked) => {

@@ -180,6 +180,14 @@ pub struct Decl {
 /// A class: fields (in `variables:` blocks) and methods (functions and
 /// procedures). The constructor is the method named `new`.
 #[derive(Debug, Clone, PartialEq)]
+pub struct EnumDef {
+    pub name: String,
+    pub members: Vec<(String, Pos)>,
+    pub pos: Pos,
+}
+
+/// `class Name ... end class`
+#[derive(Debug, Clone, PartialEq)]
 pub struct Class {
     pub name: String,
     /// the parent class, for inheritance (unused in the first version)
@@ -206,6 +214,7 @@ pub struct Subprogram {
 pub struct Program {
     pub imports: Vec<Import>,
     pub classes: Vec<Class>,
+    pub enums: Vec<EnumDef>,
     pub globals: Vec<Decl>,
     pub locals: Vec<Decl>,
     pub subprograms: Vec<Subprogram>,

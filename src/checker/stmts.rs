@@ -354,7 +354,7 @@ impl<'p> Checker<'p> {
         let v = if v.ty == Type::Grid { super::exprs::fuse(v) } else { v };
         let var = self.var(t.place);
         let whole = var.shape != Shape::Scalar
-            || matches!(var.full_type(), Type::Object(_) | Type::Func(_) | Type::Tuple(_) | Type::Grid);
+            || matches!(var.full_type(), Type::Object(_) | Type::Func(_) | Type::Tuple(_) | Type::Grid | Type::Enum(_));
         if whole && t.indices.is_empty() {
             // a whole list, dictionary or object, like `words = split(s, " ")` or `p = new Point(1, 2)`
             let (expected, name) = (var.full_type(), var.name.clone());
@@ -646,7 +646,14 @@ impl<'p> Checker<'p> {
 
     fn call_stmt(&mut self, name: &str, args: &[Expr], pos: Pos) -> Option<TStmt> {
         match name {
-            "output" => Some(TStmt::Output(args.iter().map(|a| self.expr(a)).collect())),
+            "output" => Some(TStmt::Output(
+                args.iter()
+                    .map(|a| {
+                        let t = self.expr(a);
+                        if super::exprs::shows_enum(t.ty) { super::exprs::to_str(t) } else { t }
+                    })
+                    .collect(),
+            )),
             "input" => {
                 if args.is_empty() {
                     self.report_structural(Error::new(pos, "input needs at least one variable"));

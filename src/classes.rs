@@ -24,6 +24,29 @@ pub fn lower(prog: &mut Program) -> Result<(), Vec<Error>> {
     let mut errors = Vec::new();
     let classes = std::mem::take(&mut prog.classes);
 
+    // 0. enums: their names and values, installed before any type is resolved
+    let mut enums: Vec<(String, Vec<String>)> = Vec::new();
+    for e in &prog.enums {
+        if is_builtin_name(&e.name) || is_base_type_word(&e.name) {
+            errors.push(Error::new(e.pos, format!("\"{}\" is a reserved name: choose another for the enum", e.name)));
+            continue;
+        }
+        if enums.iter().any(|(n, _)| *n == e.name) || classes.iter().any(|c| c.name == e.name) {
+            errors.push(Error::new(e.pos, format!("\"{}\" is defined twice", e.name)));
+            continue;
+        }
+        let mut names: Vec<String> = Vec::new();
+        for (m, mpos) in &e.members {
+            if names.contains(m) {
+                errors.push(Error::new(*mpos, format!("\"{}\" appears twice in enum {}", m, e.name)));
+            } else {
+                names.push(m.clone());
+            }
+        }
+        enums.push((e.name.clone(), names));
+    }
+    tir::set_enums(enums);
+
     // 1. class ids, with name checks
     let mut ids: HashMap<String, u16> = HashMap::new();
     for c in &classes {
@@ -237,10 +260,11 @@ fn resolve_named(t: Type, ids: &HashMap<String, u16>, pos: Pos, errors: &mut Vec
             let name = tir::named_name(id);
             match ids.get(&name) {
                 Some(&cid) => Type::Object(cid),
+                None if tir::enum_id(&name).is_some() => Type::Enum(tir::enum_id(&name).unwrap_or(0)),
                 None => {
                     errors.push(
                         Error::new(pos, format!("unknown type \"{}\"", name))
-                            .with_hint("the types are int, float, string, bool, a list, a dictionary or a class"),
+                            .with_hint("the types are int, float, string, bool, a list, a dictionary, a class or an enum"),
                     );
                     Type::Unknown
                 }

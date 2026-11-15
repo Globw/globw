@@ -511,6 +511,8 @@ fn format_source(src: &str) -> String {
                 "try" => stack.push("try"),
                 "repeat" => stack.push("repeat"),
                 "match" => stack.push("match"),
+                // `enum Name` opens a block; `enum Name a, b` is a whole enum on one line
+                "enum" if t.split_whitespace().count() == 2 => stack.push("enum"),
                 "when" | "else" if matches!(stack.last(), Some(&"match")) => stack.push("arm"),
                 _ => {}
             }

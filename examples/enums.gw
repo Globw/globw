@@ -1,0 +1,60 @@
+' Enums: a type with a fixed set of named values.
+
+enum Light red, yellow, green
+
+enum Level
+    low, medium
+    high
+end enum
+
+variables:
+    l as Light
+    lv as Level
+    seen as list of Level
+    msg as string
+    t as Task
+
+function next(l as Light) as Light
+    match l
+        when Light.red
+            return Light.green
+        when Light.green
+            return Light.yellow
+        else
+            return Light.red
+    end match
+end function
+
+class Task
+    variables:
+        name as string
+        level as Level
+end class
+
+l = Light.red
+output("start: ", l)
+l = next(l)
+output("then: ", l, " - next: ", next(l))
+
+lv = Level.medium
+if(lv >= Level.medium)
+    output("priority: ${lv}")
+end if
+msg = "level is " + lv
+output(msg, " / ", to_text(Level.high), " / [", format(lv, ">8"), "]")
+
+for(lv in Level.values)
+    append(seen, lv)
+    output(lv, if(lv == Level.high) " (top)" else "")
+end loop
+output(length(seen), " levels")
+
+t = new Task()
+t.name = "deploy"
+t.level = Level.high
+match t.level
+    when Level.low to Level.medium
+        output(t.name, ": can wait")
+    else
+        output(t.name, ": now!")
+end match

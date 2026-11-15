@@ -1258,7 +1258,54 @@ lo, hi = (hi, lo)              ' the right side is evaluated first, so this swap
   tuples work there too (`for(name, _ in people)`).
 - A tuple is printed like a list (`[3, 7]`).
 
-### 6.17 Permissions (running untrusted code)
+### 6.17 Enums
+
+An enum is a type with a fixed set of named values — a state, a direction, a
+level — so a variable can hold only one of them, and a typo is a compile-time
+error instead of a wrong string at run time.
+
+```
+enum Light red, yellow, green      ' on one line
+
+enum Level                         ' or as a block, with commas or one per line
+    low, medium
+    high
+end enum
+
+variables:
+    l as Light
+    lv as Level
+
+l = Light.red                      ' a value: EnumName.value
+match l
+    when Light.red
+        output("stop")
+    when Light.yellow to Light.green
+        output("go, carefully")
+end match
+output(l)                          ' red
+for(lv in Level.values)            ' every value, in order
+    output(lv)
+end loop
+```
+
+- **Declaration:** `enum Name a, b, c` on one line, or `enum Name` … `end enum`
+  with the values separated by commas or newlines. Enums go before or after the
+  `variables:` block, in the main program (not in an imported module, for now).
+  Each enum needs at least one value; names cannot repeat.
+- **Type:** the enum name is a type like `int` or a class: variables, parameters,
+  return values, class fields, `list of Level`, `dict of string to Level` and
+  tuples can hold enum values. A value of another enum, or an `int`, does not fit.
+- **Values:** `Name.value`; `Name.values` is the list of all values in order.
+- **Comparing:** `==` and `!=`, and `<`, `<=`, `>`, `>=` by the order of the
+  declaration (`Level.low < Level.high`), so `match` ranges like
+  `when Level.low to Level.medium` work. Only values of the same enum compare;
+  enum values do no arithmetic.
+- **As text:** `output`, `+` with a string, `${value}`, `to_text` and `format`
+  show the value's name (`medium`), and lists and dictionaries of enum values
+  show names too (`[low, medium, high]`).
+
+### 6.18 Permissions (running untrusted code)
 
 A program's access to the system is **denied by default**. The `gw` command grants
 each kind of access only when you ask for it, so running a `.gw` file you did not
@@ -1289,7 +1336,7 @@ Without the matching flag the call fails with a clear error that names the flag 
 add. Pure computation — maths, strings, collections, `nungw`, graphics windows —
 needs no permission.
 
-### 6.18 Foreign functions (`ffi`)
+### 6.19 Foreign functions (`ffi`)
 
 `import ffi` calls C functions from a native shared library, so Globw can reach
 anything with a C ABI. It runs native code, so it needs `--allow-run`. The FFI is

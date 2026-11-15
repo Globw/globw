@@ -63,6 +63,8 @@ pub enum Type {
     Tuple(u32),
     /// a fast contiguous array of floats (the `grid` engine); at run time an int handle
     Grid,
+    /// a value of the enum with this id; at run time its 0-based position (an int)
+    Enum(u16),
 }
 
 /// A type stored in the type table, so that `Type` stays small and `Copy`
@@ -97,6 +99,24 @@ thread_local! {
     static METHOD_TARGETS: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) };
     static FUNCS: std::cell::RefCell<Vec<(Vec<Type>, Option<Type>)>> = const { std::cell::RefCell::new(Vec::new()) };
     static TUPLES: std::cell::RefCell<Vec<Vec<Type>>> = const { std::cell::RefCell::new(Vec::new()) };
+    static ENUMS: std::cell::RefCell<Vec<(String, Vec<String>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Replaces the enum table: each enum's name and its value names, in order.
+pub fn set_enums(list: Vec<(String, Vec<String>)>) {
+    ENUMS.with(|t| *t.borrow_mut() = list);
+}
+
+pub fn enum_id(name: &str) -> Option<u16> {
+    ENUMS.with(|t| t.borrow().iter().position(|e| e.0 == name).map(|i| i as u16))
+}
+
+pub fn enum_name(id: u16) -> String {
+    ENUMS.with(|t| t.borrow()[id as usize].0.clone())
+}
+
+pub fn enum_members(id: u16) -> Vec<String> {
+    ENUMS.with(|t| t.borrow()[id as usize].1.clone())
 }
 
 /// The tuple type with the given element types; equal tuples get the same id.
@@ -332,6 +352,7 @@ impl Type {
             Type::Set(_) => "a set",
             Type::Tuple(_) => "a tuple",
             Type::Grid => "a nungw",
+            Type::Enum(_) => "an enum value",
         }
     }
 
@@ -348,6 +369,7 @@ impl Type {
                 format!("a tuple of ({})", parts.iter().map(|p| p.full_name()).collect::<Vec<_>>().join(", "))
             }
             Type::Object(id) => format!("a {}", class_name(id)),
+            Type::Enum(id) => format!("a {}", enum_name(id)),
             Type::Named(id) => format!("a {}", named_name(id)),
             Type::Func(_) => {
                 let (params, ret) = func_parts(self).expect("a function type");
@@ -370,6 +392,7 @@ impl Type {
             Type::Array(_) => "arrays".to_string(),
             Type::Matrix(_) => "matrices".to_string(),
             Type::Object(id) => format!("{} objects", class_name(id)),
+            Type::Enum(id) => format!("{} values", enum_name(id)),
             Type::Grid => "nungws".to_string(),
             _ => "values".to_string(),
         }

@@ -28,6 +28,11 @@ the logic in Globw.
   side give a `float`; chains like `if(x < 0) "neg" else if(x == 0) "zero" else "pos"`.
 - **`match` with ranges and comparisons**: `when 90 to 100`, `when < 0`,
   `when >= 18`, mixed with commas (`when < 0, > 100`); ranges work on text too.
+- **Enums**: `enum Light red, yellow, green` (or an `enum … end enum` block)
+  declares a type with named values — `l = Light.red`, `l as Light`,
+  `Level.values` for all of them. They compare by declaration order (so `match`
+  ranges work), print by name (also inside lists and dictionaries), and are
+  type-checked: a value of another enum or an `int` does not fit.
 - **Tuple unpacking everywhere**: `a, b = b, a` swaps without parentheses,
   `_` skips a part (`a, _ = t`), nested tuples unpack (`a, (b, c) = t`), and
   loops unpack too — `for(name, age in people)` over a list of tuples and

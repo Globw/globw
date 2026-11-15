@@ -15,7 +15,7 @@ const KEYWORDS = [
     'while', 'do', 'break', 'continue', 'import', 'lazy', 'as', 'of', 'list', 'dict', 'set', 'to',
     'int', 'float', 'string', 'bool', 'nungw', 'new', 'class', 'extends', 'try', 'catch', 'always',
     'and', 'or', 'not', 'true', 'false', 'none', 'in', 'gives', 'output', 'input', 'append', 'remove', 'length',
-    'match', 'when', 'const', 'repeat', 'global', 'is', 'fail', 'format',
+    'match', 'when', 'const', 'repeat', 'global', 'is', 'fail', 'format', 'enum',
 ];
 
 // Map of builtin name -> signature string, loaded once from `gw --builtins`.

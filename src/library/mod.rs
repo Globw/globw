@@ -104,6 +104,10 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => ok(none(1), Type::Base(Str)),
             }
         }
+        EnumText => {
+            arity(2)?;
+            ok(none(2), Type::Base(Str))
+        }
         Format => {
             arity(2)?;
             match (a[0], a[1]) {
@@ -1551,6 +1555,29 @@ mod ui;
 use ui::*;
 mod fmtspec;
 use fmtspec::*;
+
+/// A list or dictionary of enum values written with the value names (the
+/// values are their positions at run time): `[red, green]`, `{'a': high}`.
+fn enum_text(v: &Value, names: &Value) -> String {
+    let names: Vec<String> = match names {
+        Value::Seq(q) => q.borrow().iter().map(display).collect(),
+        _ => Vec::new(),
+    };
+    let name = |x: &Value| match x {
+        Value::Int(i) => names.get(*i as usize).cloned().unwrap_or_else(|| i.to_string()),
+        other => display(other),
+    };
+    match v {
+        Value::Seq(q) => format!("[{}]", q.borrow().iter().map(name).collect::<Vec<_>>().join(", ")),
+        Value::Dict(d) => {
+            let d = d.borrow();
+            let pairs: Vec<String> =
+                d.keys().zip(d.values()).map(|(k, x)| format!("{}: {}", crate::vm::repr(&k.value()), name(x))).collect();
+            format!("{{{}}}", pairs.join(", "))
+        }
+        other => name(other),
+    }
+}
 
 // ---- module "ffi": call C functions from a native shared library (in ffi.rs) ----
 #[cfg(feature = "native")]
@@ -7513,6 +7540,7 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         },
         ToText => string(display(&args[0])),
         Format => string(format_value(&args[0], text(&args[1]))?),
+        EnumText => string(enum_text(&args[0], &args[1])),
         Char => {
             let n = int(&args[0]);
             let c = u32::try_from(n)

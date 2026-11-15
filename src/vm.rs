@@ -259,7 +259,7 @@ pub(crate) fn display(v: &Value) -> String {
 
 /// A value as Python writes it inside a collection: strings in quotes,
 /// lists in [ ], dictionaries in { }. An element with no value yet is "?".
-fn repr(v: &Value) -> String {
+pub(crate) fn repr(v: &Value) -> String {
     repr_at(v, 0)
 }
 

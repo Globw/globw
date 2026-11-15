@@ -196,11 +196,46 @@ pub(crate) fn convert(e: TExpr, target: Option<BaseType>) -> TExpr {
     base(TExprKind::ToReal(Box::new(e)), BaseType::Real, pos)
 }
 
-fn to_str(e: TExpr) -> TExpr {
+/// The enum of the elements of a list, or of the values of a dictionary.
+pub(crate) fn enum_collection(t: Type) -> Option<u16> {
+    let inner = crate::tir::list_elem(t).or_else(|| crate::tir::dict_parts(t).map(|(_, v)| v));
+    match inner {
+        Some(Type::Enum(id)) => Some(id),
+        _ => None,
+    }
+}
+
+/// True when a value must be converted to show enum names instead of numbers.
+pub(crate) fn shows_enum(t: Type) -> bool {
+    matches!(t, Type::Enum(_)) || enum_collection(t).is_some()
+}
+
+pub(crate) fn to_str(e: TExpr) -> TExpr {
     if e.ty == Type::Base(BaseType::Str) {
         return e;
     }
     let pos = e.pos;
+    if let Some(id) = enum_collection(e.ty) {
+        // a list or dictionary of enum values, written with their names
+        let names: Vec<TExpr> = crate::tir::enum_members(id)
+            .into_iter()
+            .map(|n| base(TExprKind::Str(n.as_str().into()), BaseType::Str, pos))
+            .collect();
+        let list = TExpr { kind: TExprKind::ListLit(names), ty: Type::List(Some(BaseType::Str)), pos };
+        return base(TExprKind::Builtin(crate::builtins::Builtin::EnumText, vec![e, list]), BaseType::Str, pos);
+    }
+    if let Type::Enum(id) = e.ty {
+        // the name of the value: [names][position + 1]
+        let names: Vec<TExpr> = crate::tir::enum_members(id)
+            .into_iter()
+            .map(|n| base(TExprKind::Str(n.as_str().into()), BaseType::Str, pos))
+            .collect();
+        let list = TExpr { kind: TExprKind::ListLit(names), ty: Type::List(Some(BaseType::Str)), pos };
+        let as_int = TExpr { ty: Type::Base(BaseType::Int), ..e };
+        let one = base(TExprKind::Int(1), BaseType::Int, pos);
+        let index = base(TExprKind::Binary(BinOp::Add, BaseType::Int, Box::new(as_int), Box::new(one)), BaseType::Int, pos);
+        return base(TExprKind::Index(Box::new(list), Box::new(index)), BaseType::Str, pos);
+    }
     base(TExprKind::ToStr(Box::new(e)), BaseType::Str, pos)
 }
 
@@ -245,6 +280,9 @@ impl<'p> Checker<'p> {
                     TExpr { kind: TExprKind::Load(p), ty: self.var(p).full_type(), pos }
                 }
                 None if self.sub_by_name.contains_key(name) => self.func_value(name, pos),
+                None if name.split_once('.').is_some_and(|(e, _)| crate::tir::enum_id(e).is_some()) => {
+                    self.enum_value(name, pos)
+                }
                 None if name.contains('.') => self.field_chain(name, pos),
                 None => {
                     let err = self.undeclared(name, pos);
@@ -634,6 +672,57 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `Color.red` (a value of an enum) or `Color.values` (all of them, in order).
+    fn enum_value(&mut self, name: &str, pos: Pos) -> TExpr {
+        let (ename, member) = name.split_once('.').expect("a dotted name");
+        let id = crate::tir::enum_id(ename).expect("an enum");
+        let members = crate::tir::enum_members(id);
+        let value = |i: usize| TExpr { kind: TExprKind::Int(i as i64), ty: Type::Enum(id), pos };
+        if member == "values" {
+            let all = (0..members.len()).map(value).collect();
+            return TExpr { kind: TExprKind::ListLit(all), ty: crate::tir::list_of(Type::Enum(id)), pos };
+        }
+        match members.iter().position(|m| m == member) {
+            Some(i) => value(i),
+            None => {
+                self.report(Error::new(
+                    pos,
+                    format!("enum {} has no value \"{}\"; its values are {}", ename, member, members.join(", ")),
+                ));
+                unknown(pos)
+            }
+        }
+    }
+
+    /// Operators on enum values: comparisons between values of the same enum
+    /// (by their order in the declaration), and `+` with text.
+    fn enum_binary(&mut self, op: BinOp, a: TExpr, b: TExpr, pos: Pos) -> TExpr {
+        use BinOp::*;
+        if a.ty == Type::Unknown || b.ty == Type::Unknown {
+            return unknown(pos);
+        }
+        let text = Type::Base(BaseType::Str);
+        if op == Add && (a.ty == text || b.ty == text) {
+            return self.binary(Add, to_str(a), to_str(b), pos);
+        }
+        if !matches!(op, Eq | NotEq | Lt | LtEq | Gt | GtEq) {
+            self.report(Error::new(
+                pos,
+                "enum values can be compared (==, !=, <, >) and joined to text, but not used in arithmetic",
+            ));
+            return unknown(pos);
+        }
+        if a.ty != b.ty {
+            self.report(Error::new(
+                pos,
+                format!("{} can only be compared with another value of its enum, not with {}", a.ty.full_name(), b.ty.full_name()),
+            ));
+            return unknown(pos);
+        }
+        let int = Type::Base(BaseType::Int);
+        self.binary(op, TExpr { ty: int, ..a }, TExpr { ty: int, ..b }, pos)
+    }
+
     fn binary(&mut self, op: BinOp, a: TExpr, b: TExpr, pos: Pos) -> TExpr {
         use BaseType::*;
         use BinOp::*;
@@ -650,6 +739,9 @@ impl<'p> Checker<'p> {
         // operators on grids become calls to the grid engine
         if a.ty == Type::Grid || b.ty == Type::Grid {
             return self.grid_binary(op, a, b, pos);
+        }
+        if matches!(a.ty, Type::Enum(_)) || matches!(b.ty, Type::Enum(_)) {
+            return self.enum_binary(op, a, b, pos);
         }
         // fold a constant sub-expression (5+2)*(5-4) into a literal at compile time
         if let Some(folded) = fold_const(op, &a, &b, pos) {

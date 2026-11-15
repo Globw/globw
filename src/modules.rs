@@ -40,6 +40,8 @@ struct Tables {
     aliases: Vec<HashMap<String, usize>>,
     /// name → (module, its name there), for `from ... import`
     from: Vec<HashMap<String, (usize, String)>>,
+    /// the enums of the main program: `Color.red` is a value, not a module member
+    enums: HashSet<String>,
 }
 
 impl Tables {
@@ -172,6 +174,7 @@ fn merge(mut modules: Vec<Module>, by_name: &HashMap<String, usize>) -> Result<P
         subs: modules.iter().map(|m| m.program.subprograms.iter().map(|s| s.name.clone()).collect()).collect(),
         aliases: vec![HashMap::new(); n],
         from: vec![HashMap::new(); n],
+        enums: modules.first().map(|m| m.program.enums.iter().map(|e| e.name.clone()).collect()).unwrap_or_default(),
     };
     for (k, m) in modules.iter().enumerate().skip(1) {
         let decls = m.program.globals.iter().map(|d| (&d.name, d.pos));
@@ -248,6 +251,12 @@ fn merge(mut modules: Vec<Module>, by_name: &HashMap<String, usize>) -> Result<P
                     "classes can only be defined in the main program (not in an imported module) for now",
                 ));
             }
+            if let Some(e) = m.program.enums.first() {
+                errors.push(Error::new(
+                    e.pos,
+                    "enums can only be defined in the main program (not in an imported module) for now",
+                ));
+            }
         }
     }
     if !errors.is_empty() {
@@ -258,6 +267,7 @@ fn merge(mut modules: Vec<Module>, by_name: &HashMap<String, usize>) -> Result<P
     for (k, m) in modules.iter_mut().enumerate() {
         let mut p = std::mem::take(&mut m.program);
         let classes = std::mem::take(&mut p.classes);
+        out.enums.extend(std::mem::take(&mut p.enums));
         let mut scope = Scope { k, t: &t, locals: HashSet::new(), uses: Vec::new(), errors: &mut errors };
         for mut c in classes {
             for meth in &mut c.methods {
@@ -336,7 +346,7 @@ impl Scope<'_> {
     fn resolve(&mut self, name: &str, pos: Pos, call: bool) -> String {
         let (t, k) = (self.t, self.k);
         if let Some((prefix, rest)) = name.split_once('.') {
-            if prefix == "self" || prefix == "parent" || self.locals.contains(prefix) {
+            if prefix == "self" || prefix == "parent" || self.locals.contains(prefix) || t.enums.contains(prefix) {
                 // field or method access on an object, or a super call: resolved by the checker
                 return name.to_string();
             }
