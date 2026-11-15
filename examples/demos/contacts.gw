@@ -1,0 +1,103 @@
+' A small address book: a menu bar, a form laid out automatically, a sortable
+' table, notes on several lines, a right-click menu, saving with a file dialog
+' and a light/dark theme. Run it with:  gw --allow-write examples/demos/contacts.gw
+
+import gtq
+
+variables:
+    names, phones, cities as list of string
+    rows as list of list of string
+    name, phone, city, notes, choice, action, theme, path, status as string
+    picked, i as int
+
+theme = "dark"
+names = ["Ada Lovelace", "Alan Turing", "Grace Hopper"]
+phones = ["555-0101", "555-0172", "555-0199"]
+cities = ["London", "Wilmslow", "Arlington"]
+notes = "Things to remember:\n- call Grace about COBOL\n- send Alan the paper"
+picked = 0
+name = ""
+phone = ""
+city = ""
+status = "Ready"
+
+window(820, 520, "Contacts")
+font("Segoe UI", 15)
+
+while(open())
+    gtq.theme(theme)
+    clear(gtq.theme_color("window"))
+
+    ' the form, stacked automatically
+    gtq.column(20, 56, 330, 10)
+    name = gtq.form_text("Name", name)
+    phone = gtq.form_text("Phone", phone)
+    city = gtq.form_text("City", city)
+    if(gtq.button(gtq.column_x(), gtq.row(36), 150, 36, "Add contact") or gtq.submitted())
+        if(name != "")
+            append(names, name)
+            append(phones, phone)
+            append(cities, city)
+            status = "Added ${name}"
+            name = ""
+            phone = ""
+            city = ""
+        end if
+    end if
+    text(20, gtq.row(22) + 6, "Notes", gtq.theme_color("muted"))
+    notes = gtq.textarea(20, gtq.row(200), 330, 200, notes)
+
+    ' the table of contacts, sortable by clicking a header
+    rows = []
+    for(i from 1 to length(names))
+        append(rows, [names[i], phones[i], cities[i]])
+    end loop
+    picked = gtq.table(370, 56, 430, 380, ["Name", "Phone", "City"], rows, picked)
+    if(gtq.activated() and picked > 0)
+        name = names[picked]
+        phone = phones[picked]
+        city = cities[picked]
+        status = "Editing a copy of ${name}"
+    end if
+    action = gtq.context_menu(370, 56, 430, 380, ["Copy to form", "-", "Remove"])
+    if(action == "Copy to form" and picked > 0)
+        name = names[picked]
+        phone = phones[picked]
+        city = cities[picked]
+    end if
+    if(action == "Remove" and picked > 0)
+        status = "Removed ${names[picked]}"
+        remove(names, picked)
+        remove(phones, picked)
+        remove(cities, picked)
+        picked = 0
+    end if
+
+    text(370, 452, "${length(names)} contacts  ·  ${status}", gtq.theme_color("muted"))
+
+    ' the menu bar last, so its menus open above everything
+    choice = gtq.menubar(["File: Save as...|Ctrl+S, -, Quit|Ctrl+Q", "View: Dark theme, Light theme", "Help: About"])
+    if(choice == "Save as...")
+        path = gtq.save_file("Save the contacts", "contacts.csv", "CSV files: *.csv")
+        if(path != "")
+            write_file(path, "name,phone,city")
+            for(i from 1 to length(names))
+                append_file(path, "\n" + names[i] + "," + phones[i] + "," + cities[i])
+            end loop
+            status = "Saved to ${path}"
+        end if
+    end if
+    if(choice == "Dark theme")
+        theme = "dark"
+    end if
+    if(choice == "Light theme")
+        theme = "light"
+    end if
+    if(choice == "About")
+        message("Contacts — a Globw gtq demo")
+    end if
+    if(choice == "Quit")
+        break
+    end if
+    show()
+end loop

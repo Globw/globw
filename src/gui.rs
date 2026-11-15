@@ -287,6 +287,45 @@ impl Theme {
     }
 }
 
+thread_local! {
+    /// whether the light theme is on, for the colours of the classic widgets
+    static LIGHT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn set_light(on: bool) {
+    LIGHT.with(|l| l.set(on));
+}
+
+/// A colour of the built-in widget palette (designed dark) as the current theme
+/// shows it: unchanged in the dark theme, its light counterpart in the light one.
+pub fn ui_color(hex: &str) -> Result<u32, String> {
+    let c = crate::canvas::parse_color(hex)?;
+    if !LIGHT.with(std::cell::Cell::get) {
+        return Ok(c);
+    }
+    Ok(match c {
+        0xe2e8f0 | 0xf8fafc => 0x111827, // text
+        0xdddddd => 0x374151,
+        0x94a3b8 | 0x888888 => 0x6b7280, // muted text
+        0x64748b => 0x94a3b8,
+        0x1e293b | 0x1f2937 => 0xffffff, // panels, fields
+        0x172033 => 0xf8fafc,
+        0x0b1220 => 0xf9fafb,
+        0x334155 => 0xf3f4f6,            // raised / hovered panels
+        0x374151 => 0xe5e7eb,            // buttons, tracks
+        0x4a5568 => 0xd1d5db,
+        0x2d3748 => 0xc7cbd1,
+        0x475569 => 0x9ca3af,            // borders
+        0x60a5fa | 0x3b82f6 => 0x2563eb, // accent
+        0x93c5fd | 0x2563eb => 0x1d4ed8,
+        0xbfdbfe => 0x1e40af,
+        0x22c55e => 0x16a34a,
+        0xfbbf24 => 0xd97706,
+        0xef4444 => 0xdc2626,
+        other => other,
+    })
+}
+
 /// Undo history entries: the text and the caret.
 type Snapshot = (Vec<char>, usize);
 
@@ -324,6 +363,8 @@ pub struct GuiState {
     pub menu: Option<OpenMenu>,
     /// drop-downs to draw at the end of this frame
     pub popups: Vec<Popup>,
+    /// the automatic column layout: x, the y of the next row, width, gap
+    pub column: Option<(f64, f64, f64, f64)>,
     pub theme: Theme,
     /// when the caret last moved, for blinking
     pub blink: std::time::Instant,
@@ -349,6 +390,7 @@ impl Default for GuiState {
             activated: None,
             menu: None,
             popups: Vec::new(),
+            column: None,
             theme: Theme::dark(),
             blink: std::time::Instant::now(),
         }
@@ -1418,6 +1460,39 @@ impl crate::builtins::Env {
     }
 }
 
+impl crate::builtins::Env {
+    /// Starts a column: the next rows stack from (x, y), `w` wide, `gap` apart.
+    pub(crate) fn column(&mut self, x: f64, y: f64, w: f64, gap: f64) {
+        self.gui.column = Some((x, y, w.max(1.0), gap.max(0.0)));
+    }
+
+    /// Reserves the next row of the column, `h` high; returns its y.
+    pub(crate) fn row(&mut self, h: f64) -> Result<f64, String> {
+        let (x, y, w, gap) = self.gui.column.ok_or("start a column first, like gtq.column(20, 20, 400, 10)")?;
+        self.gui.column = Some((x, y + h.max(0.0) + gap, w, gap));
+        Ok(y)
+    }
+
+    pub(crate) fn column_part(&self, x_part: bool) -> Result<f64, String> {
+        let (x, _, w, _) = self.gui.column.ok_or("start a column first, like gtq.column(20, 20, 400, 10)")?;
+        Ok(if x_part { x } else { w })
+    }
+
+    /// A labelled text field on the next row of the column: the label on the
+    /// left third, the field on the rest.
+    pub(crate) fn form_field(&mut self, label: &str, value: &str, password: bool) -> Result<String, String> {
+        let fh = self.fonts.height();
+        let h = (fh * 2.1).round().max(24.0);
+        let y = self.row(h)?;
+        let (x, w) = (self.column_part(true)?, self.column_part(false)?);
+        let label_w = (w * 0.32).round();
+        let muted = self.gui.theme.muted;
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        self.fonts.draw(&mut g.canvas, x, y + (h - fh) / 2.0, label, muted)?;
+        self.text_field(x + label_w, y, w - label_w, h, value, password)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1928,6 +2003,53 @@ world");
         a.step(100, 380, FrameInput::default());
         a.step(110, 390, FrameInput { left: true, ..Default::default() });
         assert_eq!(a.context, "");
+    }
+
+    #[test]
+    fn column_rows_stack_and_form_fields_edit() {
+        let mut env = Env::default();
+        env.graphics = Some(Graphics::headless(400, 300));
+        let r = |v: Value| match v {
+            Value::Real(x) => x,
+            other => panic!("{:?}", other),
+        };
+        env.call(Builtin::GtqColumn, &[Value::Real(20.0), Value::Real(50.0), Value::Real(300.0), Value::Real(10.0)]).unwrap();
+        assert_eq!(r(env.call(Builtin::GtqRow, &[Value::Real(30.0)]).unwrap()), 50.0);
+        assert_eq!(r(env.call(Builtin::GtqRow, &[Value::Real(20.0)]).unwrap()), 90.0);
+        assert_eq!(r(env.call(Builtin::GtqColumnX, &[]).unwrap()), 20.0);
+        assert_eq!(r(env.call(Builtin::GtqColumnW, &[]).unwrap()), 300.0);
+        // a form field is a row: click its right part and type
+        env.call(Builtin::GtqColumn, &[Value::Real(20.0), Value::Real(50.0), Value::Real(300.0), Value::Real(10.0)]).unwrap();
+        let v = env.call(Builtin::GtqFormText, &[Value::Str("Name".into()), Value::Str("".into())]).unwrap();
+        assert_eq!(crate::vm::display(&v), "");
+        let mut value = String::new();
+        for input in [
+            FrameInput { left: true, ..Default::default() },
+            FrameInput::default(),
+            FrameInput { chars: "Ada".chars().collect(), ..Default::default() },
+        ] {
+            env.graphics.as_mut().unwrap().simulate(250, 60, input);
+            env.call(Builtin::Show, &[]).unwrap();
+            env.call(Builtin::GtqColumn, &[Value::Real(20.0), Value::Real(50.0), Value::Real(300.0), Value::Real(10.0)]).unwrap();
+            let v = env.call(Builtin::GtqFormText, &[Value::Str("Name".into()), Value::Str(value.as_str().into())]).unwrap();
+            value = crate::vm::display(&v);
+        }
+        assert_eq!(value, "Ada");
+        // a row without a column is a clear error
+        let mut fresh = Env::default();
+        fresh.graphics = Some(Graphics::headless(10, 10));
+        assert!(fresh.call(Builtin::GtqRow, &[Value::Real(5.0)]).unwrap_err().contains("gtq.column"));
+    }
+
+    #[test]
+    fn light_theme_translates_the_classic_palette() {
+        super::set_light(false);
+        assert_eq!(super::ui_color("#1e293b").unwrap(), 0x1e293b);
+        super::set_light(true);
+        assert_eq!(super::ui_color("#1e293b").unwrap(), 0xffffff, "panels turn white");
+        assert_eq!(super::ui_color("#e2e8f0").unwrap(), 0x111827, "text turns dark");
+        assert_eq!(super::ui_color("#ff8800").unwrap(), 0xff8800, "other colours stay");
+        super::set_light(false);
     }
 
     #[test]

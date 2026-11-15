@@ -792,6 +792,12 @@ pub enum Builtin {
     GtqSaveFile,
     GtqChooseFolder,
     GtqChooseColor,
+    GtqColumn,
+    GtqRow,
+    GtqColumnX,
+    GtqColumnW,
+    GtqFormText,
+    GtqFormPassword,
     GtqSubmitted,
     GtqTheme,
     GtqThemeColor,
@@ -2065,6 +2071,12 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqSaveFile, "gtq.save_file", Sig::Fixed(&[S, S, S], Some(Str))),
     (GtqChooseFolder, "gtq.choose_folder", Sig::Fixed(&[S], Some(Str))),
     (GtqChooseColor, "gtq.choose_color", Sig::Fixed(&[S], Some(Str))),
+    (GtqColumn, "gtq.column", Sig::Fixed(&[R, R, R, R], None)),
+    (GtqRow, "gtq.row", Sig::Fixed(&[R], Some(Real))),
+    (GtqColumnX, "gtq.column_x", Sig::Fixed(&[], Some(Real))),
+    (GtqColumnW, "gtq.column_w", Sig::Fixed(&[], Some(Real))),
+    (GtqFormText, "gtq.form_text", Sig::Fixed(&[S, S], Some(Str))),
+    (GtqFormPassword, "gtq.form_password", Sig::Fixed(&[S, S], Some(Str))),
     (GtqSubmitted, "gtq.submitted", Sig::Fixed(&[], Some(Bool))),
     (GtqTheme, "gtq.theme", Sig::Fixed(&[S], None)),
     (GtqThemeColor, "gtq.theme_color", Sig::Fixed(&[S], Some(Str))),
@@ -4325,7 +4337,7 @@ impl Env {
                     (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
                 };
                 let pressed = hover && down && !self.prev_down;
-                let bg = parse_color(if hover {
+                let bg = crate::gui::ui_color(if hover {
                     if down {
                         "#2d3748"
                     } else {
@@ -4334,12 +4346,13 @@ impl Env {
                 } else {
                     "#374151"
                 })?;
-                let white = parse_color("#ffffff")?;
+                let white = crate::gui::ui_color("#e2e8f0")?;
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
                 let tx = (x + (w - tw) / 2.0).max(x + 2.0);
-                self.fonts.draw(&mut g.canvas, tx, y + h / 2.0 - 6.0, &label, white)?;
+                let fh = self.fonts.height();
+                self.fonts.draw(&mut g.canvas, tx, y + (h - fh) / 2.0, &label, white)?;
                 Value::Bool(pressed)
             }
             GtqCheckbox => {
@@ -4354,10 +4367,10 @@ impl Env {
                     (mx >= x && mx <= x + box_sz && my >= y && my <= y + box_sz, g.click())
                 };
                 let new_checked = if hover && down && !self.prev_down { !checked } else { checked };
-                let border = parse_color("#888888")?;
-                let fill = parse_color("#374151")?;
-                let mark = parse_color("#22c55e")?;
-                let white = parse_color("#dddddd")?;
+                let border = crate::gui::ui_color("#888888")?;
+                let fill = crate::gui::ui_color("#374151")?;
+                let mark = crate::gui::ui_color("#22c55e")?;
+                let white = crate::gui::ui_color("#dddddd")?;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, box_sz, box_sz, fill);
                 g.canvas.line(x, y, x + box_sz, y, border);
@@ -4383,8 +4396,8 @@ impl Env {
                 if hover && down && hi > lo && w > 0.0 {
                     v = lo + ((mxf - x) / w).clamp(0.0, 1.0) * (hi - lo);
                 }
-                let track = parse_color("#374151")?;
-                let knob = parse_color("#60a5fa")?;
+                let track = crate::gui::ui_color("#374151")?;
+                let knob = crate::gui::ui_color("#60a5fa")?;
                 let t = if hi > lo { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y - 2.0, w, 4.0, track);
@@ -4403,7 +4416,7 @@ impl Env {
                 };
                 let clicked = hover && down && !self.prev_down;
                 let (outer, fill, dot, white) =
-                    (parse_color("#888888")?, parse_color("#374151")?, parse_color("#60a5fa")?, parse_color("#dddddd")?);
+                    (crate::gui::ui_color("#888888")?, crate::gui::ui_color("#374151")?, crate::gui::ui_color("#60a5fa")?, crate::gui::ui_color("#dddddd")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.circle(x + r, y + r, r, outer);
                 g.canvas.circle(x + r, y + r, r - 1.5, fill);
@@ -4426,7 +4439,7 @@ impl Env {
                 };
                 let new_on = if hover && down && !self.prev_down { !on } else { on };
                 let (track, knob, white) =
-                    (parse_color(if new_on { "#22c55e" } else { "#4a5568" })?, parse_color("#f8fafc")?, parse_color("#dddddd")?);
+                    (crate::gui::ui_color(if new_on { "#22c55e" } else { "#4a5568" })?, parse_color("#f8fafc")?, crate::gui::ui_color("#dddddd")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, track);
                 let kx = if new_on { x + w - h / 2.0 - 2.0 } else { x + h / 2.0 + 2.0 };
@@ -4439,7 +4452,7 @@ impl Env {
                     (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
                 let h = 14.0;
                 let t = if maxv > 0.0 { (val / maxv).clamp(0.0, 1.0) } else { 0.0 };
-                let (bg, fg) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let (bg, fg) = (crate::gui::ui_color("#374151")?, crate::gui::ui_color("#60a5fa")?);
                 let g = self.window()?;
                 g.canvas.rect(x, y, w, h, bg);
                 g.canvas.rect(x, y, w * t, h, fg);
@@ -4447,14 +4460,14 @@ impl Env {
             }
             GtqSeparator => {
                 let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
-                let c = parse_color("#475569")?;
+                let c = crate::gui::ui_color("#475569")?;
                 self.window()?.canvas.line(x, y, x + w, y, c);
                 Value::Null
             }
             GtqGroupbox => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
                 let title = text(&args[4]).to_string();
-                let (border, white) = (parse_color("#475569")?, parse_color("#94a3b8")?);
+                let (border, white) = (crate::gui::ui_color("#475569")?, crate::gui::ui_color("#94a3b8")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.line(x, y, x + w, y, border);
                 g.canvas.line(x, y + h, x + w, y + h, border);
@@ -4481,7 +4494,7 @@ impl Env {
                 if edge && over(x + bw + fw) {
                     v = (v + step).min(maxv);
                 }
-                let (btn, box_c, white) = (parse_color("#4a5568")?, parse_color("#1f2937")?, parse_color("#e2e8f0")?);
+                let (btn, box_c, white) = (crate::gui::ui_color("#4a5568")?, crate::gui::ui_color("#1f2937")?, crate::gui::ui_color("#e2e8f0")?);
                 let txt = crate::vm::format_real(v);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, bw, h, btn);
@@ -4505,7 +4518,7 @@ impl Env {
                     (a >= x && a <= x + w && b >= y && b <= y + h, g.click())
                 };
                 let new_idx = if hover && down && !self.prev_down { (idx + 1) % n } else { idx };
-                let (bg, white) = (parse_color(if hover { "#4a5568" } else { "#374151" })?, parse_color("#e2e8f0")?);
+                let (bg, white) = (crate::gui::ui_color(if hover { "#4a5568" } else { "#374151" })?, crate::gui::ui_color("#e2e8f0")?);
                 let shown = opts.get(new_idx).cloned().unwrap_or_default();
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
@@ -4545,13 +4558,24 @@ impl Env {
             GtqSaveFile => Value::Str(dialogs::save_file(text(&args[0]), text(&args[1]), text(&args[2]))?.into()),
             GtqChooseFolder => Value::Str(dialogs::choose_folder(text(&args[0]))?.into()),
             GtqChooseColor => Value::Str(dialogs::choose_color(text(&args[0]))?.into()),
+            GtqColumn => {
+                self.column(real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                Value::Null
+            }
+            GtqRow => Value::Real(self.row(real(&args[0]))?),
+            GtqColumnX => Value::Real(self.column_part(true)?),
+            GtqColumnW => Value::Real(self.column_part(false)?),
+            GtqFormText => Value::Str(self.form_field(text(&args[0]), text(&args[1]), false)?.into()),
+            GtqFormPassword => Value::Str(self.form_field(text(&args[0]), text(&args[1]), true)?.into()),
             GtqContextMenu => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
                 Value::Str(self.context_menu(x, y, w, h, &crate::gui::strings_of(&args[4]))?.into())
             }
             GtqSubmitted => Value::Bool(self.gui.submitted.is_some()),
             GtqTheme => {
-                self.gui.theme = match text(&args[0]).trim().to_lowercase().as_str() {
+                let name = text(&args[0]).trim().to_lowercase();
+                crate::gui::set_light(name == "light");
+                self.gui.theme = match name.as_str() {
                     "dark" => crate::gui::Theme::dark(),
                     "light" => crate::gui::Theme::light(),
                     other => return Err(format!("gtq.theme: \"{}\" is not a theme: use \"dark\" or \"light\"", other)),
@@ -4578,7 +4602,7 @@ impl Env {
                 if hover && down && hi > lo && h > 0.0 {
                     v = hi - ((myf - y) / h).clamp(0.0, 1.0) * (hi - lo);
                 }
-                let (track, knob) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let (track, knob) = (crate::gui::ui_color("#374151")?, crate::gui::ui_color("#60a5fa")?);
                 let t = if hi > lo { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x - 2.0, y, 4.0, h, track);
@@ -4612,7 +4636,7 @@ impl Env {
             GtqCardHeader => {
                 let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
                 let title = text(&args[3]).to_string();
-                let (bg, line, white) = (parse_color("#1e293b")?, parse_color("#334155")?, parse_color("#e2e8f0")?);
+                let (bg, line, white) = (crate::gui::ui_color("#1e293b")?, crate::gui::ui_color("#334155")?, crate::gui::ui_color("#e2e8f0")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, 30.0, bg);
                 g.canvas.line(x, y + 30.0, x + w, y + 30.0, line);
@@ -4622,7 +4646,7 @@ impl Env {
             GtqBadge => {
                 let (x, y) = (real(&args[0]), real(&args[1]));
                 let label = text(&args[2]).to_string();
-                let (bg, white) = (parse_color(text(&args[3]))?, parse_color("#ffffff")?);
+                let (bg, white) = (parse_color(text(&args[3]))?, crate::gui::ui_color("#ffffff")?);
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, tw + 16.0, 20.0, bg);
@@ -4632,7 +4656,7 @@ impl Env {
             GtqChip => {
                 let (x, y) = (real(&args[0]), real(&args[1]));
                 let label = text(&args[2]).to_string();
-                let (fg, bg) = (parse_color(text(&args[3]))?, parse_color("#1e293b")?);
+                let (fg, bg) = (parse_color(text(&args[3]))?, crate::gui::ui_color("#1e293b")?);
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let (w, h) = (tw + 18.0, 22.0);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
@@ -4647,7 +4671,7 @@ impl Env {
             GtqPill => {
                 let (x, y) = (real(&args[0]), real(&args[1]));
                 let label = text(&args[2]).to_string();
-                let (bg, white) = (parse_color(text(&args[3]))?, parse_color("#ffffff")?);
+                let (bg, white) = (parse_color(text(&args[3]))?, crate::gui::ui_color("#ffffff")?);
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let (w, h) = (tw + 20.0, 22.0);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
@@ -4660,7 +4684,7 @@ impl Env {
             GtqAvatar => {
                 let (x, y, size) = (real(&args[0]), real(&args[1]), real(&args[2]));
                 let initial = text(&args[3]).to_string();
-                let (bg, white) = (parse_color(text(&args[4]))?, parse_color("#ffffff")?);
+                let (bg, white) = (parse_color(text(&args[4]))?, crate::gui::ui_color("#ffffff")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.circle(x + size / 2.0, y + size / 2.0, size / 2.0, bg);
                 self.fonts.draw(&mut g.canvas, x + size / 2.0 - 4.0, y + size / 2.0 - 6.0, &initial, white)?;
@@ -4674,14 +4698,14 @@ impl Env {
             }
             GtqVdivider => {
                 let (x, y, h) = (real(&args[0]), real(&args[1]), real(&args[2]));
-                let c = parse_color("#475569")?;
+                let c = crate::gui::ui_color("#475569")?;
                 self.window()?.canvas.line(x, y, x, y + h, c);
                 Value::Null
             }
             GtqTooltip => {
                 let (x, y) = (real(&args[0]), real(&args[1]));
                 let label = text(&args[2]).to_string();
-                let (bg, white) = (parse_color("#0b1220")?, parse_color("#e2e8f0")?);
+                let (bg, white) = (crate::gui::ui_color("#0b1220")?, crate::gui::ui_color("#e2e8f0")?);
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, tw + 16.0, 24.0, bg);
@@ -4692,7 +4716,7 @@ impl Env {
                 let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
                 let label = text(&args[3]).to_string();
                 let (accent, bg, white) =
-                    (parse_color(text(&args[4]))?, parse_color("#1e293b")?, parse_color("#e2e8f0")?);
+                    (parse_color(text(&args[4]))?, crate::gui::ui_color("#1e293b")?, crate::gui::ui_color("#e2e8f0")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, 40.0, bg);
                 g.canvas.rect(x, y, 5.0, 40.0, accent);
@@ -4703,7 +4727,7 @@ impl Env {
                 let (x, y, r, val, maxv) =
                     (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
                 let t = if maxv > 0.0 { (val / maxv).clamp(0.0, 1.0) } else { 0.0 };
-                let (track, fg) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let (track, fg) = (crate::gui::ui_color("#374151")?, crate::gui::ui_color("#60a5fa")?);
                 let (cx, cy) = (x + r, y + r);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 let n = 40;
@@ -4719,7 +4743,7 @@ impl Env {
                 let (x, y, w, val, maxv) =
                     (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
                 let fg = parse_color(text(&args[5]))?;
-                let bg = parse_color("#374151")?;
+                let bg = crate::gui::ui_color("#374151")?;
                 let t = if maxv > 0.0 { (val / maxv).clamp(0.0, 1.0) } else { 0.0 };
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, 12.0, bg);
@@ -4728,7 +4752,7 @@ impl Env {
             }
             GtqSpinner => {
                 let (x, y, r, phase) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let (track, fg) = (parse_color("#334155")?, parse_color("#60a5fa")?);
+                let (track, fg) = (crate::gui::ui_color("#334155")?, crate::gui::ui_color("#60a5fa")?);
                 let (cx, cy) = (x + r, y + r);
                 let start = phase * std::f64::consts::TAU;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
@@ -4745,7 +4769,7 @@ impl Env {
             GtqTitlebar => {
                 let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
                 let title = text(&args[3]).to_string();
-                let (bg, white) = (parse_color("#0b1220")?, parse_color("#e2e8f0")?);
+                let (bg, white) = (crate::gui::ui_color("#0b1220")?, crate::gui::ui_color("#e2e8f0")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, 34.0, bg);
                 self.fonts.draw(&mut g.canvas, x + 12.0, y + 11.0, &title, white)?;
@@ -4754,7 +4778,7 @@ impl Env {
             GtqStatusbar => {
                 let (x, y, w) = (real(&args[0]), real(&args[1]), real(&args[2]));
                 let txt = text(&args[3]).to_string();
-                let (bg, gray) = (parse_color("#1e293b")?, parse_color("#94a3b8")?);
+                let (bg, gray) = (crate::gui::ui_color("#1e293b")?, crate::gui::ui_color("#94a3b8")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, 24.0, bg);
                 self.fonts.draw(&mut g.canvas, x + 10.0, y + 6.0, &txt, gray)?;
@@ -4762,7 +4786,7 @@ impl Env {
             }
             GtqToolbar => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let (bg, line) = (parse_color("#1e293b")?, parse_color("#334155")?);
+                let (bg, line) = (crate::gui::ui_color("#1e293b")?, crate::gui::ui_color("#334155")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
                 g.canvas.line(x, y + h, x + w, y + h, line);
@@ -4771,7 +4795,7 @@ impl Env {
             GtqBreadcrumb => {
                 let (x, y) = (real(&args[0]), real(&args[1]));
                 let txt = text(&args[2]).to_string();
-                let gray = parse_color("#94a3b8")?;
+                let gray = crate::gui::ui_color("#94a3b8")?;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 self.fonts.draw(&mut g.canvas, x, y, &txt, gray)?;
                 Value::Null
@@ -4780,7 +4804,7 @@ impl Env {
                 let (x, y) = (real(&args[0]), real(&args[1]));
                 let label = text(&args[2]).to_string();
                 let (bg, border, white) =
-                    (parse_color("#334155")?, parse_color("#64748b")?, parse_color("#e2e8f0")?);
+                    (crate::gui::ui_color("#334155")?, crate::gui::ui_color("#64748b")?, crate::gui::ui_color("#e2e8f0")?);
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let (w, h) = (tw + 14.0, 22.0);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
@@ -4796,7 +4820,7 @@ impl Env {
                 let (x, y, r, val, maxv) =
                     (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]), real(&args[4]));
                 let t = if maxv > 0.0 { (val / maxv).clamp(0.0, 1.0) } else { 0.0 };
-                let (track, fg) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let (track, fg) = (crate::gui::ui_color("#374151")?, crate::gui::ui_color("#60a5fa")?);
                 let (cx, cy) = (x + r, y + r);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 let n = 48;
@@ -4811,13 +4835,13 @@ impl Env {
             }
             GtqSkeleton => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let c = parse_color("#334155")?;
+                let c = crate::gui::ui_color("#334155")?;
                 self.window()?.canvas.rect(x, y, w, h, c);
                 Value::Null
             }
             GtqImagePlaceholder => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let (bg, line) = (parse_color("#1e293b")?, parse_color("#475569")?);
+                let (bg, line) = (crate::gui::ui_color("#1e293b")?, crate::gui::ui_color("#475569")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
                 g.canvas.line(x, y, x + w, y, line);
@@ -4831,7 +4855,7 @@ impl Env {
             GtqRibbon => {
                 let (x, y) = (real(&args[0]), real(&args[1]));
                 let label = text(&args[2]).to_string();
-                let (bg, white) = (parse_color(text(&args[3]))?, parse_color("#ffffff")?);
+                let (bg, white) = (parse_color(text(&args[3]))?, crate::gui::ui_color("#ffffff")?);
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let (w, h) = (tw + 16.0, 22.0);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
@@ -4843,7 +4867,7 @@ impl Env {
             }
             GtqNote => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let (bg, fold) = (parse_color(text(&args[4]))?, parse_color("#1f2937")?);
+                let (bg, fold) = (parse_color(text(&args[4]))?, crate::gui::ui_color("#1f2937")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
                 g.canvas.line(x + w - 14.0, y + h, x + w, y + h - 14.0, fold);
@@ -4868,7 +4892,7 @@ impl Env {
                     (mx >= x && mx <= x + bx && my >= y && my <= y + bx, g.click())
                 };
                 let clicked = hover && down && !self.prev_down;
-                let (bg, fg) = (parse_color(if hover { "#334155" } else { "#1e293b" })?, parse_color("#e2e8f0")?);
+                let (bg, fg) = (crate::gui::ui_color(if hover { "#334155" } else { "#1e293b" })?, crate::gui::ui_color("#e2e8f0")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, bx, bx, bg);
                 draw_icon(&mut g.canvas, &icon, x + 6.0, y + 6.0, size, fg);
@@ -4885,7 +4909,7 @@ impl Env {
                     (mx >= x && mx <= x + tw && my >= y && my <= y + 16.0, g.click())
                 };
                 let clicked = hover && down && !self.prev_down;
-                let col = parse_color(if hover { "#93c5fd" } else { "#60a5fa" })?;
+                let col = crate::gui::ui_color(if hover { "#93c5fd" } else { "#60a5fa" })?;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 self.fonts.draw(&mut g.canvas, x, y, &label, col)?;
                 g.canvas.line(x, y + 15.0, x + tw, y + 15.0, col);
@@ -4903,7 +4927,7 @@ impl Env {
                 };
                 let new_on = if hover && down && !self.prev_down { !on } else { on };
                 let (track, knob) =
-                    (parse_color(if new_on { "#22c55e" } else { "#4a5568" })?, parse_color("#f8fafc")?);
+                    (crate::gui::ui_color(if new_on { "#22c55e" } else { "#4a5568" })?, crate::gui::ui_color("#f8fafc")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, track);
                 let kx = if new_on { x + w - h / 2.0 - 2.0 } else { x + h / 2.0 + 2.0 };
@@ -4929,7 +4953,7 @@ impl Env {
                     v = (v + 1).min(maxv);
                 }
                 let (btn, box_c, white) =
-                    (parse_color("#4a5568")?, parse_color("#1f2937")?, parse_color("#e2e8f0")?);
+                    (crate::gui::ui_color("#4a5568")?, crate::gui::ui_color("#1f2937")?, crate::gui::ui_color("#e2e8f0")?);
                 let txt = v.to_string();
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, bw, h, btn);
@@ -4960,11 +4984,11 @@ impl Env {
                 }
                 let widths: Vec<f64> = opts.iter().map(|o| self.fonts.width(o).unwrap_or(0) as f64).collect();
                 let (bg, sel, white, dim, line) = (
-                    parse_color("#1e293b")?,
-                    parse_color("#3b82f6")?,
-                    parse_color("#e2e8f0")?,
-                    parse_color("#94a3b8")?,
-                    parse_color("#334155")?,
+                    crate::gui::ui_color("#1e293b")?,
+                    crate::gui::ui_color("#3b82f6")?,
+                    crate::gui::ui_color("#e2e8f0")?,
+                    crate::gui::ui_color("#94a3b8")?,
+                    crate::gui::ui_color("#334155")?,
                 );
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 if is_tabs {
@@ -5012,9 +5036,9 @@ impl Env {
                     }
                 }
                 let (bg, border, white) = (
-                    parse_color("#1f2937")?,
-                    parse_color(if hover { "#60a5fa" } else { "#475569" })?,
-                    parse_color("#e2e8f0")?,
+                    crate::gui::ui_color("#1f2937")?,
+                    crate::gui::ui_color(if hover { "#60a5fa" } else { "#475569" })?,
+                    crate::gui::ui_color("#e2e8f0")?,
                 );
                 let txt = crate::vm::format_real(v);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
@@ -5038,14 +5062,14 @@ impl Env {
                     (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
                 };
                 let clicked = hover && down && !self.prev_down;
-                let bg = parse_color(if selected {
+                let bg = crate::gui::ui_color(if selected {
                     "#334155"
                 } else if hover {
                     "#1e293b"
                 } else {
                     "#0f172a"
                 })?;
-                let white = parse_color("#e2e8f0")?;
+                let white = crate::gui::ui_color("#e2e8f0")?;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
                 self.fonts.draw(&mut g.canvas, x + 10.0, y + 8.0, &label, white)?;
@@ -5062,7 +5086,7 @@ impl Env {
                     (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
                 };
                 let clicked = hover && down && !self.prev_down;
-                let (bg, white) = (parse_color(if hover { "#334155" } else { "#1e293b" })?, parse_color("#e2e8f0")?);
+                let (bg, white) = (crate::gui::ui_color(if hover { "#334155" } else { "#1e293b" })?, crate::gui::ui_color("#e2e8f0")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
                 self.fonts.draw(&mut g.canvas, x + 10.0, y + 7.0, &label, white)?;
@@ -5080,7 +5104,7 @@ impl Env {
                     (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
                 };
                 let new_open = if hover && down && !self.prev_down { !open } else { open };
-                let (bg, white) = (parse_color(if hover { "#1e293b" } else { "#172033" })?, parse_color("#e2e8f0")?);
+                let (bg, white) = (crate::gui::ui_color(if hover { "#1e293b" } else { "#172033" })?, crate::gui::ui_color("#e2e8f0")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
                 draw_icon(&mut g.canvas, if new_open { "chevron_down" } else { "chevron_right" }, x + 8.0, y + 8.0, 16.0, white);
@@ -5099,7 +5123,7 @@ impl Env {
                 if down && !self.prev_down && my >= y && my <= y + size && mx >= x && mx < x + 5.0 * size {
                     v = (((mx - x) / size).floor() as i64 + 1).clamp(1, 5);
                 }
-                let (on, off) = (parse_color("#fbbf24")?, parse_color("#475569")?);
+                let (on, off) = (crate::gui::ui_color("#fbbf24")?, crate::gui::ui_color("#475569")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 for i in 0..5 {
                     let col = if (i as i64) < v { on } else { off };
@@ -5117,7 +5141,7 @@ impl Env {
                 };
                 let clicked = hover && down && !self.prev_down;
                 let c = parse_color(text(&args[3]))?;
-                let border = parse_color(if hover { "#ffffff" } else { "#475569" })?;
+                let border = crate::gui::ui_color(if hover { "#ffffff" } else { "#475569" })?;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, size, size, c);
                 g.canvas.line(x, y, x + size, y, border);
@@ -5130,7 +5154,7 @@ impl Env {
                 let (x, y) = (real(&args[0]), real(&args[1]));
                 let label = text(&args[2]).to_string();
                 let bg = parse_color(text(&args[3]))?;
-                let white = parse_color("#ffffff")?;
+                let white = crate::gui::ui_color("#ffffff")?;
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let (w, h) = (tw + 34.0, 22.0);
                 let (mxf, myf, down) = {
@@ -5156,7 +5180,7 @@ impl Env {
                     ((dx * dx + dy * dy).sqrt() <= r, g.click())
                 };
                 let clicked = hover && down && !self.prev_down;
-                let (bg, fg) = (parse_color(if hover { "#2563eb" } else { "#3b82f6" })?, parse_color("#ffffff")?);
+                let (bg, fg) = (crate::gui::ui_color(if hover { "#2563eb" } else { "#3b82f6" })?, crate::gui::ui_color("#ffffff")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.circle(x + r, y + r, r, bg);
                 draw_icon(&mut g.canvas, &icon, x + r * 0.5, y + r * 0.5, r, fg);
@@ -5174,7 +5198,7 @@ impl Env {
                 if down && !self.prev_down && my >= y && my <= y + cell && mx >= x && mx < x + pages as f64 * cell {
                     cur = (((mx - x) / cell).floor() as i64 + 1).clamp(1, pages.max(1));
                 }
-                let (sel, bg, white) = (parse_color("#3b82f6")?, parse_color("#1e293b")?, parse_color("#e2e8f0")?);
+                let (sel, bg, white) = (crate::gui::ui_color("#3b82f6")?, crate::gui::ui_color("#1e293b")?, crate::gui::ui_color("#e2e8f0")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 for i in 1..=pages {
                     let sx = x + (i - 1) as f64 * cell;
@@ -5199,15 +5223,16 @@ impl Env {
                     (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
                 };
                 let pressed = hover && down && !self.prev_down;
-                let white = parse_color("#ffffff")?;
-                let hi = parse_color("#bfdbfe")?;
+                let white = crate::gui::ui_color("#ffffff")?;
+                let hi = crate::gui::ui_color("#bfdbfe")?;
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, base);
                 if hover {
                     g.canvas.rect(x, y, w, 2.0, hi);
                 }
-                self.fonts.draw(&mut g.canvas, (x + (w - tw) / 2.0).max(x + 2.0), y + h / 2.0 - 6.0, &label, white)?;
+                let fh = self.fonts.height();
+                self.fonts.draw(&mut g.canvas, (x + (w - tw) / 2.0).max(x + 2.0), y + (h - fh) / 2.0, &label, white)?;
                 Value::Bool(pressed)
             }
             GtqButtonGhost => {
@@ -5221,7 +5246,7 @@ impl Env {
                 };
                 let pressed = hover && down && !self.prev_down;
                 let (border, txtc, hoverbg) =
-                    (parse_color("#60a5fa")?, parse_color("#93c5fd")?, parse_color("#1e293b")?);
+                    (crate::gui::ui_color("#60a5fa")?, crate::gui::ui_color("#93c5fd")?, crate::gui::ui_color("#1e293b")?);
                 let tw = self.fonts.width(&label).unwrap_or(0) as f64;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 if hover {
@@ -5231,7 +5256,8 @@ impl Env {
                 g.canvas.line(x, y + h, x + w, y + h, border);
                 g.canvas.line(x, y, x, y + h, border);
                 g.canvas.line(x + w, y, x + w, y + h, border);
-                self.fonts.draw(&mut g.canvas, (x + (w - tw) / 2.0).max(x + 2.0), y + h / 2.0 - 6.0, &label, txtc)?;
+                let fh = self.fonts.height();
+                self.fonts.draw(&mut g.canvas, (x + (w - tw) / 2.0).max(x + 2.0), y + (h - fh) / 2.0, &label, txtc)?;
                 Value::Bool(pressed)
             }
             GtqKnob => {
@@ -5253,7 +5279,7 @@ impl Env {
                     v = lo + (d / 270.0) * (hi - lo);
                 }
                 let t = if hi > lo { ((v - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
-                let (body, fg) = (parse_color("#1e293b")?, parse_color("#60a5fa")?);
+                let (body, fg) = (crate::gui::ui_color("#1e293b")?, crate::gui::ui_color("#60a5fa")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.circle(cx, cy, r, body);
                 let ind = (135.0 + t * 270.0).to_radians();
@@ -5274,7 +5300,7 @@ impl Env {
                 if hover && down && maxv > 0.0 && h > 0.0 {
                     v = ((myf - y) / h).clamp(0.0, 1.0) * maxv;
                 }
-                let (track, thumb) = (parse_color("#1e293b")?, parse_color("#475569")?);
+                let (track, thumb) = (crate::gui::ui_color("#1e293b")?, crate::gui::ui_color("#475569")?);
                 let t = if maxv > 0.0 { (v / maxv).clamp(0.0, 1.0) } else { 0.0 };
                 let thumb_h = (h * 0.2).max(20.0);
                 let ty = y + t * (h - thumb_h);
@@ -5296,7 +5322,7 @@ impl Env {
                     (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
                 };
                 let new_idx = if hover && down && !self.prev_down { (idx + 1) % n } else { idx };
-                let (bg, white) = (parse_color(if hover { "#334155" } else { "#1e293b" })?, parse_color("#e2e8f0")?);
+                let (bg, white) = (crate::gui::ui_color(if hover { "#334155" } else { "#1e293b" })?, crate::gui::ui_color("#e2e8f0")?);
                 let shown = opts.get(new_idx).cloned().unwrap_or_default();
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
@@ -5316,7 +5342,7 @@ impl Env {
                     (mx >= x && mx <= x + w && my >= y && my <= y + h, g.click())
                 };
                 let new = if hover && down && !self.prev_down { !checked } else { checked };
-                let bg = parse_color(if new {
+                let bg = crate::gui::ui_color(if new {
                     "#1e3a5f"
                 } else if hover {
                     "#1e293b"
@@ -5324,7 +5350,7 @@ impl Env {
                     "#172033"
                 })?;
                 let (border, white, mark) =
-                    (parse_color(if new { "#3b82f6" } else { "#334155" })?, parse_color("#e2e8f0")?, parse_color("#22c55e")?);
+                    (crate::gui::ui_color(if new { "#3b82f6" } else { "#334155" })?, crate::gui::ui_color("#e2e8f0")?, crate::gui::ui_color("#22c55e")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, w, h, bg);
                 g.canvas.line(x, y, x + w, y, border);
@@ -5350,14 +5376,14 @@ impl Env {
                     (mx >= x && mx <= x + bx && my >= y && my <= y + bx, g.click())
                 };
                 let new = if hover && down && !self.prev_down { !on } else { on };
-                let bg = parse_color(if new {
+                let bg = crate::gui::ui_color(if new {
                     "#3b82f6"
                 } else if hover {
                     "#334155"
                 } else {
                     "#1e293b"
                 })?;
-                let fg = parse_color(if new { "#ffffff" } else { "#94a3b8" })?;
+                let fg = crate::gui::ui_color(if new { "#ffffff" } else { "#94a3b8" })?;
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, bx, bx, bg);
                 draw_icon(&mut g.canvas, &icon, x + 6.0, y + 6.0, size, fg);
@@ -5394,7 +5420,7 @@ impl Env {
                 if hover && down && w > 0.0 {
                     v = ((mxf - x) / w).clamp(0.0, 1.0);
                 }
-                let (track, knob) = (parse_color("#374151")?, parse_color("#60a5fa")?);
+                let (track, knob) = (crate::gui::ui_color("#374151")?, crate::gui::ui_color("#60a5fa")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y - 2.0, w, 4.0, track);
                 g.canvas.circle(x + v * w, y, 6.0, knob);
@@ -5419,7 +5445,7 @@ impl Env {
                     v = (v + step).min(maxv);
                 }
                 let (btn, box_c, white) =
-                    (parse_color("#4a5568")?, parse_color("#1f2937")?, parse_color("#e2e8f0")?);
+                    (crate::gui::ui_color("#4a5568")?, crate::gui::ui_color("#1f2937")?, crate::gui::ui_color("#e2e8f0")?);
                 let txt = crate::vm::format_real(v);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, bw, h, btn);
@@ -5439,7 +5465,7 @@ impl Env {
                     (mx >= x && mx <= x + size && my >= y && my <= y + size, g.click())
                 };
                 let clicked = hover && down && !self.prev_down;
-                let (bg, fg) = (parse_color(if hover { "#ef4444" } else { "#334155" })?, parse_color("#ffffff")?);
+                let (bg, fg) = (crate::gui::ui_color(if hover { "#ef4444" } else { "#334155" })?, crate::gui::ui_color("#ffffff")?);
                 let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
                 g.canvas.rect(x, y, size, size, bg);
                 draw_icon(&mut g.canvas, "close", x + size * 0.2, y + size * 0.2, size * 0.6, fg);

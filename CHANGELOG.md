@@ -47,6 +47,11 @@ failing line. A `launch.json` can grant permissions and give the `input()` text.
   under it.
 - System dialogs: `gtq.open_file`, `gtq.save_file`, `gtq.choose_folder` and
   `gtq.choose_color`, with simple filters like `"Images: *.png, *.jpg"`.
+- The light theme now covers every `gtq` widget (the classic ones translate
+  their palette), and button labels are centred for any font.
+- Automatic layout: `gtq.column` / `gtq.row` stack widgets down a column, and
+  `gtq.form_text` / `gtq.form_password` add a labelled field in one line.
+- Demo: `examples/demos/contacts.gw`, a small address book.
 - `screenshot("file.png")` saves the graphics window as a PNG.
 
 **Faster.** Interpreted code runs 19–41% faster than in 0.1.5 (`bench/`, best
