@@ -45,6 +45,8 @@ failing line. A `launch.json` can grant permissions and give the `input()` text.
   click). They are drawn on top of everything, and the widgets under an open
   menu ignore the pointer, so a click on a menu item never reaches a button
   under it.
+- System dialogs: `gtq.open_file`, `gtq.save_file`, `gtq.choose_folder` and
+  `gtq.choose_color`, with simple filters like `"Images: *.png, *.jpg"`.
 - `screenshot("file.png")` saves the graphics window as a PNG.
 
 **Faster.** Interpreted code runs 19–41% faster than in 0.1.5 (`bench/`, best

@@ -788,6 +788,10 @@ pub enum Builtin {
     GtqActivated,
     GtqMenubar,
     GtqContextMenu,
+    GtqOpenFile,
+    GtqSaveFile,
+    GtqChooseFolder,
+    GtqChooseColor,
     GtqSubmitted,
     GtqTheme,
     GtqThemeColor,
@@ -2057,6 +2061,10 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqActivated, "gtq.activated", Sig::Fixed(&[], Some(Bool))),
     (GtqMenubar, "gtq.menubar", Sig::Flexible { function: true }),
     (GtqContextMenu, "gtq.context_menu", Sig::Flexible { function: true }),
+    (GtqOpenFile, "gtq.open_file", Sig::Fixed(&[S, S], Some(Str))),
+    (GtqSaveFile, "gtq.save_file", Sig::Fixed(&[S, S, S], Some(Str))),
+    (GtqChooseFolder, "gtq.choose_folder", Sig::Fixed(&[S], Some(Str))),
+    (GtqChooseColor, "gtq.choose_color", Sig::Fixed(&[S], Some(Str))),
     (GtqSubmitted, "gtq.submitted", Sig::Fixed(&[], Some(Bool))),
     (GtqTheme, "gtq.theme", Sig::Fixed(&[S], None)),
     (GtqThemeColor, "gtq.theme_color", Sig::Fixed(&[S], Some(Str))),
@@ -4533,6 +4541,10 @@ impl Env {
             }
             GtqActivated => Value::Bool(self.gui.activated.is_some()),
             GtqMenubar => Value::Str(self.menubar(&crate::gui::strings_of(&args[0]))?.into()),
+            GtqOpenFile => Value::Str(dialogs::open_file(text(&args[0]), text(&args[1]))?.into()),
+            GtqSaveFile => Value::Str(dialogs::save_file(text(&args[0]), text(&args[1]), text(&args[2]))?.into()),
+            GtqChooseFolder => Value::Str(dialogs::choose_folder(text(&args[0]))?.into()),
+            GtqChooseColor => Value::Str(dialogs::choose_color(text(&args[0]))?.into()),
             GtqContextMenu => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
                 Value::Str(self.context_menu(x, y, w, h, &crate::gui::strings_of(&args[4]))?.into())
