@@ -782,6 +782,7 @@ pub enum Builtin {
     GtqSelector,
     GtqTextbox,
     GtqPassword,
+    GtqTextarea,
     GtqSubmitted,
     GtqTheme,
     GtqThemeColor,
@@ -2045,6 +2046,7 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqSelector, "gtq.selector", Sig::Fixed(&[R, R, R, S, I], Some(Int))),
     (GtqTextbox, "gtq.textbox", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
     (GtqPassword, "gtq.password", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
+    (GtqTextarea, "gtq.textarea", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
     (GtqSubmitted, "gtq.submitted", Sig::Fixed(&[], Some(Bool))),
     (GtqTheme, "gtq.theme", Sig::Fixed(&[S], None)),
     (GtqThemeColor, "gtq.theme_color", Sig::Fixed(&[S], Some(Str))),
@@ -4507,6 +4509,10 @@ impl Env {
             GtqPassword => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
                 Value::Str(self.text_field(x, y, w, h, text(&args[4]), true)?.into())
+            }
+            GtqTextarea => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                Value::Str(self.text_area(x, y, w, h, text(&args[4]))?.into())
             }
             GtqSubmitted => Value::Bool(self.gui.submitted.is_some()),
             GtqTheme => {

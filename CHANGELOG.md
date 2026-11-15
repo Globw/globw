@@ -33,6 +33,9 @@ failing line. A `launch.json` can grant permissions and give the `input()` text.
   (Ctrl+C/X/V), undo/redo (Ctrl+Z/Y), and Tab / Shift+Tab between fields.
   Before, a click opened a separate dialog. New: `gtq.password`,
   `gtq.submitted()` (Enter), `gtq.theme("dark"|"light")` and `gtq.theme_color`.
+- `gtq.textarea`: a multi-line text area with the same editing, Enter for new
+  lines, Up/Down and Page Up/Down, and a scroll that follows the caret and the
+  mouse wheel.
 - `screenshot("file.png")` saves the graphics window as a PNG.
 
 **Faster.** Interpreted code runs 19–41% faster than in 0.1.5 (`bench/`, best

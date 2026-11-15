@@ -312,6 +312,8 @@ pub struct GuiState {
     pub submitted: Option<u64>,
     /// the mouse is over a text widget this frame
     pub over_text: bool,
+    /// the scroll (x, y) of each scrolling widget, by id
+    pub scrolls: std::collections::HashMap<u64, (f64, f64)>,
     pub theme: Theme,
     /// when the caret last moved, for blinking
     pub blink: std::time::Instant,
@@ -331,6 +333,7 @@ impl Default for GuiState {
             select_on_focus: false,
             submitted: None,
             over_text: false,
+            scrolls: std::collections::HashMap::new(),
             theme: Theme::dark(),
             blink: std::time::Instant::now(),
         }
@@ -503,6 +506,43 @@ impl crate::builtins::Env {
         }))
     }
 
+    /// Applies this frame's typing and editing keys to the focused editor.
+    fn edit(&mut self, e: &mut Editor, input: &FrameInput, id: u64, secret: bool) {
+        if !input.chars.is_empty() {
+            self.gui.remember(e);
+            let typed: String = input.chars.iter().collect();
+            e.insert(&typed);
+            self.gui.blink = std::time::Instant::now();
+        }
+        for &k in input.keys.iter().filter(|&&k| k != EditKey::Tab) {
+            let before = e.clone();
+            let r = e.key(k, input.ctrl, input.shift);
+            if let Some(c) = &r.copy {
+                if !secret {
+                    clipboard_set(c);
+                }
+            }
+            if r.paste {
+                if let Some(c) = clipboard_get() {
+                    e.insert(&c);
+                }
+            }
+            if r.undo {
+                self.gui.undo(e);
+            }
+            if r.redo {
+                self.gui.redo(e);
+            }
+            if r.submitted {
+                self.gui.submitted = Some(id);
+            }
+            if e.text != before.text && !r.undo && !r.redo {
+                self.gui.remember(&before);
+            }
+            self.gui.blink = std::time::Instant::now();
+        }
+    }
+
     /// A single-line text field (`password` hides the characters): click or Tab
     /// to focus, then type; arrows, Home/End, Shift to select, Ctrl+A/C/X/V/Z/Y.
     /// Returns the text as it is after this frame.
@@ -569,39 +609,7 @@ impl crate::builtins::Env {
         let focused = self.gui.focus == Some(id);
         if focused {
             let mut e = self.gui.editor.take().expect("an editor while focused");
-            if !input.chars.is_empty() {
-                self.gui.remember(&e);
-                let typed: String = input.chars.iter().collect();
-                e.insert(&typed);
-                self.gui.blink = std::time::Instant::now();
-            }
-            for &k in input.keys.iter().filter(|&&k| k != EditKey::Tab) {
-                let before = e.clone();
-                let r = e.key(k, input.ctrl, input.shift);
-                if let Some(c) = &r.copy {
-                    if !password {
-                        clipboard_set(c);
-                    }
-                }
-                if r.paste {
-                    if let Some(c) = clipboard_get() {
-                        e.insert(&c);
-                    }
-                }
-                if r.undo {
-                    self.gui.undo(&mut e);
-                }
-                if r.redo {
-                    self.gui.redo(&mut e);
-                }
-                if r.submitted {
-                    self.gui.submitted = Some(id);
-                }
-                if e.text != before.text && !r.undo && !r.redo {
-                    self.gui.remember(&before);
-                }
-                self.gui.blink = std::time::Instant::now();
-            }
+            self.edit(&mut e, &input, id, password);
             self.gui.editor = Some(e);
         }
 
@@ -648,6 +656,203 @@ impl crate::builtins::Env {
         if focused && blink_on {
             let cx = text_x + st[current.caret.min(last)] - scroll;
             c.rect(cx, text_y, 1.5, fh, t.text);
+        }
+        c.restore_clip(saved);
+        Ok(if focused { current.string() } else { value.to_string() })
+    }
+}
+
+const KIND_AREA: u64 = 2;
+
+/// The (start, end) character index of each line of `text`.
+fn line_spans(text: &[char]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, &c) in text.iter().enumerate() {
+        if c == '\n' {
+            out.push((start, i));
+            start = i + 1;
+        }
+    }
+    out.push((start, text.len()));
+    out
+}
+
+/// The line holding character index `i`.
+fn line_of(spans: &[(usize, usize)], i: usize) -> usize {
+    spans.iter().position(|&(a, b)| i >= a && i <= b).unwrap_or(spans.len() - 1)
+}
+
+/// How many pixels one notch of the mouse wheel scrolls, in lines.
+const WHEEL_LINES: f64 = 3.0;
+
+impl crate::builtins::Env {
+    /// A multi-line text area: typing, Enter for new lines, arrows (also up and
+    /// down), Page Up/Down, selection, clipboard, undo, and a vertical scroll
+    /// that follows the caret and the mouse wheel.
+    pub(crate) fn text_area(&mut self, x: f64, y: f64, w: f64, h: f64, value: &str) -> Result<String, String> {
+        let id = widget_id(KIND_AREA, x, y, w, h);
+        let focused = self.gui.register(id);
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let input = g.input.clone();
+        let (mx, my) = g.mouse();
+        let (mx, my) = (mx as f64, my as f64);
+        let hover = mx >= x && mx < x + w && my >= y && my < y + h;
+        if hover {
+            self.gui.over_text = true;
+        }
+        let pad = 8.0;
+        let fh = self.fonts.height();
+        let lh = (fh * 1.3).round().max(1.0);
+        let (inner_w, inner_h) = ((w - 2.0 * pad).max(1.0), (h - 2.0 * pad).max(1.0));
+        let (mut sx, mut sy) = self.gui.scrolls.get(&id).copied().unwrap_or((0.0, 0.0));
+
+        if focused && self.gui.editor.is_none() {
+            let mut e = Editor::new(value, true);
+            if std::mem::take(&mut self.gui.select_on_focus) {
+                e.select_all();
+            }
+            self.gui.editor = Some(e);
+        }
+        if focused {
+            if let Some(e) = self.gui.editor.as_mut() {
+                if e.string() != value {
+                    *e = Editor::new(value, true);
+                }
+            }
+        }
+        if hover && input.scroll != 0.0 {
+            sy -= input.scroll as f64 * lh * WHEEL_LINES;
+        }
+
+        // the character index under the pointer
+        let index_at = |fonts: &mut crate::fonts::Fonts, text: &[char], sx: f64, sy: f64| -> Result<usize, String> {
+            let spans = line_spans(text);
+            let line = (((my - y - pad + sy) / lh).floor().max(0.0) as usize).min(spans.len() - 1);
+            let (a, b) = spans[line];
+            let s: String = text[a..b].iter().collect();
+            let st = caret_stops(fonts, &s)?;
+            Ok(a + nearest_stop(&st, mx - x - pad + sx))
+        };
+        if input.left_pressed && hover {
+            let was = self.gui.focus == Some(id);
+            self.gui.take_focus(id, value, true);
+            let mut e = self.gui.editor.take().expect("an editor after take_focus");
+            let at = index_at(&mut self.fonts, &e.text, sx, sy)?;
+            e.caret = at;
+            if !(input.shift && was) {
+                e.anchor = at;
+            }
+            self.gui.editor = Some(e);
+            self.gui.dragging = true;
+        } else if self.gui.focus == Some(id) && self.gui.dragging {
+            if input.left {
+                let mut e = self.gui.editor.take().expect("an editor while focused");
+                e.caret = index_at(&mut self.fonts, &e.text, sx, sy)?;
+                self.gui.editor = Some(e);
+            } else {
+                self.gui.dragging = false;
+            }
+        }
+
+        let focused = self.gui.focus == Some(id);
+        if focused {
+            let mut e = self.gui.editor.take().expect("an editor while focused");
+            // Page Up / Page Down: a screenful of lines
+            let page = ((inner_h / lh).floor() as usize).max(1);
+            for &k in &input.keys {
+                let step = match k {
+                    EditKey::PageUp => Some(EditKey::Up),
+                    EditKey::PageDown => Some(EditKey::Down),
+                    _ => None,
+                };
+                if let Some(step) = step {
+                    for _ in 0..page {
+                        e.key(step, false, input.shift);
+                    }
+                }
+            }
+            self.edit(&mut e, &input, id, false);
+            self.gui.editor = Some(e);
+        }
+
+        let current = match (&self.gui.editor, focused) {
+            (Some(e), true) => e.clone(),
+            _ => Editor::new(value, true),
+        };
+        let spans = line_spans(&current.text);
+        let total_h = spans.len() as f64 * lh;
+        let caret_line = line_of(&spans, current.caret);
+        if focused && (!input.keys.is_empty() || !input.chars.is_empty() || self.gui.dragging) {
+            // keep the caret in view
+            let cy = caret_line as f64 * lh;
+            if cy + lh - sy > inner_h {
+                sy = cy + lh - inner_h;
+            }
+            if cy < sy {
+                sy = cy;
+            }
+            let (a, _) = spans[caret_line];
+            let s: String = current.text[a..current.caret].iter().collect();
+            let cx = self.fonts.width(&s)? as f64;
+            if cx - sx > inner_w - 2.0 {
+                sx = cx - inner_w + 2.0;
+            }
+            if cx < sx {
+                sx = cx;
+            }
+        }
+        sy = sy.min((total_h - inner_h).max(0.0)).max(0.0);
+        sx = sx.max(0.0);
+        self.gui.scrolls.insert(id, (sx, sy));
+
+        // draw
+        let t = self.gui.theme;
+        let blink_on = (self.gui.blink.elapsed().as_millis() / 530) % 2 == 0;
+        let (sa, sb) = current.selection();
+        let space = self.fonts.width(" ")? as f64;
+        let first = (sy / lh).floor() as usize;
+        let last = (((sy + inner_h) / lh).ceil() as usize).min(spans.len());
+        let mut lines = Vec::new();
+        for (i, &(a, b)) in spans.iter().enumerate().take(last).skip(first) {
+            let s: String = current.text[a..b].iter().collect();
+            let st = caret_stops(&mut self.fonts, &s)?;
+            lines.push((i, a, b, s, st));
+        }
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let c = &mut g.canvas;
+        c.rect(x, y, w, h, t.field);
+        let edge = if focused { t.focus } else { t.border };
+        let thick = if focused { 2.0 } else { 1.0 };
+        c.rect(x, y, w, thick, edge);
+        c.rect(x, y + h - thick, w, thick, edge);
+        c.rect(x, y, thick, h, edge);
+        c.rect(x + w - thick, y, thick, h, edge);
+        let saved = c.clip();
+        c.set_clip(x + pad / 2.0, y + 2.0, w - pad, h - 4.0);
+        for (i, a, b, s, st) in &lines {
+            let ly = y + pad + *i as f64 * lh - sy;
+            let ty = ly + (lh - fh) / 2.0;
+            if focused && sa != sb && sa <= *b && sb >= *a {
+                let from = st[sa.max(*a) - a];
+                let mut to = st[sb.min(*b) - a];
+                if sb > *b {
+                    to += space; // the line break is selected too
+                }
+                c.rect(x + pad + from - sx, ly, to - from, lh, t.selection);
+            }
+            self.fonts.draw(c, x + pad - sx, ty, s, t.text)?;
+            if focused && blink_on && *i == caret_line {
+                let cx = x + pad + st[current.caret - a] - sx;
+                c.rect(cx, ty, 1.5, fh, t.text);
+            }
+        }
+        // a scrollbar when the text is taller than the area
+        if total_h > inner_h {
+            let track = h - 8.0;
+            let thumb = (track * inner_h / total_h).max(20.0);
+            let top = y + 4.0 + (track - thumb) * (sy / (total_h - inner_h));
+            c.rect(x + w - 7.0, top, 4.0, thumb, t.border);
         }
         c.restore_clip(saved);
         Ok(if focused { current.string() } else { value.to_string() })
@@ -876,6 +1081,76 @@ mod widget_tests {
         assert!(!f.submitted(), "and only for that frame");
     }
 
+    /// A program with one text area.
+    struct Notes {
+        env: Env,
+        text: String,
+    }
+
+    impl Notes {
+        fn new(text: &str) -> Notes {
+            let mut env = Env::default();
+            env.graphics = Some(Graphics::headless(400, 240));
+            let mut n = Notes { env, text: text.into() };
+            n.draw();
+            n
+        }
+        fn draw(&mut self) {
+            let args = [Value::Real(10.0), Value::Real(10.0), Value::Real(300.0), Value::Real(120.0), Value::Str(self.text.as_str().into())];
+            self.text = crate::vm::display(&self.env.call(Builtin::GtqTextarea, &args).unwrap());
+        }
+        fn step(&mut self, x: i64, y: i64, input: FrameInput) {
+            self.env.graphics.as_mut().unwrap().simulate(x, y, input);
+            self.env.call(Builtin::Show, &[]).unwrap();
+            self.draw();
+        }
+        fn keys(&mut self, keys: &[EditKey], shift: bool) {
+            for &k in keys {
+                self.step(0, 0, FrameInput { keys: vec![k], shift, ..Default::default() });
+            }
+        }
+        fn typ(&mut self, s: &str) {
+            self.step(0, 0, FrameInput { chars: s.chars().collect(), ..Default::default() });
+        }
+    }
+
+    #[test]
+    fn text_area_lines_arrows_and_selection() {
+        let mut n = Notes::new("");
+        n.step(100, 60, FrameInput { left: true, ..Default::default() });
+        n.step(100, 60, FrameInput::default());
+        n.typ("hello");
+        n.keys(&[EditKey::Enter], false);
+        n.typ("world");
+        assert_eq!(n.text, "hello
+world");
+        // up to the first line, end of it, then type there
+        n.keys(&[EditKey::Up, EditKey::End], false);
+        n.typ("!");
+        assert_eq!(n.text, "hello!
+world");
+        // Shift+Down selects across the line break; typing replaces the selection
+        n.keys(&[EditKey::Home], false);
+        n.keys(&[EditKey::Down], true);
+        n.typ("X");
+        assert_eq!(n.text, "Xworld");
+    }
+
+    #[test]
+    fn text_area_scrolls_without_trouble() {
+        let long: Vec<String> = (1..=60).map(|i| format!("line {}", i)).collect();
+        let mut n = Notes::new(&long.join("
+"));
+        // the wheel over the area, then Page Down and Ctrl+End with the focus
+        n.step(100, 60, FrameInput { scroll: -2.0, ..Default::default() });
+        n.step(100, 60, FrameInput { left: true, ..Default::default() });
+        n.step(100, 60, FrameInput::default());
+        n.keys(&[EditKey::PageDown, EditKey::PageDown], false);
+        n.step(0, 0, FrameInput { keys: vec![EditKey::End], ctrl: true, ..Default::default() });
+        n.typ("!");
+        assert!(n.text.ends_with("line 60!"));
+    }
+
     #[test]
     fn the_program_can_change_the_text_of_the_focused_field() {
         let mut f = Form::new();
@@ -884,5 +1159,48 @@ mod widget_tests {
         f.step(0, 0, FrameInput::default());
         f.typ("new");
         assert_eq!(f.fields[0], "new");
+    }
+
+    /// A picture of the widgets, for looking at them: run with
+    /// `GLOBW_GALLERY=<folder> cargo test --lib gallery -- --ignored`.
+    #[test]
+    #[ignore]
+    fn gallery() {
+        let dir = std::env::var("GLOBW_GALLERY").unwrap_or_else(|_| ".".into());
+        for theme in ["dark", "light"] {
+            let mut env = Env::default();
+            env.graphics = Some(Graphics::headless(520, 330));
+            env.call(Builtin::GtqTheme, &[Value::Str(theme.into())]).unwrap();
+            let mut name = String::from("Ada Lovelace");
+            let mut notes = String::from("Notes on the Analytical Engine
+It weaves algebraic patterns
+just as the Jacquard loom
+weaves flowers and leaves.
+
+line 6
+line 7
+line 8
+line 9");
+            let frames: Vec<(i64, i64, FrameInput)> = vec![
+                (300, 120, FrameInput { left: true, ..Default::default() }), // click in the area
+                (300, 120, FrameInput::default()),
+                (0, 0, FrameInput { keys: vec![EditKey::Down, EditKey::Home], ..Default::default() }),
+                (0, 0, FrameInput { keys: vec![EditKey::Down, EditKey::Right, EditKey::Right], shift: true, ..Default::default() }),
+                (0, 0, FrameInput::default()),
+            ];
+            for (x, y, input) in frames {
+                env.gui.blink = std::time::Instant::now(); // the caret visible in the picture
+                env.graphics.as_mut().unwrap().simulate(x, y, input);
+                env.call(Builtin::Show, &[]).unwrap();
+                let bg = env.call(Builtin::GtqThemeColor, &[Value::Str("window".into())]).unwrap();
+                env.call(Builtin::Clear, &[bg]).unwrap();
+                let a = [Value::Real(20.0), Value::Real(20.0), Value::Real(480.0), Value::Real(34.0), Value::Str(name.as_str().into())];
+                name = crate::vm::display(&env.call(Builtin::GtqTextbox, &a).unwrap());
+                let a = [Value::Real(20.0), Value::Real(70.0), Value::Real(480.0), Value::Real(130.0), Value::Str(notes.as_str().into())];
+                notes = crate::vm::display(&env.call(Builtin::GtqTextarea, &a).unwrap());
+            }
+            let png = env.graphics.as_ref().unwrap().canvas.to_png();
+            std::fs::write(format!("{}/gallery_{}.png", dir, theme), png).unwrap();
+        }
     }
 }
