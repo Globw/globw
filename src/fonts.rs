@@ -200,6 +200,14 @@ impl Fonts {
         self.glyphs.entry((font, size.to_bits(), ch)).or_insert_with(|| loaded[font].rasterize(ch, size))
     }
 
+    /// The height in pixels of a line of text in the current font.
+    pub fn height(&mut self) -> f64 {
+        match self.current() {
+            Current::Pixel { scale } => (8 * scale) as f64,
+            Current::Vector { size, .. } => size as f64,
+        }
+    }
+
     /// Width in pixels of `text` in the current font.
     pub fn width(&mut self, text: &str) -> Result<i64, String> {
         Ok(match self.current() {

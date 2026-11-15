@@ -26,6 +26,15 @@ stack, the variables of every frame (lists, dictionaries and objects expand),
 hover values, and a stop on any uncaught run-time error with the variables of the
 failing line. A `launch.json` can grant permissions and give the `input()` text.
 
+**GUI (`gtq`) toward tkinter.**
+
+- `gtq.textbox` is now a real text field: you type into it, with a blinking
+  caret, mouse and Shift selection, word moves, the system clipboard
+  (Ctrl+C/X/V), undo/redo (Ctrl+Z/Y), and Tab / Shift+Tab between fields.
+  Before, a click opened a separate dialog. New: `gtq.password`,
+  `gtq.submitted()` (Enter), `gtq.theme("dark"|"light")` and `gtq.theme_color`.
+- `screenshot("file.png")` saves the graphics window as a PNG.
+
 **Faster.** Interpreted code runs 19–41% faster than in 0.1.5 (`bench/`, best
 of 7: fibb −41%, sumb −39%, sum −38%, mandel −29%, fib −24%, sieve −19%;
 nungw-bound benchmarks unchanged). Against CPython 3.14 that is now about 1.7×

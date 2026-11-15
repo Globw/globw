@@ -915,7 +915,10 @@ end loop
 - `gtq.groupbox(x, y, w, h, title)` — a titled frame.
 - `gtq.spinbox(x, y, value, step, min, max)` — a number field with − / + buttons; returns the new value.
 - `gtq.selector(x, y, w, "a,b,c", index)` — a combo that cycles through the comma-separated options on click; returns the new index.
-- `gtq.textbox(x, y, w, h, current)` — a text field; clicking it opens a dialog to edit; returns the new text.
+- `gtq.textbox(x, y, w, h, current)` — a text field you type into: click (or Tab) to focus it, then type. It has a blinking caret and supports the usual editing — arrows, Home/End, Ctrl+arrows by word, Shift to select (or drag with the mouse), Backspace/Delete (Ctrl: a whole word), Ctrl+A select all, Ctrl+C/X/V copy/cut/paste with the system clipboard, Ctrl+Z/Y undo/redo. Returns the text after this frame (give it back each frame). Tab / Shift+Tab move the focus between fields in drawing order; a click elsewhere drops it.
+- `gtq.password(x, y, w, h, current)` — the same, but shows `•` for each character (and never copies to the clipboard).
+- `gtq.submitted()` — `true` on the frame Enter was pressed in a text field (for "press Enter to send").
+- `gtq.theme("dark" | "light")` — the colour theme of the interactive widgets (dark by default); `gtq.theme_color(name)` gives a theme colour as `"#rrggbb"` for your own drawing (`window`, `field`, `border`, `focus`, `text`, `muted`, `selection`, `accent`, `panel`), e.g. `clear(gtq.theme_color("window"))`.
 - `gtq.vslider(x, y, h, value, min, max)` — a vertical slider.
 - `gtq.hovered(x, y, w, h)` / `gtq.clicked(x, y, w, h)` — generic hit tests for a region (true on hover / on the click frame).
 
@@ -1446,6 +1449,8 @@ The project is a Cargo project at the repository root, with one module per phase
 - **Type-specialized instructions** (`AddI`, `AddR`, `CmpI`…): the types are already known, so the VM never checks them during operations.
 - Integers and reals are never heap-allocated. Strings, arrays and lists are shared by reference.
 - Globals live in fixed-index slots and are never looked up by name at run time.
+
+**Saving the window.** `screenshot("file.png")` saves what the graphics window shows as a PNG image (it needs `--allow-write`, like any file written).
 
 **Command line** (the binary is `gw`)
 ```

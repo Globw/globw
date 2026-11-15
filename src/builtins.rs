@@ -781,6 +781,11 @@ pub enum Builtin {
     GtqSpinbox,
     GtqSelector,
     GtqTextbox,
+    GtqPassword,
+    GtqSubmitted,
+    GtqTheme,
+    GtqThemeColor,
+    Screenshot,
     GtqVslider,
     GtqHovered,
     GtqClicked,
@@ -2039,6 +2044,11 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (GtqSpinbox, "gtq.spinbox", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
     (GtqSelector, "gtq.selector", Sig::Fixed(&[R, R, R, S, I], Some(Int))),
     (GtqTextbox, "gtq.textbox", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
+    (GtqPassword, "gtq.password", Sig::Fixed(&[R, R, R, R, S], Some(Str))),
+    (GtqSubmitted, "gtq.submitted", Sig::Fixed(&[], Some(Bool))),
+    (GtqTheme, "gtq.theme", Sig::Fixed(&[S], None)),
+    (GtqThemeColor, "gtq.theme_color", Sig::Fixed(&[S], Some(Str))),
+    (Screenshot, "screenshot", Sig::Fixed(&[S], None)),
     (GtqVslider, "gtq.vslider", Sig::Fixed(&[R, R, R, R, R, R], Some(Real))),
     (GtqHovered, "gtq.hovered", Sig::Fixed(&[R, R, R, R], Some(Bool))),
     (GtqClicked, "gtq.clicked", Sig::Fixed(&[R, R, R, R], Some(Bool))),
@@ -3764,7 +3774,7 @@ pub fn catalogue_json() -> String {
     out
 }
 
-const NO_WINDOW: &str = "there is no window: call window(...) first";
+pub(crate) const NO_WINDOW: &str = "there is no window: call window(...) first";
 
 fn int(v: &Value) -> i64 {
     match v {
@@ -4082,18 +4092,27 @@ fn draw_icon(c: &mut crate::canvas::Canvas, name: &str, x: f64, y: f64, s: f64, 
 
 /// Run-time state of the built-ins: the window, the clock and the random generator.
 pub struct Env {
-    graphics: Option<Graphics>,
-    fonts: Fonts,
+    pub(crate) graphics: Option<Graphics>,
+    pub(crate) fonts: Fonts,
     start: Instant,
     rng: u64,
     /// the mouse button state at the previous frame, for `gtq` click detection
-    prev_down: bool,
+    pub(crate) prev_down: bool,
+    /// focus, text editing and theme of the interactive `gtq` widgets
+    pub(crate) gui: crate::gui::GuiState,
 }
 
 impl Default for Env {
     fn default() -> Env {
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0x9E37_79B9, |d| d.as_nanos() as u64);
-        Env { graphics: None, fonts: Fonts::default(), start: Instant::now(), rng: seed | 1, prev_down: false }
+        Env {
+            graphics: None,
+            fonts: Fonts::default(),
+            start: Instant::now(),
+            rng: seed | 1,
+            prev_down: false,
+            gui: crate::gui::GuiState::default(),
+        }
     }
 }
 
@@ -4156,6 +4175,15 @@ impl Env {
             Open => Value::Bool(self.graphics.as_ref().is_some_and(|g| g.is_open())),
             Show => {
                 self.prev_down = self.graphics.as_ref().is_some_and(Graphics::click);
+                if let Some(g) = self.graphics.as_mut() {
+                    // the end of a GUI frame: focus changes, then the pointer's look
+                    self.gui.end_frame(&g.input);
+                    g.set_pointer(if self.gui.over_text {
+                        crate::graphics::Pointer::Text
+                    } else {
+                        crate::graphics::Pointer::Arrow
+                    });
+                }
                 self.window()?.show();
                 Value::Null
             }
@@ -4474,31 +4502,27 @@ impl Env {
             }
             GtqTextbox => {
                 let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
-                let current = text(&args[4]).to_string();
-                let (hover, down) = {
-                    let g = self.graphics.as_ref().ok_or_else(|| NO_WINDOW.to_string())?;
-                    let (a, b) = g.mouse();
-                    let (a, b) = (a as f64, b as f64);
-                    (a >= x && a <= x + w && b >= y && b <= y + h, g.click())
+                Value::Str(self.text_field(x, y, w, h, text(&args[4]), false)?.into())
+            }
+            GtqPassword => {
+                let (x, y, w, h) = (real(&args[0]), real(&args[1]), real(&args[2]), real(&args[3]));
+                Value::Str(self.text_field(x, y, w, h, text(&args[4]), true)?.into())
+            }
+            GtqSubmitted => Value::Bool(self.gui.submitted.is_some()),
+            GtqTheme => {
+                self.gui.theme = match text(&args[0]).trim().to_lowercase().as_str() {
+                    "dark" => crate::gui::Theme::dark(),
+                    "light" => crate::gui::Theme::light(),
+                    other => return Err(format!("gtq.theme: \"{}\" is not a theme: use \"dark\" or \"light\"", other)),
                 };
-                let mut value = current.clone();
-                if hover && down && !self.prev_down {
-                    if let Ok(s) = dialogs::ask(&format!("New value (was: {})", current)) {
-                        if !s.is_empty() {
-                            value = s;
-                        }
-                    }
-                }
-                let (bg, border, white) =
-                    (parse_color("#1f2937")?, parse_color(if hover { "#60a5fa" } else { "#475569" })?, parse_color("#e2e8f0")?);
-                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
-                g.canvas.rect(x, y, w, h, bg);
-                g.canvas.line(x, y, x + w, y, border);
-                g.canvas.line(x, y + h, x + w, y + h, border);
-                g.canvas.line(x, y, x, y + h, border);
-                g.canvas.line(x + w, y, x + w, y + h, border);
-                self.fonts.draw(&mut g.canvas, x + 6.0, y + h / 2.0 - 6.0, &value, white)?;
-                Value::Str(value.into())
+                Value::Null
+            }
+            GtqThemeColor => Value::Str(self.theme_color(text(&args[0]))?.into()),
+            Screenshot => {
+                let path = text(&args[0]);
+                let png = self.window()?.canvas.to_png();
+                std::fs::write(path, png).map_err(|e| format!("screenshot: cannot write \"{}\": {}", path, e))?;
+                Value::Null
             }
             GtqVslider => {
                 let (x, y, h) = (real(&args[0]), real(&args[1]), real(&args[2]));

@@ -5,10 +5,56 @@
 use crate::canvas::Canvas;
 use crate::render3d::Scene;
 
+/// The editing keys the GUI widgets react to (independent of the window crate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditKey {
+    Backspace,
+    Delete,
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Enter,
+    Tab,
+    Escape,
+    /// a letter key, for shortcuts like Ctrl+C
+    Letter(char),
+}
+
+/// What the user did since the previous frame: typed text, pressed keys (with
+/// auto-repeat), the scroll wheel and the mouse buttons.
+#[derive(Debug, Clone, Default)]
+pub struct FrameInput {
+    pub chars: Vec<char>,
+    pub keys: Vec<EditKey>,
+    /// wheel movement: positive scrolls up
+    pub scroll: f32,
+    pub left: bool,
+    pub right: bool,
+    /// the left / right button went down during this frame
+    pub left_pressed: bool,
+    pub right_pressed: bool,
+    pub ctrl: bool,
+    pub shift: bool,
+}
+
+/// The mouse pointer's look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pointer {
+    Arrow,
+    Text,
+    Hand,
+}
+
 #[cfg(not(feature = "native"))]
 pub struct Graphics {
     pub canvas: Canvas,
     pub scene: Scene,
+    pub input: FrameInput,
 }
 
 #[cfg(not(feature = "native"))]
@@ -22,12 +68,57 @@ impl Graphics {
     pub fn mouse(&self) -> (i64, i64) { (0, 0) }
     pub fn click(&self) -> bool { false }
     pub fn keep_open(&mut self) {}
+    pub fn set_pointer(&mut self, _p: Pointer) {}
 }
 
 #[cfg(feature = "native")]
 pub use minifb::Key;
 #[cfg(feature = "native")]
-use minifb::{MouseButton, MouseMode, Window, WindowOptions};
+use minifb::{CursorStyle, InputCallback, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
+#[cfg(feature = "native")]
+use std::{cell::RefCell, rc::Rc};
+
+/// Collects the characters typed into the window (text input, with accents
+/// and capitals as the keyboard layout gives them).
+#[cfg(feature = "native")]
+struct Typed(Rc<RefCell<Vec<char>>>);
+
+#[cfg(feature = "native")]
+impl InputCallback for Typed {
+    fn add_char(&mut self, c: u32) {
+        if let Some(ch) = char::from_u32(c) {
+            if !ch.is_control() {
+                self.0.borrow_mut().push(ch);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "native")]
+fn edit_key(k: Key) -> Option<EditKey> {
+    Some(match k {
+        Key::Backspace => EditKey::Backspace,
+        Key::Delete => EditKey::Delete,
+        Key::Left => EditKey::Left,
+        Key::Right => EditKey::Right,
+        Key::Up => EditKey::Up,
+        Key::Down => EditKey::Down,
+        Key::Home => EditKey::Home,
+        Key::End => EditKey::End,
+        Key::PageUp => EditKey::PageUp,
+        Key::PageDown => EditKey::PageDown,
+        Key::Enter | Key::NumPadEnter => EditKey::Enter,
+        Key::Tab => EditKey::Tab,
+        Key::Escape => EditKey::Escape,
+        Key::A => EditKey::Letter('a'),
+        Key::C => EditKey::Letter('c'),
+        Key::V => EditKey::Letter('v'),
+        Key::X => EditKey::Letter('x'),
+        Key::Z => EditKey::Letter('z'),
+        Key::Y => EditKey::Letter('y'),
+        _ => return None,
+    })
+}
 
 /// The keys a key name stands for (SHIFT and CTRL have a left and a right key).
 #[cfg(feature = "native")]
@@ -64,10 +155,18 @@ pub fn keys(name: &str) -> Option<Vec<Key>> {
 
 #[cfg(feature = "native")]
 pub struct Graphics {
-    window: Window,
+    /// the real window; `None` in headless mode (tests: input is simulated)
+    window: Option<Window>,
+    /// headless mode: the simulated pointer and the input of the coming frames
+    sim_mouse: (i64, i64),
+    sim_frames: std::collections::VecDeque<FrameInput>,
     pub canvas: Canvas,
     /// 3D camera and rotation; a new window starts from the default
     pub scene: Scene,
+    /// the input of the last frame, for the GUI widgets
+    pub input: FrameInput,
+    typed: Rc<RefCell<Vec<char>>>,
+    pointer: Pointer,
 }
 
 #[cfg(feature = "native")]
@@ -76,38 +175,119 @@ impl Graphics {
         let mut window = Window::new(title, w, h, WindowOptions::default())
             .map_err(|e| format!("cannot open the window: {}", e))?;
         window.set_target_fps(60);
-        let mut g = Graphics { window, canvas: Canvas::new(w, h), scene: Scene::default() };
+        let typed = Rc::new(RefCell::new(Vec::new()));
+        window.set_input_callback(Box::new(Typed(typed.clone())));
+        let mut g = Graphics {
+            window: Some(window),
+            sim_mouse: (0, 0),
+            sim_frames: std::collections::VecDeque::new(),
+            canvas: Canvas::new(w, h),
+            scene: Scene::default(),
+            input: FrameInput::default(),
+            typed,
+            pointer: Pointer::Arrow,
+        };
         g.show();
         Ok(g)
     }
 
+    /// A canvas with no window, whose input is simulated (for tests).
+    pub fn headless(w: usize, h: usize) -> Graphics {
+        Graphics {
+            window: None,
+            sim_mouse: (0, 0),
+            sim_frames: std::collections::VecDeque::new(),
+            canvas: Canvas::new(w, h),
+            scene: Scene::default(),
+            input: FrameInput::default(),
+            typed: Rc::new(RefCell::new(Vec::new())),
+            pointer: Pointer::Arrow,
+        }
+    }
+
+    /// Headless mode: the input of the next frame, with the pointer at (x, y).
+    pub fn simulate(&mut self, x: i64, y: i64, input: FrameInput) {
+        self.sim_frames.push_back(input);
+        self.sim_mouse = (x, y);
+    }
+
     pub fn is_open(&self) -> bool {
-        self.window.is_open()
+        self.window.as_ref().map_or(true, Window::is_open)
     }
 
     /// Shows the canvas and processes window events; waits for the next frame.
     pub fn show(&mut self) {
-        if self.window.is_open() {
-            let _ = self.window.update_with_buffer(&self.canvas.pixels, self.canvas.w, self.canvas.h);
+        if let Some(w) = self.window.as_mut() {
+            if w.is_open() {
+                let _ = w.update_with_buffer(&self.canvas.pixels, self.canvas.w, self.canvas.h);
+            }
+        }
+        self.collect_input();
+    }
+
+    /// Gathers what happened during the last frame, for the GUI widgets.
+    fn collect_input(&mut self) {
+        let Some(w) = self.window.as_ref() else {
+            let mut next = self.sim_frames.pop_front().unwrap_or_default();
+            next.left_pressed = next.left && !self.input.left;
+            next.right_pressed = next.right && !self.input.right;
+            self.input = next;
+            return;
+        };
+        let (left, right) = (w.get_mouse_down(MouseButton::Left), w.get_mouse_down(MouseButton::Right));
+        let down = |k: Key| w.is_key_down(k);
+        self.input = FrameInput {
+            chars: std::mem::take(&mut *self.typed.borrow_mut()),
+            keys: w.get_keys_pressed(KeyRepeat::Yes).into_iter().filter_map(edit_key).collect(),
+            scroll: w.get_scroll_wheel().map_or(0.0, |(_, y)| y),
+            left_pressed: left && !self.input.left,
+            right_pressed: right && !self.input.right,
+            left,
+            right,
+            ctrl: down(Key::LeftCtrl) || down(Key::RightCtrl),
+            shift: down(Key::LeftShift) || down(Key::RightShift),
+        };
+        // with Ctrl held the letters are shortcuts, not text
+        if self.input.ctrl {
+            self.input.chars.clear();
+        }
+    }
+
+    /// Changes the mouse pointer's look (only when it differs, to avoid flicker).
+    pub fn set_pointer(&mut self, p: Pointer) {
+        if p != self.pointer {
+            self.pointer = p;
+            let Some(w) = self.window.as_mut() else { return };
+            w.set_cursor_style(match p {
+                Pointer::Arrow => CursorStyle::Arrow,
+                Pointer::Text => CursorStyle::Ibeam,
+                Pointer::Hand => CursorStyle::Arrow,
+            });
         }
     }
 
     pub fn key(&self, name: &str) -> Result<bool, String> {
         let ks = keys(name)
             .ok_or_else(|| format!("unknown key \"{}\": use names like \"A\", \"5\", \"LEFT\", \"SPACE\"", name))?;
-        Ok(ks.iter().any(|&k| self.window.is_key_down(k)))
+        Ok(self.window.as_ref().is_some_and(|w| ks.iter().any(|&k| w.is_key_down(k))))
     }
 
     pub fn mouse(&self) -> (i64, i64) {
-        self.window.get_mouse_pos(MouseMode::Clamp).map_or((0, 0), |(x, y)| (x as i64, y as i64))
+        match &self.window {
+            Some(w) => w.get_mouse_pos(MouseMode::Clamp).map_or((0, 0), |(x, y)| (x as i64, y as i64)),
+            None => self.sim_mouse,
+        }
     }
 
     pub fn click(&self) -> bool {
-        self.window.get_mouse_down(MouseButton::Left)
+        match &self.window {
+            Some(w) => w.get_mouse_down(MouseButton::Left),
+            None => self.input.left,
+        }
     }
 
     pub fn keep_open(&mut self) {
-        while self.window.is_open() {
+        while self.window.as_ref().is_some_and(Window::is_open) {
             self.show();
         }
     }

@@ -5107,6 +5107,7 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
             }
         }
         WriteFile => check_path(&c.write, text(&args[0]), "writing files", "--allow-write")?,
+        Screenshot => check_path(&c.write, text(&args[0]), "screenshot", "--allow-write")?,
         ChartLine | ChartBars | ChartScatter => {
             if let Some(p) = args.last() {
                 check_path(&c.write, text(p), "writing files", "--allow-write")?;

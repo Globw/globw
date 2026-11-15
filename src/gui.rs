@@ -1,0 +1,888 @@
+//! The interactive parts of the `gtq` GUI: keyboard focus, text editing,
+//! the clipboard and the colour theme.
+//!
+//! `gtq` is immediate-mode: the program draws every widget each frame and gets
+//! the new value back. What must survive between frames — which widget has the
+//! focus, the caret and selection of the field being edited, the undo history —
+//! lives in [`GuiState`]. A widget is known by an id made from its kind and its
+//! rectangle, so the same call in the next frame finds its state again.
+//!
+//! The editing itself ([`Editor`]) is plain logic with no window, so it is
+//! unit-tested on its own.
+
+use crate::graphics::{EditKey, FrameInput};
+
+/// The text being edited in the focused field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Editor {
+    pub text: Vec<char>,
+    /// the caret, as a character index (0..=len)
+    pub caret: usize,
+    /// the other end of the selection; equal to `caret` when nothing is selected
+    pub anchor: usize,
+    /// whether Enter inserts a line break (a text area) or not (a field)
+    pub multiline: bool,
+}
+
+/// What a key press asked for besides editing.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct EditResult {
+    /// text to put on the clipboard (copy / cut)
+    pub copy: Option<String>,
+    /// the user asked to paste
+    pub paste: bool,
+    /// Enter in a single-line field
+    pub submitted: bool,
+    /// the text changed (for the undo history)
+    pub changed: bool,
+    pub undo: bool,
+    pub redo: bool,
+}
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+impl Editor {
+    pub fn new(text: &str, multiline: bool) -> Editor {
+        let text: Vec<char> = text.chars().collect();
+        let n = text.len();
+        Editor { text, caret: n, anchor: n, multiline }
+    }
+
+    pub fn string(&self) -> String {
+        self.text.iter().collect()
+    }
+
+    /// The selected range (start, end), possibly empty.
+    pub fn selection(&self) -> (usize, usize) {
+        (self.caret.min(self.anchor), self.caret.max(self.anchor))
+    }
+
+    pub fn selected(&self) -> String {
+        let (a, b) = self.selection();
+        self.text[a..b].iter().collect()
+    }
+
+    fn delete_selection(&mut self) -> bool {
+        let (a, b) = self.selection();
+        if a == b {
+            return false;
+        }
+        self.text.drain(a..b);
+        self.caret = a;
+        self.anchor = a;
+        true
+    }
+
+    /// Types text at the caret, replacing the selection.
+    pub fn insert(&mut self, s: &str) {
+        self.delete_selection();
+        let chars: Vec<char> = s
+            .chars()
+            .filter(|&c| if self.multiline { c == '\n' || !c.is_control() } else { !c.is_control() })
+            .collect();
+        let n = chars.len();
+        self.text.splice(self.caret..self.caret, chars);
+        self.caret += n;
+        self.anchor = self.caret;
+    }
+
+    pub fn select_all(&mut self) {
+        self.anchor = 0;
+        self.caret = self.text.len();
+    }
+
+    /// The start of the word before `i` (Ctrl+Left, Ctrl+Backspace).
+    fn word_left(&self, mut i: usize) -> usize {
+        while i > 0 && !is_word(self.text[i - 1]) {
+            i -= 1;
+        }
+        while i > 0 && is_word(self.text[i - 1]) {
+            i -= 1;
+        }
+        i
+    }
+
+    /// The end of the word after `i` (Ctrl+Right, Ctrl+Delete).
+    fn word_right(&self, mut i: usize) -> usize {
+        let n = self.text.len();
+        while i < n && !is_word(self.text[i]) {
+            i += 1;
+        }
+        while i < n && is_word(self.text[i]) {
+            i += 1;
+        }
+        i
+    }
+
+    /// The start and end of the line holding `i`.
+    fn line_bounds(&self, i: usize) -> (usize, usize) {
+        let start = self.text[..i].iter().rposition(|&c| c == '\n').map_or(0, |p| p + 1);
+        let end = self.text[i..].iter().position(|&c| c == '\n').map_or(self.text.len(), |p| i + p);
+        (start, end)
+    }
+
+    /// The same column one line up (`up`) or down, for a text area.
+    fn vertical(&self, i: usize, up: bool) -> usize {
+        let (start, end) = self.line_bounds(i);
+        let col = i - start;
+        if up {
+            if start == 0 {
+                return 0;
+            }
+            let (ps, pe) = self.line_bounds(start - 1);
+            (ps + col).min(pe)
+        } else {
+            if end == self.text.len() {
+                return end;
+            }
+            let (ns, ne) = self.line_bounds(end + 1);
+            (ns + col).min(ne)
+        }
+    }
+
+    fn move_to(&mut self, i: usize, extend: bool) {
+        self.caret = i.min(self.text.len());
+        if !extend {
+            self.anchor = self.caret;
+        }
+    }
+
+    /// Applies one key press.
+    pub fn key(&mut self, k: EditKey, ctrl: bool, shift: bool) -> EditResult {
+        let mut r = EditResult::default();
+        let (a, b) = self.selection();
+        match k {
+            EditKey::Backspace => {
+                if !self.delete_selection() && self.caret > 0 {
+                    let from = if ctrl { self.word_left(self.caret) } else { self.caret - 1 };
+                    self.text.drain(from..self.caret);
+                    self.caret = from;
+                    self.anchor = from;
+                }
+                r.changed = true;
+            }
+            EditKey::Delete => {
+                if !self.delete_selection() && self.caret < self.text.len() {
+                    let to = if ctrl { self.word_right(self.caret) } else { self.caret + 1 };
+                    self.text.drain(self.caret..to);
+                }
+                r.changed = true;
+            }
+            EditKey::Left => {
+                let to = if ctrl {
+                    self.word_left(self.caret)
+                } else if a != b && !shift {
+                    a
+                } else {
+                    self.caret.saturating_sub(1)
+                };
+                self.move_to(to, shift);
+            }
+            EditKey::Right => {
+                let to = if ctrl {
+                    self.word_right(self.caret)
+                } else if a != b && !shift {
+                    b
+                } else {
+                    self.caret + 1
+                };
+                self.move_to(to, shift);
+            }
+            EditKey::Up if self.multiline => self.move_to(self.vertical(self.caret, true), shift),
+            EditKey::Down if self.multiline => self.move_to(self.vertical(self.caret, false), shift),
+            EditKey::Home => {
+                let to = if ctrl || !self.multiline { 0 } else { self.line_bounds(self.caret).0 };
+                self.move_to(to, shift);
+            }
+            EditKey::End => {
+                let to = if ctrl || !self.multiline { self.text.len() } else { self.line_bounds(self.caret).1 };
+                self.move_to(to, shift);
+            }
+            EditKey::Enter if self.multiline => {
+                self.insert("\n");
+                r.changed = true;
+            }
+            EditKey::Enter => r.submitted = true,
+            EditKey::Letter('a') if ctrl => self.select_all(),
+            EditKey::Letter('c') if ctrl => {
+                if a != b {
+                    r.copy = Some(self.selected());
+                }
+            }
+            EditKey::Letter('x') if ctrl => {
+                if a != b {
+                    r.copy = Some(self.selected());
+                    self.delete_selection();
+                    r.changed = true;
+                }
+            }
+            EditKey::Letter('v') if ctrl => r.paste = true,
+            EditKey::Letter('z') if ctrl && shift => r.redo = true,
+            EditKey::Letter('z') if ctrl => r.undo = true,
+            EditKey::Letter('y') if ctrl => r.redo = true,
+            _ => {}
+        }
+        r
+    }
+}
+
+/// Colours of the widgets, for the dark (default) and light themes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Theme {
+    pub dark: bool,
+    pub window: u32,
+    pub field: u32,
+    pub field_hover: u32,
+    pub border: u32,
+    pub focus: u32,
+    pub text: u32,
+    pub muted: u32,
+    pub selection: u32,
+    pub accent: u32,
+    pub accent_text: u32,
+    pub panel: u32,
+    pub row_alt: u32,
+    pub row_hover: u32,
+}
+
+impl Theme {
+    pub fn dark() -> Theme {
+        Theme {
+            dark: true,
+            window: 0x111827,
+            field: 0x1f2937,
+            field_hover: 0x243042,
+            border: 0x475569,
+            focus: 0x60a5fa,
+            text: 0xe2e8f0,
+            muted: 0x94a3b8,
+            selection: 0x1d4ed8,
+            accent: 0x3b82f6,
+            accent_text: 0xffffff,
+            panel: 0x1e293b,
+            row_alt: 0x1a2332,
+            row_hover: 0x2b3a52,
+        }
+    }
+
+    pub fn light() -> Theme {
+        Theme {
+            dark: false,
+            window: 0xf3f4f6,
+            field: 0xffffff,
+            field_hover: 0xf9fafb,
+            border: 0x9ca3af,
+            focus: 0x2563eb,
+            text: 0x111827,
+            muted: 0x6b7280,
+            selection: 0xbfdbfe,
+            accent: 0x2563eb,
+            accent_text: 0xffffff,
+            panel: 0xffffff,
+            row_alt: 0xf3f4f6,
+            row_hover: 0xdbeafe,
+        }
+    }
+}
+
+/// Undo history entries: the text and the caret.
+type Snapshot = (Vec<char>, usize);
+
+/// What the GUI remembers between frames.
+pub struct GuiState {
+    /// the id of the widget with the keyboard focus
+    pub focus: Option<u64>,
+    /// the editor of the focused text widget
+    pub editor: Option<Editor>,
+    /// horizontal (fields) or vertical (areas) scroll of the focused text, in pixels
+    pub scroll: f64,
+    /// the mouse is selecting text in the focused widget
+    pub dragging: bool,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    /// focusable widgets drawn this frame, in order, for Tab
+    order: Vec<u64>,
+    /// a widget took this frame's click
+    claimed: bool,
+    /// the next focused widget should select all its text (focus by Tab)
+    pub select_on_focus: bool,
+    /// Enter was pressed in this single-line field (its id), this frame
+    pub submitted: Option<u64>,
+    /// the mouse is over a text widget this frame
+    pub over_text: bool,
+    pub theme: Theme,
+    /// when the caret last moved, for blinking
+    pub blink: std::time::Instant,
+}
+
+impl Default for GuiState {
+    fn default() -> GuiState {
+        GuiState {
+            focus: None,
+            editor: None,
+            scroll: 0.0,
+            dragging: false,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            order: Vec::new(),
+            claimed: false,
+            select_on_focus: false,
+            submitted: None,
+            over_text: false,
+            theme: Theme::dark(),
+            blink: std::time::Instant::now(),
+        }
+    }
+}
+
+/// An id for a widget: its kind and its rectangle.
+pub fn widget_id(kind: u64, x: f64, y: f64, w: f64, h: f64) -> u64 {
+    let mut v = kind.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    for p in [x, y, w, h] {
+        v = (v ^ (p.round() as i64 as u64)).wrapping_mul(0x0100_0000_01B3);
+    }
+    v
+}
+
+impl GuiState {
+    /// Records a focusable widget (for Tab) and whether it is focused.
+    pub fn register(&mut self, id: u64) -> bool {
+        self.order.push(id);
+        self.focus == Some(id)
+    }
+
+    /// Gives the focus to a widget (by click or Tab) with its current text.
+    pub fn take_focus(&mut self, id: u64, text: &str, multiline: bool) {
+        self.claimed = true;
+        if self.focus != Some(id) {
+            self.focus = Some(id);
+            self.editor = Some(Editor::new(text, multiline));
+            self.scroll = 0.0;
+            self.undo.clear();
+            self.redo.clear();
+        }
+        self.blink = std::time::Instant::now();
+    }
+
+    pub fn claim(&mut self) {
+        self.claimed = true;
+    }
+
+    /// Saves the text before an edit, for Ctrl+Z.
+    pub fn remember(&mut self, e: &Editor) {
+        if self.undo.last().is_some_and(|(t, _)| *t == e.text) {
+            return;
+        }
+        self.undo.push((e.text.clone(), e.caret));
+        if self.undo.len() > 200 {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    pub fn undo(&mut self, e: &mut Editor) {
+        if let Some((t, c)) = self.undo.pop() {
+            self.redo.push((e.text.clone(), e.caret));
+            e.text = t;
+            e.caret = c.min(e.text.len());
+            e.anchor = e.caret;
+        }
+    }
+
+    pub fn redo(&mut self, e: &mut Editor) {
+        if let Some((t, c)) = self.redo.pop() {
+            self.undo.push((e.text.clone(), e.caret));
+            e.text = t;
+            e.caret = c.min(e.text.len());
+            e.anchor = e.caret;
+        }
+    }
+
+    /// The end of a frame: a click on nothing drops the focus, and Tab moves it
+    /// to the next (Shift: previous) focusable widget.
+    pub fn end_frame(&mut self, input: &FrameInput) {
+        if input.left_pressed && !self.claimed {
+            self.focus = None;
+            self.editor = None;
+        }
+        if input.keys.contains(&EditKey::Tab) && !self.order.is_empty() {
+            let n = self.order.len();
+            let next = match self.focus.and_then(|f| self.order.iter().position(|&o| o == f)) {
+                Some(i) if input.shift => (i + n - 1) % n,
+                Some(i) => (i + 1) % n,
+                None if input.shift => n - 1,
+                None => 0,
+            };
+            self.focus = Some(self.order[next]);
+            self.editor = None; // made by the widget, which knows its text
+            self.select_on_focus = true;
+        }
+        self.order.clear();
+        self.claimed = false;
+        self.submitted = None;
+        self.over_text = false;
+    }
+}
+
+/// The system clipboard (desktop only).
+pub fn clipboard_get() -> Option<String> {
+    #[cfg(feature = "native")]
+    {
+        arboard::Clipboard::new().ok()?.get_text().ok()
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        None
+    }
+}
+
+pub fn clipboard_set(text: &str) {
+    #[cfg(feature = "native")]
+    {
+        if let Ok(mut c) = arboard::Clipboard::new() {
+            let _ = c.set_text(text.to_string());
+        }
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = text;
+    }
+}
+
+/// Widget kinds, for their ids.
+const KIND_FIELD: u64 = 1;
+
+fn hex(c: u32) -> String {
+    format!("#{:06x}", c & 0xFF_FFFF)
+}
+
+/// x of every caret position in `s`, from the left of the text.
+fn caret_stops(fonts: &mut crate::fonts::Fonts, s: &str) -> Result<Vec<f64>, String> {
+    let mut out = vec![0.0];
+    let mut acc = 0.0;
+    for c in s.chars() {
+        acc += fonts.width(&c.to_string())? as f64;
+        out.push(acc);
+    }
+    Ok(out)
+}
+
+/// The caret position nearest to `at` pixels from the left of the text.
+fn nearest_stop(stops: &[f64], at: f64) -> usize {
+    let mut best = 0;
+    for (i, &s) in stops.iter().enumerate() {
+        if (s - at).abs() < (stops[best] - at).abs() {
+            best = i;
+        }
+    }
+    best
+}
+
+impl crate::builtins::Env {
+    /// A theme colour by name, as "#rrggbb", for the program's own drawing.
+    pub(crate) fn theme_color(&self, name: &str) -> Result<String, String> {
+        let t = &self.gui.theme;
+        Ok(hex(match name.trim().to_lowercase().as_str() {
+            "window" | "background" => t.window,
+            "field" => t.field,
+            "border" => t.border,
+            "focus" => t.focus,
+            "text" => t.text,
+            "muted" => t.muted,
+            "selection" => t.selection,
+            "accent" => t.accent,
+            "panel" => t.panel,
+            other => {
+                return Err(format!(
+                    "gtq.theme_color: unknown colour \"{}\" (window, field, border, focus, text, muted, selection, accent, panel)",
+                    other
+                ))
+            }
+        }))
+    }
+
+    /// A single-line text field (`password` hides the characters): click or Tab
+    /// to focus, then type; arrows, Home/End, Shift to select, Ctrl+A/C/X/V/Z/Y.
+    /// Returns the text as it is after this frame.
+    pub(crate) fn text_field(&mut self, x: f64, y: f64, w: f64, h: f64, value: &str, password: bool) -> Result<String, String> {
+        let id = widget_id(KIND_FIELD, x, y, w, h);
+        let focused = self.gui.register(id);
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let input = g.input.clone();
+        let (mx, my) = g.mouse();
+        let (mx, my) = (mx as f64, my as f64);
+        let hover = mx >= x && mx < x + w && my >= y && my < y + h;
+        if hover {
+            self.gui.over_text = true;
+        }
+        let pad = 7.0;
+        let fh = self.fonts.height();
+        let text_x = x + pad;
+        let text_y = y + ((h - fh) / 2.0).max(0.0);
+        let shown = |e: &str| if password { "\u{2022}".repeat(e.chars().count()) } else { e.to_string() };
+
+        // the focus arrived by Tab: make the editor, with all the text selected
+        if focused && self.gui.editor.is_none() {
+            let mut e = Editor::new(value, false);
+            if std::mem::take(&mut self.gui.select_on_focus) {
+                e.select_all();
+            }
+            self.gui.editor = Some(e);
+            self.gui.scroll = 0.0;
+        }
+        // the program changed the value itself (for example cleared it)
+        if focused {
+            if let Some(e) = self.gui.editor.as_mut() {
+                if e.string() != value {
+                    *e = Editor::new(value, false);
+                }
+            }
+        }
+
+        // mouse: click to place the caret (Shift extends), drag to select
+        if input.left_pressed && hover {
+            let was = self.gui.focus == Some(id);
+            self.gui.take_focus(id, value, false);
+            let scroll = self.gui.scroll;
+            let e = self.gui.editor.as_mut().expect("an editor after take_focus");
+            let st = caret_stops(&mut self.fonts, &shown(&e.string()))?;
+            let at = nearest_stop(&st, mx - text_x + scroll);
+            e.caret = at;
+            if !(input.shift && was) {
+                e.anchor = at;
+            }
+            self.gui.dragging = true;
+        } else if self.gui.focus == Some(id) && self.gui.dragging {
+            if input.left {
+                let scroll = self.gui.scroll;
+                let e = self.gui.editor.as_mut().expect("an editor while focused");
+                let st = caret_stops(&mut self.fonts, &shown(&e.string()))?;
+                e.caret = nearest_stop(&st, mx - text_x + scroll);
+            } else {
+                self.gui.dragging = false;
+            }
+        }
+
+        // keyboard: only the focused field reads it
+        let focused = self.gui.focus == Some(id);
+        if focused {
+            let mut e = self.gui.editor.take().expect("an editor while focused");
+            if !input.chars.is_empty() {
+                self.gui.remember(&e);
+                let typed: String = input.chars.iter().collect();
+                e.insert(&typed);
+                self.gui.blink = std::time::Instant::now();
+            }
+            for &k in input.keys.iter().filter(|&&k| k != EditKey::Tab) {
+                let before = e.clone();
+                let r = e.key(k, input.ctrl, input.shift);
+                if let Some(c) = &r.copy {
+                    if !password {
+                        clipboard_set(c);
+                    }
+                }
+                if r.paste {
+                    if let Some(c) = clipboard_get() {
+                        e.insert(&c);
+                    }
+                }
+                if r.undo {
+                    self.gui.undo(&mut e);
+                }
+                if r.redo {
+                    self.gui.redo(&mut e);
+                }
+                if r.submitted {
+                    self.gui.submitted = Some(id);
+                }
+                if e.text != before.text && !r.undo && !r.redo {
+                    self.gui.remember(&before);
+                }
+                self.gui.blink = std::time::Instant::now();
+            }
+            self.gui.editor = Some(e);
+        }
+
+        // draw
+        let t = self.gui.theme;
+        let current = match (&self.gui.editor, focused) {
+            (Some(e), true) => e.clone(),
+            _ => Editor::new(value, false),
+        };
+        let text = shown(&current.string());
+        let st = caret_stops(&mut self.fonts, &text)?;
+        let last = st.len() - 1;
+        if focused {
+            // keep the caret inside the field
+            let cx = st[current.caret.min(last)];
+            let inner = (w - 2.0 * pad).max(1.0);
+            if cx - self.gui.scroll > inner {
+                self.gui.scroll = cx - inner;
+            }
+            if cx < self.gui.scroll {
+                self.gui.scroll = cx;
+            }
+            self.gui.scroll = self.gui.scroll.min((st[last] - inner).max(0.0)).max(0.0);
+        }
+        let scroll = if focused { self.gui.scroll } else { 0.0 };
+        let blink_on = (self.gui.blink.elapsed().as_millis() / 530) % 2 == 0;
+        let g = self.graphics.as_mut().ok_or_else(|| crate::builtins::NO_WINDOW.to_string())?;
+        let c = &mut g.canvas;
+        c.rect(x, y, w, h, if hover && !focused { t.field_hover } else { t.field });
+        let edge = if focused { t.focus } else { t.border };
+        let thick = if focused { 2.0 } else { 1.0 };
+        c.rect(x, y, w, thick, edge);
+        c.rect(x, y + h - thick, w, thick, edge);
+        c.rect(x, y, thick, h, edge);
+        c.rect(x + w - thick, y, thick, h, edge);
+        let saved = c.clip();
+        c.set_clip(x + 2.0, y + 2.0, w - 4.0, h - 4.0);
+        let (sa, sb) = current.selection();
+        if focused && sa != sb {
+            let (xa, xb) = (st[sa.min(last)], st[sb.min(last)]);
+            c.rect(text_x + xa - scroll, text_y, xb - xa, fh, t.selection);
+        }
+        self.fonts.draw(c, text_x - scroll, text_y, &text, t.text)?;
+        if focused && blink_on {
+            let cx = text_x + st[current.caret.min(last)] - scroll;
+            c.rect(cx, text_y, 1.5, fh, t.text);
+        }
+        c.restore_clip(saved);
+        Ok(if focused { current.string() } else { value.to_string() })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use EditKey::*;
+
+    fn ed(s: &str) -> Editor {
+        Editor::new(s, false)
+    }
+
+    #[test]
+    fn typing_and_deleting() {
+        let mut e = ed("helo");
+        e.key(Left, false, false);
+        e.insert("l");
+        assert_eq!((e.string(), e.caret), ("hello".to_string(), 4));
+        e.key(Backspace, false, false);
+        e.key(End, false, false);
+        e.insert(" wörld");
+        assert_eq!(e.string(), "helo wörld");
+        e.key(Home, false, false);
+        e.key(Delete, false, false);
+        assert_eq!(e.string(), "elo wörld");
+    }
+
+    #[test]
+    fn selection_replace_and_shortcuts() {
+        let mut e = ed("hello world");
+        e.key(Home, false, false);
+        e.key(Right, true, true); // Ctrl+Shift+Right selects "hello"
+        assert_eq!(e.selected(), "hello");
+        let r = e.key(Letter('c'), true, false);
+        assert_eq!(r.copy.as_deref(), Some("hello"));
+        e.insert("bye");
+        assert_eq!(e.string(), "bye world");
+        e.key(Letter('a'), true, false);
+        let r = e.key(Letter('x'), true, false);
+        assert_eq!((r.copy.as_deref(), e.string().as_str()), (Some("bye world"), ""));
+        assert!(e.key(Letter('v'), true, false).paste);
+    }
+
+    #[test]
+    fn word_moves_and_word_delete() {
+        let mut e = ed("one two  three");
+        e.key(Backspace, true, false);
+        assert_eq!(e.string(), "one two  ");
+        e.key(Left, true, false);
+        assert_eq!(e.caret, 4);
+        e.key(Delete, true, false);
+        assert_eq!(e.string(), "one   ");
+    }
+
+    #[test]
+    fn single_line_drops_newlines_and_submits_on_enter() {
+        let mut e = ed("");
+        e.insert("a\nb\tc");
+        assert_eq!(e.string(), "abc");
+        assert!(e.key(Enter, false, false).submitted);
+    }
+
+    #[test]
+    fn text_area_lines_and_vertical_moves() {
+        let mut e = Editor::new("abcd\nxy\nlong line", true);
+        e.key(Letter('a'), true, false);
+        e.key(Left, false, false); // collapse to the start
+        e.key(Right, false, false);
+        e.key(Right, false, false);
+        e.key(Right, false, false); // column 3 of "abcd"
+        e.key(Down, false, false); // "xy" is shorter: its end
+        assert_eq!(e.caret, 7);
+        e.key(Down, false, false);
+        assert_eq!(e.caret, 10); // column 2 of "long line"
+        e.key(Home, false, false);
+        assert_eq!(e.caret, 8);
+        e.key(Enter, false, false);
+        assert_eq!(e.string(), "abcd\nxy\n\nlong line");
+    }
+
+    #[test]
+    fn undo_and_redo() {
+        let mut g = GuiState::default();
+        let mut e = ed("a");
+        g.remember(&e);
+        e.insert("b");
+        g.remember(&e);
+        e.insert("c");
+        g.undo(&mut e);
+        assert_eq!(e.string(), "ab");
+        g.undo(&mut e);
+        assert_eq!(e.string(), "a");
+        g.redo(&mut e);
+        assert_eq!(e.string(), "ab");
+    }
+
+    #[test]
+    fn tab_cycles_focus_and_a_click_on_nothing_drops_it() {
+        let mut g = GuiState::default();
+        let (a, b) = (widget_id(1, 0.0, 0.0, 10.0, 10.0), widget_id(1, 0.0, 20.0, 10.0, 10.0));
+        let tab = FrameInput { keys: vec![Tab], ..Default::default() };
+        g.register(a);
+        g.register(b);
+        g.end_frame(&tab);
+        assert_eq!(g.focus, Some(a));
+        g.register(a);
+        g.register(b);
+        g.end_frame(&tab);
+        assert_eq!(g.focus, Some(b));
+        g.register(a);
+        g.register(b);
+        g.end_frame(&FrameInput { left_pressed: true, ..Default::default() });
+        assert_eq!(g.focus, None);
+    }
+}
+
+/// The widgets themselves, driven frame by frame with simulated input on a
+/// headless window: the same code a program runs.
+#[cfg(all(test, feature = "native"))]
+mod widget_tests {
+    use crate::builtins::{Builtin, Env};
+    use crate::graphics::{EditKey, FrameInput, Graphics};
+    use crate::vm::Value;
+
+    struct Form {
+        env: Env,
+        fields: [String; 2],
+        secret: String,
+    }
+
+    impl Form {
+        fn new() -> Form {
+            let mut env = Env::default();
+            env.graphics = Some(Graphics::headless(400, 240));
+            let mut f = Form { env, fields: ["Ada".into(), "Lovelace".into()], secret: String::new() };
+            f.draw();
+            f
+        }
+
+        /// Ends the frame and starts the next with this input and pointer.
+        fn step(&mut self, x: i64, y: i64, input: FrameInput) {
+            self.env.graphics.as_mut().unwrap().simulate(x, y, input);
+            self.env.call(Builtin::Show, &[]).unwrap();
+            self.draw();
+        }
+
+        /// The program's frame: two text fields and a password field.
+        fn draw(&mut self) {
+            for (i, f) in self.fields.iter_mut().enumerate() {
+                let y = 10.0 + 50.0 * i as f64;
+                let args = [Value::Real(10.0), Value::Real(y), Value::Real(300.0), Value::Real(32.0), Value::Str(f.as_str().into())];
+                *f = crate::vm::display(&self.env.call(Builtin::GtqTextbox, &args).unwrap());
+            }
+            let args =
+                [Value::Real(10.0), Value::Real(110.0), Value::Real(300.0), Value::Real(32.0), Value::Str(self.secret.as_str().into())];
+            self.secret = crate::vm::display(&self.env.call(Builtin::GtqPassword, &args).unwrap());
+        }
+
+        fn submitted(&mut self) -> bool {
+            matches!(self.env.call(Builtin::GtqSubmitted, &[]).unwrap(), Value::Bool(true))
+        }
+
+        fn click(&mut self, x: i64, y: i64) {
+            self.step(x, y, FrameInput { left: true, ..Default::default() });
+            self.step(x, y, FrameInput::default());
+        }
+
+        fn typ(&mut self, s: &str) {
+            self.step(0, 0, FrameInput { chars: s.chars().collect(), ..Default::default() });
+        }
+
+        fn key(&mut self, k: EditKey, shift: bool) {
+            self.step(0, 0, FrameInput { keys: vec![k], shift, ..Default::default() });
+        }
+    }
+
+    #[test]
+    fn click_type_tab_and_click_away() {
+        let mut f = Form::new();
+        // click at the right end of the first field, then type
+        f.click(305, 25);
+        f.typ(" B.");
+        assert_eq!(f.fields, ["Ada B.".to_string(), "Lovelace".to_string()]);
+        // Tab: the second field, all selected, so typing replaces it
+        f.key(EditKey::Tab, false);
+        f.typ("King");
+        assert_eq!(f.fields[1], "King");
+        // Shift+Tab goes back; Backspace on the selection empties it
+        f.key(EditKey::Tab, true);
+        f.key(EditKey::Backspace, false);
+        assert_eq!(f.fields[0], "");
+        // a click on nothing drops the focus: typing changes nothing
+        f.click(380, 220);
+        f.typ("zzz");
+        assert_eq!(f.fields, ["".to_string(), "King".to_string()]);
+    }
+
+    #[test]
+    fn selection_with_shift_arrows_and_undo() {
+        let mut f = Form::new();
+        f.click(305, 75); // the end of "Lovelace"
+        for _ in 0..4 {
+            f.key(EditKey::Left, true);
+        }
+        f.typ("ly"); // replaces "lace"
+        assert_eq!(f.fields[1], "Lovely");
+        // Ctrl+Z undoes the typing (one step), Ctrl+Y redoes it
+        f.step(0, 0, FrameInput { keys: vec![EditKey::Letter('z')], ctrl: true, ..Default::default() });
+        assert_eq!(f.fields[1], "Lovelace");
+        f.step(0, 0, FrameInput { keys: vec![EditKey::Letter('y')], ctrl: true, ..Default::default() });
+        assert_eq!(f.fields[1], "Lovely");
+    }
+
+    #[test]
+    fn enter_submits_and_password_returns_the_real_text() {
+        let mut f = Form::new();
+        f.click(100, 125);
+        f.typ("s3cret");
+        assert_eq!(f.secret, "s3cret");
+        f.key(EditKey::Enter, false);
+        assert!(f.submitted(), "Enter in a field is reported for this frame");
+        f.step(0, 0, FrameInput::default());
+        assert!(!f.submitted(), "and only for that frame");
+    }
+
+    #[test]
+    fn the_program_can_change_the_text_of_the_focused_field() {
+        let mut f = Form::new();
+        f.click(305, 25);
+        f.fields[0] = String::new(); // the program clears it (say, after "Send")
+        f.step(0, 0, FrameInput::default());
+        f.typ("new");
+        assert_eq!(f.fields[0], "new");
+    }
+}

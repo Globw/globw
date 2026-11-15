@@ -50,11 +50,86 @@ pub struct Canvas {
     pub pixels: Vec<u32>,
     /// distance of the 3D surface drawn at each pixel; infinity where there is none
     pub depth: Vec<f32>,
+    /// drawing is limited to this rectangle (x0, y0, x1, y1), the whole canvas by default
+    clip: (i64, i64, i64, i64),
 }
 
 impl Canvas {
     pub fn new(w: usize, h: usize) -> Canvas {
-        Canvas { w, h, pixels: vec![0; w * h], depth: vec![f32::INFINITY; w * h] }
+        Canvas { w, h, pixels: vec![0; w * h], depth: vec![f32::INFINITY; w * h], clip: (0, 0, w as i64, h as i64) }
+    }
+
+    /// Limits drawing to a rectangle (inside the canvas), until `reset_clip`.
+    pub fn set_clip(&mut self, x: f64, y: f64, w: f64, h: f64) {
+        let x0 = (x.round() as i64).clamp(0, self.w as i64);
+        let y0 = (y.round() as i64).clamp(0, self.h as i64);
+        let x1 = ((x + w).round() as i64).clamp(x0, self.w as i64);
+        let y1 = ((y + h).round() as i64).clamp(y0, self.h as i64);
+        self.clip = (x0, y0, x1, y1);
+    }
+
+    /// The current clip rectangle, to restore it later.
+    pub fn clip(&self) -> (i64, i64, i64, i64) {
+        self.clip
+    }
+
+    pub fn restore_clip(&mut self, c: (i64, i64, i64, i64)) {
+        self.clip = c;
+    }
+
+    pub fn reset_clip(&mut self) {
+        self.clip = (0, 0, self.w as i64, self.h as i64);
+    }
+
+    #[inline]
+    fn inside(&self, x: i64, y: i64) -> bool {
+        x >= self.clip.0 && y >= self.clip.1 && x < self.clip.2 && y < self.clip.3
+    }
+
+    /// The canvas as a PNG image (RGB, stored without compression: simple and exact).
+    pub fn to_png(&self) -> Vec<u8> {
+        fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+            out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            let mut crc = crc32fast::Hasher::new();
+            crc.update(kind);
+            crc.update(data);
+            out.extend_from_slice(kind);
+            out.extend_from_slice(data);
+            out.extend_from_slice(&crc.finalize().to_be_bytes());
+        }
+        // the raw image: each row starts with filter 0, then R, G, B per pixel
+        let mut raw = Vec::with_capacity(self.h * (1 + self.w * 3));
+        for row in self.pixels.chunks(self.w.max(1)).take(self.h) {
+            raw.push(0);
+            for &p in row {
+                raw.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
+            }
+        }
+        // zlib stream of stored (uncompressed) deflate blocks
+        let mut z = vec![0x78, 0x01];
+        let blocks: Vec<&[u8]> = if raw.is_empty() { vec![&[][..]] } else { raw.chunks(65535).collect() };
+        for (i, b) in blocks.iter().enumerate() {
+            z.push(u8::from(i + 1 == blocks.len()));
+            let n = b.len() as u16;
+            z.extend_from_slice(&n.to_le_bytes());
+            z.extend_from_slice(&(!n).to_le_bytes());
+            z.extend_from_slice(b);
+        }
+        let (mut a, mut b) = (1u32, 0u32);
+        for &x in &raw {
+            a = (a + x as u32) % 65521;
+            b = (b + a) % 65521;
+        }
+        z.extend_from_slice(&((b << 16) | a).to_be_bytes());
+        let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&(self.w as u32).to_be_bytes());
+        ihdr.extend_from_slice(&(self.h as u32).to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]); // 8-bit RGB
+        chunk(&mut out, b"IHDR", &ihdr);
+        chunk(&mut out, b"IDAT", &z);
+        chunk(&mut out, b"IEND", &[]);
+        out
     }
 
     pub fn get(&self, x: usize, y: usize) -> u32 {
@@ -62,7 +137,7 @@ impl Canvas {
     }
 
     fn set(&mut self, x: i64, y: i64, c: u32) {
-        if x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h {
+        if self.inside(x, y) {
             self.pixels[y as usize * self.w + x as usize] = c;
         }
     }
@@ -73,10 +148,10 @@ impl Canvas {
     }
 
     pub fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, c: u32) {
-        let x0 = (x.round() as i64).max(0);
-        let y0 = (y.round() as i64).max(0);
-        let x1 = ((x + w).round() as i64).min(self.w as i64);
-        let y1 = ((y + h).round() as i64).min(self.h as i64);
+        let x0 = (x.round() as i64).max(self.clip.0);
+        let y0 = (y.round() as i64).max(self.clip.1);
+        let x1 = ((x + w).round() as i64).min(self.clip.2);
+        let y1 = ((y + h).round() as i64).min(self.clip.3);
         for py in y0..y1 {
             let row = py as usize * self.w;
             for px in x0..x1 {
@@ -124,7 +199,7 @@ impl Canvas {
 
     /// Mixes `c` into the pixel with opacity `alpha` (0..255), for anti-aliased text.
     pub fn blend(&mut self, x: i64, y: i64, c: u32, alpha: u8) {
-        if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
+        if !self.inside(x, y) {
             return;
         }
         let i = y as usize * self.w + x as usize;

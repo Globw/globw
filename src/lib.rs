@@ -11,6 +11,7 @@ pub mod dialogs;
 pub mod errors;
 pub mod fonts;
 pub mod graphics;
+pub mod gui;
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub mod gpu;
 pub mod lexer;
