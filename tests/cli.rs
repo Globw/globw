@@ -1173,6 +1173,8 @@ struct Dap {
     rx: std::sync::mpsc::Receiver<serde_json::Value>,
     seq: i64,
     output: String,
+    /// messages read but not asked for yet (events may overtake responses)
+    pending: Vec<serde_json::Value>,
 }
 
 impl Dap {
@@ -1210,19 +1212,24 @@ impl Dap {
                 return;
             }
         });
-        Dap { child, stdin, rx, seq: 0, output: String::new() }
+        Dap { child, stdin, rx, seq: 0, output: String::new(), pending: Vec::new() }
     }
 
     /// The next message that `pred` accepts (output events are collected on the way).
     fn wait(&mut self, what: &str, pred: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+        if let Some(i) = self.pending.iter().position(&pred) {
+            return self.pending.remove(i);
+        }
         loop {
             let m = self.rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap_or_else(|_| panic!("no {}", what));
             if m["event"] == "output" {
                 self.output.push_str(m["body"]["output"].as_str().unwrap_or(""));
+                continue;
             }
             if pred(&m) {
                 return m;
             }
+            self.pending.push(m);
         }
     }
 

@@ -401,8 +401,8 @@ pub fn serve() -> std::process::ExitCode {
                 out.respond(&req, json!({"breakpoints": shown}));
             }
             "configurationDone" => {
-                let _ = tx.send(Cmd::Start);
                 out.respond(&req, json!({}));
+                let _ = tx.send(Cmd::Start);
             }
             "threads" => out.respond(&req, json!({"threads": [{"id": 1, "name": "main"}]})),
             "stackTrace" => {
@@ -467,21 +467,23 @@ pub fn serve() -> std::process::ExitCode {
                     None => out.fail(&req, &format!("\"{}\" is not a variable here", name)),
                 }
             }
+            // answer first, then resume: the next "stopped" event must come after
+            // the response, or a fast program could overtake it
             "continue" => {
-                let _ = tx.send(Cmd::Resume(Mode::Run));
                 out.respond(&req, json!({"allThreadsContinued": true}));
+                let _ = tx.send(Cmd::Resume(Mode::Run));
             }
             "next" => {
-                let _ = tx.send(Cmd::Resume(Mode::StepOver));
                 out.respond(&req, json!({}));
+                let _ = tx.send(Cmd::Resume(Mode::StepOver));
             }
             "stepIn" => {
-                let _ = tx.send(Cmd::Resume(Mode::StepIn));
                 out.respond(&req, json!({}));
+                let _ = tx.send(Cmd::Resume(Mode::StepIn));
             }
             "stepOut" => {
-                let _ = tx.send(Cmd::Resume(Mode::StepOut));
                 out.respond(&req, json!({}));
+                let _ = tx.send(Cmd::Resume(Mode::StepOut));
             }
             "pause" => {
                 shared.pause.store(true, Ordering::SeqCst);
