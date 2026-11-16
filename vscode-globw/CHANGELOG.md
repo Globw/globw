@@ -8,6 +8,7 @@
   error. Start it with the debug button in the editor title bar, or from
   *Run and Debug* (a `launch.json` can set permissions and the `input()` text).
 - F5 keeps running the program, and inside a debug session it continues.
+- Highlighting for `gpu3d` and `gpu3d_active` (3D on the graphics card, gw 0.1.6).
 
 ## 1.47.0
 
