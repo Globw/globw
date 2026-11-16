@@ -796,6 +796,11 @@ mod chain_bench {
     // b is the identity, so acc stays == a -> easy correctness check.
     #[test]
     fn resident_chain_vs_cpu() {
+        // the GPU backend is in every build now; CI machines have no GPU
+        if !super::available() {
+            eprintln!("no GPU here: skipped");
+            return;
+        }
         let (n, iters) = (1024usize, 50usize);
         let a: Vec<f32> = (0..n * n).map(|i| ((i % 13) as f32) * 0.5).collect();
         let mut b = vec![0f32; n * n];

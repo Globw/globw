@@ -10522,7 +10522,8 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
                 let f32v: Vec<f32> = floats(&args[0]).borrow().iter().map(|&x| x as f32).collect();
                 match crate::gpu::upload(&f32v) {
                     Some(h) => Value::GpuFloats(h, shape_of(&args[0])),
-                    None => return Err("nungw.to_gpu: no GPU is available".to_string()),
+                    // no GPU on this computer: the array stays on the CPU, as in a build without the GPU
+                    None => args[0].clone(),
                 }
             }
         },

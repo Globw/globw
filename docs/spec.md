@@ -804,13 +804,14 @@ run ~1–2.6× faster than CPython. Results depend on the CPU, the core count, t
 Python/NumPy versions and the BLAS in use, so run `bench/bench.py` on your own
 machine to see your numbers.
 
-There is also an optional **GPU backend** (built with the `gpu` feature). Call
-`nungw.gpu(true)` to switch it on; it returns whether a usable GPU was found, and
+There is also a **GPU backend** (in the release binaries; builds from source have it
+unless they leave out the `gpu` feature). Call `nungw.gpu(true)` to switch it on; it returns whether a usable GPU was found, and
 routes large matrix products to a WGSL compute shader (f32). It is off by default,
 and small work stays on the CPU, where it is faster.
 
 For heavier work you can keep arrays **resident** on the device: `nungw.to_gpu(a)`
-uploads an array, `nungw.to_cpu(g)` brings it back, and in between a chain of
+uploads an array (on a computer with no usable GPU it leaves the array on the CPU,
+so the same program still runs), `nungw.to_cpu(g)` brings it back, and in between a chain of
 operations stays in GPU memory with no round-trips — matrix products (including the
 transposed forms used in backprop), the fused element-wise kernels (with
 broadcasting and activations), and the reductions (`sum`/`mean`/`max`/`min`/`prod`,
