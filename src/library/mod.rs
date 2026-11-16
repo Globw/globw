@@ -3738,8 +3738,9 @@ fn un_wgsl(op: UnOp, a: &str) -> String {
         Ceil => format!("ceil({a})"),
         Round => format!("round({a})"),
         Trunc => format!("trunc({a})"),
-        Sign => format!("sign({a})"),
-        Cbrt => format!("(sign({a}) * pow(abs({a}), 0.3333333333333333))"),
+        // not WGSL's sign(): on DirectX 12 (HLSL) it comes back as an int and the f32 result is garbage
+        Sign => format!("(f32({a} > 0.0) - f32({a} < 0.0))"),
+        Cbrt => format!("((f32({a} > 0.0) - f32({a} < 0.0)) * pow(abs({a}), 0.3333333333333333))"),
         Recip => format!("(1.0 / {a})"),
         Neg => format!("(-{a})"),
         Degrees => format!("({a} * 57.29577951308232)"),
