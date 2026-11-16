@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.6 — unreleased
+## 0.1.6 — 2026-11-16
 
 **Web interfaces.** Build a graphical interface with real HTML and CSS and keep
 the logic in Globw.
@@ -56,6 +56,27 @@ failing line. A `launch.json` can grant permissions and give the `input()` text.
   all, each with its own focus, menus and theme.
 - Demo: `examples/demos/contacts.gw`, a small address book.
 - `screenshot("file.png")` saves the graphics window as a PNG.
+
+**3D on the GPU and 3D models.**
+
+- The built-in 3D (`cube`, `box`, `sphere`, `triangle3d`) is drawn on the
+  graphics card when a window opens and one answers, by the processor otherwise,
+  with the same picture. A scene of 1,600 spheres and 40 full-window walls at
+  1600 × 900 runs at 38 frames a second instead of 4–6. `gpu3d(false)` keeps the
+  3D on the processor; `gpu3d_active()` tells which one draws.
+- The release binaries now include the GPU backend (wgpu): `gw` grows from
+  about 8.5 MB to about 13 MB. `nungw` still uses the GPU only after
+  `nungw.gpu(true)`.
+- New `model` module: `model.load` reads `.glb` / `.gltf` (the whole scene, with
+  materials, vertex colors and PNG/JPEG textures), `.obj` (with the colors and
+  textures of its `.mtl`) and `.stl`; `model.new` and `model.triangle` build a
+  model in the program; `model.draw(m, x, y, z, scale)` draws it anywhere, at
+  any size, turned by `rotate`. Also `model.color`, `model.center`,
+  `model.triangles`, `model.width`, `model.height`, `model.depth`.
+  `model.load` needs `--allow-read`.
+
+**Fixed.** `screenshot` wrote its file without `--allow-write`: like every other
+built-in that writes files, it now needs it.
 
 **Faster.** Interpreted code runs 19–41% faster than in 0.1.5 (`bench/`, best
 of 7: fibb −41%, sumb −39%, sum −38%, mandel −29%, fib −24%, sieve −19%;
