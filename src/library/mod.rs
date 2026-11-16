@@ -2806,8 +2806,8 @@ fn ipv4_valid(s: &str) -> bool {
 
 thread_local! {
     static RNG: std::cell::Cell<u64> = std::cell::Cell::new(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64)
             | 1,
     );
@@ -10761,7 +10761,7 @@ fn local_time() -> (u16, u16, u16, u16, u16, u16) {
 /// (year, month, day, hour, minute, second) in UTC.
 #[cfg(not(windows))]
 fn local_time() -> (u16, u16, u16, u16, u16, u16) {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+    let secs = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
     let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     // civil-from-days (Howard Hinnant)
     let z = days + 719_468;

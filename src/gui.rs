@@ -356,7 +356,7 @@ pub struct GuiState {
     /// the sort (column, descending) of each table, by id
     pub sorts: std::collections::HashMap<u64, (usize, bool)>,
     /// the last click on a list row (widget, row, when), for double-clicks
-    pub last_click: Option<(u64, usize, std::time::Instant)>,
+    pub last_click: Option<(u64, usize, web_time::Instant)>,
     /// a list or table row was double-clicked or got Enter, this frame
     pub activated: Option<u64>,
     /// the open menu, if any
@@ -367,7 +367,7 @@ pub struct GuiState {
     pub column: Option<(f64, f64, f64, f64)>,
     pub theme: Theme,
     /// when the caret last moved, for blinking
-    pub blink: std::time::Instant,
+    pub blink: web_time::Instant,
 }
 
 impl Default for GuiState {
@@ -392,7 +392,7 @@ impl Default for GuiState {
             popups: Vec::new(),
             column: None,
             theme: Theme::dark(),
-            blink: std::time::Instant::now(),
+            blink: web_time::Instant::now(),
         }
     }
 }
@@ -423,7 +423,7 @@ impl GuiState {
             self.undo.clear();
             self.redo.clear();
         }
-        self.blink = std::time::Instant::now();
+        self.blink = web_time::Instant::now();
     }
 
     pub fn claim(&mut self) {
@@ -570,7 +570,7 @@ impl crate::builtins::Env {
             self.gui.remember(e);
             let typed: String = input.chars.iter().collect();
             e.insert(&typed);
-            self.gui.blink = std::time::Instant::now();
+            self.gui.blink = web_time::Instant::now();
         }
         for &k in input.keys.iter().filter(|&&k| k != EditKey::Tab) {
             let before = e.clone();
@@ -597,7 +597,7 @@ impl crate::builtins::Env {
             if e.text != before.text && !r.undo && !r.redo {
                 self.gui.remember(&before);
             }
-            self.gui.blink = std::time::Instant::now();
+            self.gui.blink = web_time::Instant::now();
         }
     }
 
@@ -1042,7 +1042,7 @@ impl crate::builtins::Env {
                 let row = ((my - body_y + sy) / rh).floor();
                 if row >= 0.0 && (row as usize) < n {
                     let row = row as usize;
-                    let now = std::time::Instant::now();
+                    let now = web_time::Instant::now();
                     if let Some((lid, lrow, at)) = self.gui.last_click {
                         if lid == id && lrow == row && now.duration_since(at).as_millis() < 450 {
                             self.gui.activated = Some(id);
@@ -2253,7 +2253,7 @@ line 9");
                 (0, 0, FrameInput::default()),
             ];
             for (x, y, input) in frames {
-                env.gui.blink = std::time::Instant::now(); // the caret visible in the picture
+                env.gui.blink = web_time::Instant::now(); // the caret visible in the picture
                 env.graphics.as_mut().unwrap().simulate(x, y, input);
                 env.call(Builtin::Show, &[]).unwrap();
                 let bg = env.call(Builtin::GtqThemeColor, &[Value::Str("window".into())]).unwrap();
