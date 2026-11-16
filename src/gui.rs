@@ -1530,6 +1530,9 @@ impl crate::builtins::Env {
             crate::graphics::Graphics::new(w as usize, h as usize, title)?
         };
         g.unthrottled();
+        if !self.gpu3d_wanted() {
+            g.canvas.gpu3d = false;
+        }
         let mut gui = GuiState::default();
         gui.theme = self.gui.theme;
         // a free number, or a new one
@@ -2260,7 +2263,7 @@ line 9");
                 let a = [Value::Real(20.0), Value::Real(70.0), Value::Real(480.0), Value::Real(130.0), Value::Str(notes.as_str().into())];
                 notes = crate::vm::display(&env.call(Builtin::GtqTextarea, &a).unwrap());
             }
-            let png = env.graphics.as_ref().unwrap().canvas.to_png();
+            let png = env.graphics.as_mut().unwrap().canvas.to_png();
             std::fs::write(format!("{}/gallery_{}.png", dir, theme), png).unwrap();
         }
     }
@@ -2302,7 +2305,7 @@ line 9");
                 let a = [Value::Real(210.0), Value::Real(20.0), Value::Real(390.0), Value::Real(220.0), list(&["Name", "Age", "City"]), rows, Value::Int(row)];
                 row = match env.call(Builtin::GtqTable, &a).unwrap() { Value::Int(n) => n, _ => 0 };
             }
-            let png = env.graphics.as_ref().unwrap().canvas.to_png();
+            let png = env.graphics.as_mut().unwrap().canvas.to_png();
             std::fs::write(format!("{}/gallery_lists_{}.png", dir, theme), png).unwrap();
         }
     }
@@ -2339,7 +2342,7 @@ line 9");
             // the frame ends: the open menus are drawn on top
             env.graphics.as_mut().unwrap().simulate(60, save_y, FrameInput::default());
             env.call(Builtin::Show, &[]).unwrap();
-            let png = env.graphics.as_ref().unwrap().canvas.to_png();
+            let png = env.graphics.as_mut().unwrap().canvas.to_png();
             std::fs::write(format!("{}/gallery_menus_{}.png", dir, theme), png).unwrap();
         }
     }

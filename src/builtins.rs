@@ -42,6 +42,8 @@ pub enum Builtin {
     Box3,
     Sphere,
     Triangle3,
+    Gpu3d,
+    Gpu3dActive,
     Sin,
     Cos,
     Sqrt,
@@ -749,6 +751,18 @@ pub enum Builtin {
     LightSpeed, LightTimeToTravel, LightDistanceLy, LightYearsToKm,
     Sound2Speed, Sound2DistFromDelay, Sound2TimeForDist,
 
+    // module "model" (3D models)
+    ModelLoad,
+    ModelNew,
+    ModelTriangle,
+    ModelDraw,
+    ModelColor,
+    ModelTriangles,
+    ModelWidth,
+    ModelHeight,
+    ModelDepth,
+    ModelCenter,
+
     // module "db" (SQLite databases)
     DbOpen,
     DbRun,
@@ -1011,6 +1025,8 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (Box3, "box", Sig::Fixed(&[R, R, R, R, R, R, S], None)),
     (Sphere, "sphere", Sig::Fixed(&[R, R, R, R, S], None)),
     (Triangle3, "triangle3d", Sig::Fixed(&[R, R, R, R, R, R, R, R, R, S], None)),
+    (Gpu3d, "gpu3d", Sig::Fixed(&[Bool], None)),
+    (Gpu3dActive, "gpu3d_active", Sig::Fixed(&[], Some(Bool))),
     (Sin, "sin", Sig::Fixed(&[R], Some(Real))),
     (Cos, "cos", Sig::Fixed(&[R], Some(Real))),
     (Sqrt, "sqrt", Sig::Fixed(&[R], Some(Real))),
@@ -2029,6 +2045,17 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (Sound2Speed, "sound2.speed", Sig::Fixed(&[], Some(Real))),
     (Sound2DistFromDelay, "sound2.distance_from_delay", Sig::Fixed(&[R], Some(Real))),
     (Sound2TimeForDist, "sound2.time_for_distance", Sig::Fixed(&[R], Some(Real))),
+
+    (ModelLoad, "model.load", Sig::Fixed(&[S], Some(Int))),
+    (ModelNew, "model.new", Sig::Fixed(&[], Some(Int))),
+    (ModelTriangle, "model.triangle", Sig::Fixed(&[I, R, R, R, R, R, R, R, R, R, S], None)),
+    (ModelDraw, "model.draw", Sig::Fixed(&[I, R, R, R, R], None)),
+    (ModelColor, "model.color", Sig::Fixed(&[I, S], None)),
+    (ModelTriangles, "model.triangles", Sig::Fixed(&[I], Some(Int))),
+    (ModelWidth, "model.width", Sig::Fixed(&[I], Some(Real))),
+    (ModelHeight, "model.height", Sig::Fixed(&[I], Some(Real))),
+    (ModelDepth, "model.depth", Sig::Fixed(&[I], Some(Real))),
+    (ModelCenter, "model.center", Sig::Fixed(&[I], None)),
 
     (DbOpen, "db.open", Sig::Fixed(&[S], Some(Int))),
     (DbRun, "db.run", Sig::Fixed(&[I, S], Some(Int))),
@@ -3630,7 +3657,7 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "pentagonal", "hexagonal", "star", "lucas", "tribonacci", "padovan", "primorial", "primecount", "prevprime",
     "coprime", "amicable", "multi", "a1z26", "revbits", "luminance", "contrast", "splitbill", "elapsed",
     // databases, servers, processes, GUI
-    "db", "serve", "proc", "gtq",
+    "db", "serve", "proc", "gtq", "model",
     "ease", "trig2", "special", "polar", "transform", "temp2", "storage", "area2", "kitchen",
     "chem", "elec", "finance2", "health2", "music", "space", "optics", "prob2", "rpg",
     "physics2", "stats2", "map", "date2", "wave2", "light", "sound2",
@@ -4145,6 +4172,10 @@ pub struct Env {
     pub(crate) windows: Vec<Option<crate::gui::WindowSlot>>,
     /// the number - 1 of the current window
     pub(crate) current: usize,
+    /// the 3D models, by number - 1 (model.load, model.new)
+    models: Vec<crate::model3d::Model>,
+    /// false after gpu3d(false): the 3D stays in software in every window
+    gpu3d_wanted: bool,
 }
 
 impl Default for Env {
@@ -4159,6 +4190,8 @@ impl Default for Env {
             gui: crate::gui::GuiState::default(),
             windows: Vec::new(),
             current: 0,
+            models: Vec::new(),
+            gpu3d_wanted: true,
         }
     }
 }
@@ -4178,8 +4211,48 @@ impl Env {
         self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())
     }
 
+    /// The model with this number (as model.load or model.new gave it).
+    fn model(&mut self, id: i64, who: &str) -> Result<&mut crate::model3d::Model, String> {
+        let n = self.models.len();
+        usize::try_from(id - 1)
+            .ok()
+            .and_then(|i| self.models.get_mut(i))
+            .ok_or_else(|| match n {
+                0 => format!("{}: {} is not a model: no model was loaded yet (use model.load or model.new)", who, id),
+                _ => format!("{}: {} is not a model: the models are numbered 1 to {}", who, id, n),
+            })
+    }
+
+    /// Sends the 3D of every open window to the GPU or keeps it in software.
+    pub(crate) fn set_gpu3d(&mut self, on: bool) {
+        self.gpu3d_wanted = on;
+        let on = on && crate::render3d::gpu_ready();
+        let set = |g: &mut Graphics| {
+            if g.is_headless() {
+                return;
+            }
+            g.canvas.sync();
+            g.canvas.gpu3d = on;
+            g.canvas.depth_reset = true;
+        };
+        if let Some(g) = self.graphics.as_mut() {
+            set(g);
+        }
+        for slot in self.windows.iter_mut().flatten() {
+            set(&mut slot.graphics);
+        }
+    }
+
+    /// True unless the program asked for software 3D (new windows follow it).
+    pub(crate) fn gpu3d_wanted(&self) -> bool {
+        self.gpu3d_wanted
+    }
+
     /// Runs a built-in; procedures return `Value::Null`.
     pub fn call(&mut self, b: Builtin, args: &[Value]) -> Result<Value, String> {
+        // the permissions (--allow-...) of every built-in, here or in the library
+        #[cfg(feature = "native")]
+        library::cap_check(b, args)?;
         Ok(match b {
             Rgb => {
                 let c = |v: &Value| int(v).clamp(0, 255);
@@ -4221,6 +4294,9 @@ impl Env {
                 self.graphics = None;
                 self.graphics = Some(Graphics::new(w as usize, h as usize, text(&args[2]))?);
                 self.windows.push(None);
+                if !self.gpu3d_wanted {
+                    self.set_gpu3d(false);
+                }
                 Value::Null
             }
             Open => Value::Bool(self.window_open(1)),
@@ -4328,6 +4404,69 @@ impl Env {
                 let p = |k: usize| Vec3::new(real(&args[k]), real(&args[k + 1]), real(&args[k + 2]));
                 let g = self.window()?;
                 g.scene.triangle(&mut g.canvas, p(0), p(3), p(6), c, true);
+                Value::Null
+            }
+            Gpu3d => {
+                self.set_gpu3d(matches!(args[0], Value::Bool(true)));
+                Value::Null
+            }
+            Gpu3dActive => {
+                let g = self.window()?;
+                if g.canvas.gpu3d && !crate::render3d::gpu_works() {
+                    g.canvas.gpu3d = false;
+                }
+                Value::Bool(g.canvas.gpu3d)
+            }
+            ModelLoad => {
+                let m = crate::model3d::load(text(&args[0]))?;
+                self.models.push(m);
+                Value::Int(self.models.len() as i64)
+            }
+            ModelNew => {
+                self.models.push(crate::model3d::Model::default());
+                Value::Int(self.models.len() as i64)
+            }
+            ModelTriangle => {
+                let c = parse_color(text(&args[10]))?;
+                let p = |k: usize| Vec3::new(real(&args[k]), real(&args[k + 1]), real(&args[k + 2]));
+                let tri = crate::model3d::ModelTri { p: [p(1), p(4), p(7)], color: c, two_sided: true };
+                self.model(int(&args[0]), "model.triangle")?.tris.push(tri);
+                Value::Null
+            }
+            ModelDraw => {
+                let id = int(&args[0]);
+                self.model(id, "model.draw")?;
+                let at = Vec3::new(real(&args[1]), real(&args[2]), real(&args[3]));
+                let scale = real(&args[4]);
+                let g = self.graphics.as_mut().ok_or_else(|| NO_WINDOW.to_string())?;
+                let m = &self.models[(id - 1) as usize];
+                g.scene.model(&mut g.canvas, at, scale, m);
+                Value::Null
+            }
+            ModelColor => {
+                let c = text(&args[1]);
+                let tint = if c.is_empty() { None } else { Some(parse_color(c)?) };
+                self.model(int(&args[0]), "model.color")?.tint = tint;
+                Value::Null
+            }
+            ModelTriangles => Value::Int(self.model(int(&args[0]), "model.triangles")?.tris.len() as i64),
+            ModelWidth | ModelHeight | ModelDepth => {
+                let who = match b {
+                    ModelWidth => "model.width",
+                    ModelHeight => "model.height",
+                    _ => "model.depth",
+                };
+                let (lo, hi) = self.model(int(&args[0]), who)?.bounds();
+                Value::Real(match b {
+                    ModelWidth => hi.x - lo.x,
+                    ModelHeight => hi.y - lo.y,
+                    _ => hi.z - lo.z,
+                })
+            }
+            ModelCenter => {
+                let m = self.model(int(&args[0]), "model.center")?;
+                let (lo, hi) = m.bounds();
+                m.shift((lo + hi) * 0.5);
                 Value::Null
             }
             GtqPanel => {

@@ -52,11 +52,39 @@ pub struct Canvas {
     pub depth: Vec<f32>,
     /// drawing is limited to this rectangle (x0, y0, x1, y1), the whole canvas by default
     clip: (i64, i64, i64, i64),
+    /// 3D drawn on the GPU: the triangles waiting to be drawn (camera space, shaded),
+    /// drawn together before the next 2D drawing, `show` or `to_png`
+    pub pending: Vec<crate::render3d::Tri>,
+    /// true: the 3D shapes go to the GPU (set when a window opens and a GPU answers)
+    pub gpu3d: bool,
+    /// the GPU depth buffer must be cleared before the next batch (after `clear`)
+    pub depth_reset: bool,
+    /// tells this canvas's GPU buffers apart from another window's
+    pub id: u64,
 }
 
 impl Canvas {
     pub fn new(w: usize, h: usize) -> Canvas {
-        Canvas { w, h, pixels: vec![0; w * h], depth: vec![f32::INFINITY; w * h], clip: (0, 0, w as i64, h as i64) }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Canvas {
+            w,
+            h,
+            pixels: vec![0; w * h],
+            depth: vec![f32::INFINITY; w * h],
+            clip: (0, 0, w as i64, h as i64),
+            pending: Vec::new(),
+            gpu3d: false,
+            depth_reset: true,
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Draws the 3D triangles still waiting for the GPU, so what comes next lands on top.
+    #[inline]
+    pub fn sync(&mut self) {
+        if !self.pending.is_empty() {
+            crate::render3d::flush(self);
+        }
     }
 
     /// Limits drawing to a rectangle (inside the canvas), until `reset_clip`.
@@ -87,7 +115,8 @@ impl Canvas {
     }
 
     /// The canvas as a PNG image (RGB, stored without compression: simple and exact).
-    pub fn to_png(&self) -> Vec<u8> {
+    pub fn to_png(&mut self) -> Vec<u8> {
+        self.sync();
         fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
             out.extend_from_slice(&(data.len() as u32).to_be_bytes());
             let mut crc = crc32fast::Hasher::new();
@@ -143,11 +172,14 @@ impl Canvas {
     }
 
     pub fn clear(&mut self, c: u32) {
+        self.pending.clear();
+        self.depth_reset = true;
         self.pixels.iter_mut().for_each(|p| *p = c);
         self.depth.iter_mut().for_each(|d| *d = f32::INFINITY);
     }
 
     pub fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, c: u32) {
+        self.sync();
         let x0 = (x.round() as i64).max(self.clip.0);
         let y0 = (y.round() as i64).max(self.clip.1);
         let x1 = ((x + w).round() as i64).min(self.clip.2);
@@ -161,6 +193,7 @@ impl Canvas {
     }
 
     pub fn circle(&mut self, cx: f64, cy: f64, r: f64, c: u32) {
+        self.sync();
         let (y0, y1) = ((cy - r).floor() as i64, (cy + r).ceil() as i64);
         let (x0, x1) = ((cx - r).floor() as i64, (cx + r).ceil() as i64);
         for py in y0.max(0)..=y1.min(self.h as i64 - 1) {
@@ -175,6 +208,7 @@ impl Canvas {
 
     /// Bresenham's line between the rounded endpoints.
     pub fn line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, c: u32) {
+        self.sync();
         let (mut x, mut y) = (x1.round() as i64, y1.round() as i64);
         let (xe, ye) = (x2.round() as i64, y2.round() as i64);
         let (dx, dy) = ((xe - x).abs(), -(ye - y).abs());
@@ -199,6 +233,7 @@ impl Canvas {
 
     /// Mixes `c` into the pixel with opacity `alpha` (0..255), for anti-aliased text.
     pub fn blend(&mut self, x: i64, y: i64, c: u32, alpha: u8) {
+        self.sync();
         if !self.inside(x, y) {
             return;
         }
@@ -210,11 +245,13 @@ impl Canvas {
 
     /// Text in the 8×8 font at double size, one 16×16 cell per character.
     pub fn text(&mut self, x: f64, y: f64, text: &str, c: u32) {
+        self.sync();
         self.text_scaled(x, y, text, c, 2);
     }
 
     /// Text in the 8×8 font, each font pixel drawn as a `scale`×`scale` square.
     pub fn text_scaled(&mut self, x: f64, y: f64, text: &str, c: u32, scale: i64) {
+        self.sync();
         let (x0, y0) = (x.round() as i64, y.round() as i64);
         for (k, ch) in text.chars().enumerate() {
             let glyph = BASIC_FONTS

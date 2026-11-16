@@ -24,15 +24,15 @@ impl Vec3 {
         Vec3 { x, y, z }
     }
 
-    fn dot(self, o: Vec3) -> f64 {
+    pub fn dot(self, o: Vec3) -> f64 {
         self.x * o.x + self.y * o.y + self.z * o.z
     }
 
-    fn cross(self, o: Vec3) -> Vec3 {
+    pub fn cross(self, o: Vec3) -> Vec3 {
         Vec3::new(self.y * o.z - self.z * o.y, self.z * o.x - self.x * o.z, self.x * o.y - self.y * o.x)
     }
 
-    fn normalize(self) -> Vec3 {
+    pub fn normalize(self) -> Vec3 {
         let len = self.dot(self).sqrt();
         if len == 0.0 {
             self
@@ -67,6 +67,80 @@ impl Mul<f64> for Vec3 {
 fn turn2(a: f64, b: f64, deg: f64) -> (f64, f64) {
     let (s, c) = deg.to_radians().sin_cos();
     (a * c - b * s, a * s + b * c)
+}
+
+/// A triangle ready to draw: camera-space corners and its shaded color (`0xRRGGBB`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tri {
+    pub p: [[f32; 3]; 3],
+    pub color: u32,
+}
+
+/// True if this build may draw 3D on the GPU (and GLOBW_NO_GPU is not set).
+/// The GPU itself is started at the first 3D batch, so a window with no 3D
+/// opens as fast as before; if no GPU answers, the 3D falls back to software.
+pub fn gpu_ready() -> bool {
+    cfg!(feature = "gpu") && std::env::var_os("GLOBW_NO_GPU").is_none()
+}
+
+/// True if a GPU answered (starts it if needed).
+pub fn gpu_works() -> bool {
+    #[cfg(feature = "gpu")]
+    {
+        gpu_ready() && crate::gpu::available()
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        false
+    }
+}
+
+/// Draws the triangles waiting in `canvas.pending`: on the GPU, or here if that fails.
+pub fn flush(canvas: &mut Canvas) {
+    let tris = std::mem::take(&mut canvas.pending);
+    #[cfg(feature = "gpu")]
+    {
+        let reset = canvas.depth_reset;
+        if let Some(img) = crate::gpu::draw_triangles(canvas.id, canvas.w, canvas.h, &tris, reset) {
+            canvas.depth_reset = false;
+            for (px, &v) in canvas.pixels.iter_mut().zip(img.iter()) {
+                if v >> 24 != 0 {
+                    *px = v & 0xFF_FFFF;
+                }
+            }
+            return;
+        }
+        // the GPU failed: from now on this canvas draws its 3D here
+        canvas.gpu3d = false;
+    }
+    for t in &tris {
+        let v = |i: usize| Vec3::new(t.p[i][0] as f64, t.p[i][1] as f64, t.p[i][2] as f64);
+        clip_and_raster(canvas, [v(0), v(1), v(2)], t.color);
+    }
+}
+
+/// Cuts a camera-space triangle at the near plane and fills what is left.
+fn clip_and_raster(canvas: &mut Canvas, input: [Vec3; 3], color: u32) {
+    // Sutherland–Hodgman with one plane
+    let mut poly: Vec<Vec3> = Vec::with_capacity(4);
+    for i in 0..3 {
+        let (p, q) = (input[i], input[(i + 1) % 3]);
+        let (p_in, q_in) = (p.z >= NEAR, q.z >= NEAR);
+        if p_in {
+            poly.push(p);
+        }
+        if p_in != q_in {
+            let t = (NEAR - p.z) / (q.z - p.z);
+            poly.push(p + (q - p) * t);
+        }
+    }
+    if poly.len() < 3 {
+        return;
+    }
+    let pts: Vec<(f64, f64, f64)> = poly.iter().map(|&v| Scene::screen(v, canvas.w, canvas.h)).collect();
+    for i in 1..pts.len() - 1 {
+        raster(canvas, pts[0], pts[i], pts[i + 1], color);
+    }
 }
 
 /// Multiplies each color channel by `k` (0..1).
@@ -135,28 +209,17 @@ impl Scene {
         let lambert = normal.dot(light);
         let k = 0.35 + 0.65 * if two_sided { lambert.abs() } else { lambert.max(0.0) };
         let color = shade(color, k);
-
-        // clip against the near plane (Sutherland–Hodgman with one plane)
         let input = [self.to_camera(a), self.to_camera(b), self.to_camera(c)];
-        let mut poly: Vec<Vec3> = Vec::with_capacity(4);
-        for i in 0..3 {
-            let (p, q) = (input[i], input[(i + 1) % 3]);
-            let (p_in, q_in) = (p.z >= NEAR, q.z >= NEAR);
-            if p_in {
-                poly.push(p);
+        if canvas.gpu3d {
+            // wholly behind the eye: nothing to send
+            if input.iter().all(|p| p.z < NEAR) {
+                return;
             }
-            if p_in != q_in {
-                let t = (NEAR - p.z) / (q.z - p.z);
-                poly.push(p + (q - p) * t);
-            }
-        }
-        if poly.len() < 3 {
+            let f = |p: Vec3| [p.x as f32, p.y as f32, p.z as f32];
+            canvas.pending.push(Tri { p: [f(input[0]), f(input[1]), f(input[2])], color });
             return;
         }
-        let pts: Vec<(f64, f64, f64)> = poly.iter().map(|&v| Scene::screen(v, canvas.w, canvas.h)).collect();
-        for i in 1..pts.len() - 1 {
-            raster(canvas, pts[0], pts[i], pts[i + 1], color);
-        }
+        clip_and_raster(canvas, input, color);
     }
 
     /// Draws a closed mesh: each face is turned outwards, then drawn one-sided.
@@ -194,6 +257,18 @@ impl Scene {
             [1, 3, 7], [1, 7, 5], // x+
         ];
         self.mesh(canvas, center, &verts, &TRIS, color);
+    }
+
+    /// Draws a model with its origin at `at`, scaled by `scale` and turned by `rot`.
+    pub fn model(&self, canvas: &mut Canvas, at: Vec3, scale: f64, m: &crate::model3d::Model) {
+        let place = |p: Vec3| at + self.rotate(p * scale);
+        // a negative scale mirrors the model: keep its faces turned outwards
+        let flip = scale < 0.0;
+        for t in &m.tris {
+            let (a, b, c) = (place(t.p[0]), place(t.p[1]), place(t.p[2]));
+            let (b, c) = if flip { (c, b) } else { (b, c) };
+            self.triangle(canvas, a, b, c, m.tint.unwrap_or(t.color), t.two_sided);
+        }
     }
 
     pub fn cube(&self, canvas: &mut Canvas, center: Vec3, size: f64, color: u32) {

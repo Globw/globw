@@ -390,7 +390,7 @@ end loop
   - `tilt` is the vertical angle in degrees: positive looks up.
   - Before any `camera` call the eye is at (0, 0, 0) looking towards +z.
   - The field of view is 60 degrees vertically. Anything closer than 0.1 to the eye, or behind it, is cut away.
-- **Rotation:** `rotate(ax, ay, az)` sets the rotation, in degrees around the x, then y, then z axes, applied to every following `cube`, `box` and `sphere` around its own center. `rotate(0, 0, 0)` turns it off. It does not affect `triangle3d`.
+- **Rotation:** `rotate(ax, ay, az)` sets the rotation, in degrees around the x, then y, then z axes, applied to every following `cube`, `box`, `sphere` and `model.draw` around its own center (a model turns around its origin). `rotate(0, 0, 0)` turns it off. It does not affect `triangle3d`.
 - **Shapes:** each is filled with one color and shaded by a fixed light.
 
 | Command | Effect |
@@ -405,6 +405,50 @@ end loop
   - `clear` resets this memory.
   - 2D commands draw on top of whatever is already in the window and do not hide later 3D shapes.
 - **Errors:** the same as for the 2D commands (§6.7). The camera and the rotation are reset when `window` opens a new window.
+- **GPU:** when a window opens, the 3D is drawn on the graphics card if there is one, and by the processor otherwise. The picture is the same; with many shapes, or large ones, the graphics card is much faster.
+  - `gpu3d(false)` keeps the 3D on the processor in every window, now and later; `gpu3d(true)` goes back to the graphics card where there is one.
+  - `gpu3d_active()` is `true` if the current window draws its 3D on the graphics card.
+  - Each time 2D drawing follows 3D, the 3D drawn so far is fetched from the graphics card. Draw the 3D of a frame first and the 2D (text, scores) after it: one fetch a frame instead of many.
+
+**3D models.** The `model` module (`import model`) loads models made in Blender or other 3D programs, or builds them in the program, and draws them as often as wanted, anywhere, at any size and turned any way.
+
+```
+import model
+variables:
+    ship as int
+    angle as float
+window(800, 600, "Ship")
+ship = model.load("ship.glb")
+model.center(ship)
+camera(0, 1, -6, 0, -10)
+angle = 0
+while(open())
+    clear("#101020")
+    rotate(0, angle, 0)
+    model.draw(ship, 0, 0, 0, 2 / model.width(ship))
+    angle = angle + 1
+    show()
+end loop
+```
+
+| Command | Effect |
+|---|---|
+| `model.load(path)` | loads a `.glb`, `.gltf`, `.obj` or `.stl` file and returns its number (`int`); needs `--allow-read` |
+| `model.new()` | an empty model, to fill with `model.triangle`; returns its number |
+| `model.triangle(m, x1, y1, z1, x2, y2, z2, x3, y3, z3, color)` | adds a triangle to model `m`, visible from both sides |
+| `model.draw(m, x, y, z, scale)` | draws model `m` with its origin at (x, y, z), its size multiplied by `scale`, turned by `rotate` |
+| `model.color(m, color)` | draws every triangle of `m` in one color; `model.color(m, "")` brings back the file's colors |
+| `model.center(m)` | moves the origin of `m` to the middle of the model, so it turns around its middle |
+| `model.triangles(m)` | the number of triangles (`int`) |
+| `model.width(m)`, `model.height(m)`, `model.depth(m)` | the size of `m` along x, y and z (`float`) |
+
+- **Files:**
+  - glTF (`.glb`, or `.gltf` with its `.bin` and pictures next to it) keeps the whole scene of the file, with the position, rotation and size of each part. Colors come from the materials, the vertex colors and the base color texture (PNG or JPEG). Animations and skins are not played: the model is drawn as it stands.
+  - `.obj` reads the colors (`Kd`) and textures (`map_Kd`) of the `.mtl` file it names. Faces with more than three corners are split into triangles.
+  - `.stl` (binary or text) has no colors: it is light gray. STL files stand on z, so they are turned to stand on y.
+- **Colors:** like every 3D shape, each triangle has one color; a textured triangle takes the color of the texture at its middle. Models with many small triangles look closest to the original.
+- **Sides:** a triangle is seen only from its front, as the file says (glTF materials marked double-sided, and triangles added with `model.triangle`, are seen from both sides).
+- **Numbers:** models are numbered from 1 in the order they are loaded or made. Using a number that is not a model is an error.
 
 ### 6.11 Standard library
 

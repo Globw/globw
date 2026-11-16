@@ -5087,7 +5087,7 @@ fn check_host(a: &Allow, url: &str, what: &str) -> Result<(), String> {
 /// Refuses a dangerous builtin whose capability was not granted, or whose target
 /// host/path falls outside the granted scope.
 #[cfg(feature = "native")]
-fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
+pub(crate) fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
     use Builtin::*;
     let c = caps();
     match b {
@@ -5166,6 +5166,7 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
             }
         }
         ReadFile => check_path(&c.read, text(&args[0]), "reading files", "--allow-read")?,
+        ModelLoad => check_path(&c.read, text(&args[0]), "loading a 3D model", "--allow-read")?,
         DbValue | DbQuery => {
             if !c.read.granted() {
                 return Err(deny("the db module", "--allow-read"));
@@ -5178,8 +5179,6 @@ fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
 
 pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
     use Builtin::*;
-    #[cfg(feature = "native")]
-    cap_check(b, args)?;
     // A GPU-resident array reaching a builtin that cannot run on the GPU is
     // brought back to the CPU first (so it works instead of panicking).
     #[cfg(feature = "gpu")]

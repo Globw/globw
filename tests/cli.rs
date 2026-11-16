@@ -1335,3 +1335,41 @@ fn debugger_stops_on_a_run_time_error() {
     dap.request("continue", serde_json::json!({"threadId": 1}));
     assert!(dap.finish().contains("division by zero"));
 }
+
+#[test]
+fn builtin_module_model_obj() {
+    let dir = std::env::temp_dir().join("globw_model_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.obj"), "v 0 0 0\nv 2 0 0\nv 2 1 0\nv 0 1 0\nf 1 2 3 4\n").unwrap();
+    let obj = dir.join("t.obj").to_str().unwrap().replace('\\', "/");
+    let src = format!(
+        "import model\nvariables:\n    m, t as int\n\
+         m = model.load(\"{}\")\n\
+         t = model.new()\n\
+         model.triangle(t, 0, 0, 0, 1, 0, 0, 0, 1, 0, \"red\")\n\
+         output(model.triangles(m), \" \", model.width(m), \" \", model.height(m), \" \", model.triangles(t))\n",
+        obj
+    );
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, stdout, stderr) = globw(&["--allow-read", dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!((code, stdout.as_str()), (0, "2 2.0 1.0 1\n"), "{}", stderr);
+    // reading a model file needs --allow-read
+    let (code, _, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("--allow-read"), "{}", stderr);
+}
+
+#[test]
+fn screenshot_needs_allow_write() {
+    let dir = std::env::temp_dir().join("globw_shot_perm_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = dir.join("s.png");
+    let _ = std::fs::remove_file(&png);
+    // the permission is checked first, so no window is needed (CI has no screen)
+    let src = format!("screenshot(\"{}\")\n", png.to_str().unwrap().replace('\\', "/"));
+    std::fs::write(dir.join("p.gw"), src).unwrap();
+    let (code, _, stderr) = globw(&[dir.join("p.gw").to_str().unwrap()]);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains("--allow-write"), "{}", stderr);
+    assert!(!png.exists());
+}

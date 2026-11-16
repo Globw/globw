@@ -1,0 +1,110 @@
+' A hilly island built once as a 3D model (about 8,000 triangles) and drawn
+' every frame while it turns, with the water, a few trees and the frame rate on
+' top. The 3D goes to the graphics card when there is one. Run it with:
+'     gw examples/demos/terrain3d.gw
+' To look at your own model, load it with model.load("file.glb") (that needs
+' --allow-read) and draw it the same way.
+
+import model
+
+variables:
+    land, trees, i, j, n, frames as int
+    x, z, x2, z2, cell, angle, last, fps as float
+    y00, y10, y01, y11 as float
+    where as string
+
+function height(x as float, z as float) as float
+    ' hills from a few waves, lower towards the edges so it is an island
+    variables:
+        h, edge as float
+    h = 1.3 * sin(x * 22) * cos(z * 17) + 0.5 * sin((x + z) * 40) + 0.8
+    edge = (x * x + z * z) / 16
+    return h - 2.2 * edge
+end function
+
+function ground(y as float) as string
+    ' sand near the water, grass, rock, snow
+    if(y < 0.15)
+        return "#d8c48a"
+    end if
+    if(y < 1.0)
+        return rgb(60, 140 + to_int(y * 40), 70)
+    end if
+    if(y < 1.6)
+        return "#7a746c"
+    end if
+    return "#f2f2f2"
+end function
+
+' the land: a grid of n x n squares, two triangles each
+land = model.new()
+n = 64
+cell = 8 / n
+for(i from 0 to n - 1)
+    for(j from 0 to n - 1)
+        x = i * cell - 4
+        z = j * cell - 4
+        x2 = x + cell
+        z2 = z + cell
+        y00 = height(x, z)
+        y10 = height(x2, z)
+        y01 = height(x, z2)
+        y11 = height(x2, z2)
+        if(y00 > -0.3 or y10 > -0.3 or y01 > -0.3 or y11 > -0.3)
+            model.triangle(land, x, y00, z, x2, y10, z, x, y01, z2, ground((y00 + y10 + y01) / 3))
+            model.triangle(land, x2, y10, z, x2, y11, z2, x, y01, z2, ground((y10 + y11 + y01) / 3))
+        end if
+    end loop
+end loop
+
+' a tree: a trunk and two cones of leaves, as one model drawn many times
+trees = model.new()
+model.triangle(trees, -0.03, 0, 0, 0.03, 0, 0, 0, 0.25, 0, "#6b4a2b")
+model.triangle(trees, 0, 0, -0.03, 0, 0, 0.03, 0, 0.25, 0, "#6b4a2b")
+for(i from 0 to 5)
+    x = 0.18 * cos(i * 60)
+    z = 0.18 * sin(i * 60)
+    x2 = 0.18 * cos(i * 60 + 60)
+    z2 = 0.18 * sin(i * 60 + 60)
+    model.triangle(trees, x, 0.15, z, x2, 0.15, z2, 0, 0.55, 0, "#2f7a3a")
+    model.triangle(trees, x * 0.7, 0.35, z * 0.7, x2 * 0.7, 0.35, z2 * 0.7, 0, 0.7, 0, "#3a8f46")
+end loop
+
+window(1000, 650, "Island")
+camera(0, 4.5, -8.5, 0, -28)
+angle = 0
+frames = 0
+fps = 0
+last = time()
+where = "processor"
+if(gpu3d_active())
+    where = "graphics card"
+end if
+
+while(open())
+    clear("#9fc6e8")
+    ' 3D first, the 2D on top after it (one trip to the graphics card a frame)
+    rotate(0, angle, 0)
+    model.draw(land, 0, 0, 0, 1)
+    for(i from 0 to 7)
+        x = 2.2 * cos(i * 45 + 20)
+        z = 2.2 * sin(i * 45 + 20)
+        if(height(x, z) > 0.2)
+            ' turning the tree's spot with the island
+            x2 = x * cos(angle) + z * sin(angle)
+            z2 = z * cos(angle) - x * sin(angle)
+            model.draw(trees, x2, height(x, z), z2, 1)
+        end if
+    end loop
+    rotate(0, 0, 0)
+    box(0, -0.35, 0, 30, 0.1, 30, "#2a6fb0")
+    text(16, 14, "3D on the ${where}   ${fps:.0} frames a second", "#0b2236")
+    angle = angle + 0.4
+    frames = frames + 1
+    if(time() - last >= 1)
+        fps = frames / (time() - last)
+        frames = 0
+        last = time()
+    end if
+    show()
+end loop

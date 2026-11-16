@@ -828,3 +828,244 @@ mod chain_bench {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 3D on the GPU: the triangles of the built-in 3D (camera space, already
+// shaded and culled on the CPU) are rasterized here with a depth buffer, then
+// read back and laid over the canvas. The projection is the software one
+// (60-degree vertical field of view, near plane 0.1), so both look the same.
+
+const DRAW3D_WGSL: &str = "
+struct U { k: vec4<f32> };
+@group(0) @binding(0) var<uniform> u: U;
+struct VOut { @builtin(position) pos: vec4<f32>, @location(0) c: vec4<f32> };
+@vertex
+fn vs(@location(0) p: vec3<f32>, @location(1) c: vec4<f32>) -> VOut {
+  var o: VOut;
+  // k = (f / half width, f / half height, near, far); w = z gives the perspective divide
+  o.pos = vec4<f32>(p.x * u.k.x, p.y * u.k.y, u.k.w * (p.z - u.k.z) / (u.k.w - u.k.z), p.z);
+  o.c = c;
+  return o;
+}
+@fragment
+fn fs(i: VOut) -> @location(0) vec4<f32> {
+  // the vertex color arrives as (b, g, r) from 0x00RRGGBB; the target is BGRA
+  return vec4<f32>(i.c.z, i.c.y, i.c.x, 1.0);
+}
+";
+
+const FAR3D: f32 = 100_000.0;
+
+struct Draw3d {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+/// The color and depth targets of one canvas, kept between batches of a frame.
+struct Targets {
+    w: usize,
+    h: usize,
+    color: wgpu::Texture,
+    depth: wgpu::Texture,
+    readback: wgpu::Buffer,
+    /// bytes per row in `readback` (a multiple of 256)
+    row: usize,
+}
+
+fn draw3d(gpu: &Gpu) -> &'static Draw3d {
+    static D: OnceLock<Draw3d> = OnceLock::new();
+    D.get_or_init(|| {
+        let dev = &gpu.device;
+        let module = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("globw-3d"),
+            source: wgpu::ShaderSource::Wgsl(DRAW3D_WGSL.into()),
+        });
+        let layout = dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("globw-3d"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let pl = dev.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("globw-3d"),
+            bind_group_layouts: &[Some(&layout)],
+            ..Default::default()
+        });
+        let attrs = [
+            wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
+            wgpu::VertexAttribute { format: wgpu::VertexFormat::Unorm8x4, offset: 12, shader_location: 1 },
+        ];
+        let pipeline = dev.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("globw-3d"),
+            layout: Some(&pl),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 16,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &attrs,
+                })],
+            },
+            // culling is done on the CPU (it also decides the shading)
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Bgra8Unorm,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        Draw3d { pipeline, layout }
+    })
+}
+
+fn targets(dev: &wgpu::Device, w: usize, h: usize) -> Targets {
+    let size = wgpu::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 };
+    let tex = |format, usage| {
+        dev.create_texture(&wgpu::TextureDescriptor {
+            label: Some("globw-3d"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let color = tex(wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+    let depth = tex(wgpu::TextureFormat::Depth32Float, wgpu::TextureUsages::RENDER_ATTACHMENT);
+    let row = (w * 4).div_ceil(256) * 256;
+    let readback = dev.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("globw-3d-readback"),
+        size: (row * h) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    Targets { w, h, color, depth, readback, row }
+}
+
+/// Rasterizes `tris` for the canvas `id` (w x h) and returns its pixels as
+/// `0xAARRGGBB`, alpha 0 where no triangle landed. The depth buffer is kept
+/// between calls unless `reset_depth`. `None` if there is no GPU or it failed.
+pub fn draw_triangles(id: u64, w: usize, h: usize, tris: &[crate::render3d::Tri], reset_depth: bool) -> Option<Vec<u32>> {
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let gpu = ctx()?;
+    let dev = &gpu.device;
+    let d = draw3d(gpu);
+    static ALL: OnceLock<Mutex<HashMap<u64, Targets>>> = OnceLock::new();
+    let mut all = ALL.get_or_init(|| Mutex::new(HashMap::new())).lock().ok()?;
+    let mut reset_depth = reset_depth;
+    if all.get(&id).is_none_or(|t| t.w != w || t.h != h) {
+        all.insert(id, targets(dev, w, h));
+        reset_depth = true;
+    }
+    let t = all.get(&id)?;
+
+    // 16 bytes a corner: x, y, z as f32 and the color as 4 bytes
+    let mut verts: Vec<u8> = Vec::with_capacity(tris.len() * 48);
+    for tri in tris {
+        for p in &tri.p {
+            for v in p {
+                verts.extend_from_slice(&v.to_le_bytes());
+            }
+            verts.extend_from_slice(&tri.color.to_le_bytes());
+        }
+    }
+    let f = (h as f32 / 2.0) / 30f32.to_radians().tan();
+    let k: [f32; 4] = [f / (w as f32 / 2.0), f / (h as f32 / 2.0), 0.1, FAR3D];
+    let ubuf = dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("globw-3d-u"),
+        contents: bytemuck::cast_slice(&k),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let bind = dev.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("globw-3d"),
+        layout: &d.layout,
+        entries: &[wgpu::BindGroupEntry { binding: 0, resource: ubuf.as_entire_binding() }],
+    });
+    let vbuf = (!verts.is_empty()).then(|| {
+        dev.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("globw-3d-v"),
+            contents: &verts,
+            usage: wgpu::BufferUsages::VERTEX,
+        })
+    });
+
+    let cview = t.color.create_view(&Default::default());
+    let dview = t.depth.create_view(&Default::default());
+    let mut enc = dev.create_command_encoder(&Default::default());
+    {
+        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("globw-3d"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &cview,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &dview,
+                depth_ops: Some(wgpu::Operations {
+                    load: if reset_depth { wgpu::LoadOp::Clear(1.0) } else { wgpu::LoadOp::Load },
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        if let Some(vb) = &vbuf {
+            pass.set_pipeline(&d.pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.draw(0..(tris.len() * 3) as u32, 0..1);
+        }
+    }
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo { texture: &t.color, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &t.readback,
+            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(t.row as u32), rows_per_image: Some(h as u32) },
+        },
+        wgpu::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 },
+    );
+    gpu.queue.submit(Some(enc.finish()));
+    let slice = t.readback.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    dev.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+    let mut out = Vec::with_capacity(w * h);
+    {
+        let data = slice.get_mapped_range().ok()?;
+        for y in 0..h {
+            let row = &data[y * t.row..y * t.row + w * 4];
+            out.extend(row.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])));
+        }
+    }
+    t.readback.unmap();
+    Some(out)
+}

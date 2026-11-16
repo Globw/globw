@@ -28,13 +28,15 @@ panic = "abort"
 # Native build: the modules that need a desktop OS (windows, SQLite, networking,
 # dialogs, dynamic BLAS, threads). On by default; the wasm playground builds
 # without it, and those modules then report a clean "not available here" error.
-default = ["native"]
+default = ["native", "gpu"]
 native = [
     "dep:minifb", "dep:rusqlite", "dep:tiny_http", "dep:tinyfiledialogs",
     "dep:ureq", "dep:libloading", "dep:rayon", "dep:arboard", "matrixmultiply/threading",
+    "dep:png", "dep:jpeg-decoder",
 ]
-# Optional GPU backend for nungw fused element-wise kernels (wgpu + WGSL compute,
-# f32). Off by default: ordinary builds, the wasm playground and CI are untouched.
+# GPU backend (wgpu): draws the built-in 3D on the GPU when a window opens and a
+# GPU answers (software otherwise), and runs nungw kernels after nungw.gpu(true).
+# On by default; the wasm playground builds with --no-default-features.
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 # Optional: a fully general FFI via libffi (arbitrary C signatures, mixing int and
 # float arguments). Off by default because it compiles the C libffi at build time,
@@ -72,6 +74,8 @@ libffi = { version = "3.2.0", optional = true }
 wgpu = { version = "30.0.1", optional = true }
 pollster = { version = "0.4.0", optional = true }
 bytemuck = { version = "1.21.0", optional = true }
+png = { version = "0.18.1", optional = true }
+jpeg-decoder = { version = "0.3.2", default-features = false, optional = true }
 
 # wasm playground: the glue to call the interpreter from JavaScript
 [target.'cfg(target_arch = "wasm32")'.dependencies]

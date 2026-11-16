@@ -198,6 +198,7 @@ impl Graphics {
             pointer: Pointer::Arrow,
             blocked: Vec::new(),
         };
+        g.canvas.gpu3d = crate::render3d::gpu_ready();
         g.show();
         Ok(g)
     }
@@ -243,6 +244,7 @@ impl Graphics {
     pub fn show(&mut self) {
         if let Some(w) = self.window.as_mut() {
             if w.is_open() {
+                self.canvas.sync();
                 let _ = w.update_with_buffer(&self.canvas.pixels, self.canvas.w, self.canvas.h);
             }
         }

@@ -17,6 +17,7 @@ pub mod gpu;
 pub mod lexer;
 pub mod classes;
 pub mod library;
+pub mod model3d;
 pub mod modules;
 pub mod parser;
 #[cfg(feature = "native")]
