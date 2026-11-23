@@ -69,6 +69,26 @@ arrays `nungw` uses every core, SIMD and a blocked matrix kernel, against C++ lo
 one core: C++ with a BLAS library and OpenMP would match or beat it, the matrix
 multiply most of all. `ew` is limited by memory bandwidth on both sides.
 
+## Against Java
+
+The same scalar programs in Java are in [`java/`](java/) (`javac -d . *.java`, then
+`python java/compare.py`). Java runs two ways: as it normally runs, where the JIT turns
+hot bytecode into machine code, and with `-Xint`, its bytecode interpreter alone, which
+is the like-for-like comparison with Globw's VM. Best of three, start-up included,
+Globw 0.1.6 and Java 21 on the machine above:
+
+| Test | Globw | Java `-Xint` | Java (JIT) |
+|------|------:|-------------:|-----------:|
+| `fibb`, recursive `fib(35)` | 0.53 s | 0.48 s | 0.21 s |
+| `sumb`, 200,000,000 steps | 1.04 s | 1.24 s | 0.30 s |
+| `mandel`, 900×600 | 0.93 s | 0.70 s | 0.24 s |
+| `sieve`, up to 10,000,000 | 0.80 s | 0.42 s | 0.21 s |
+
+Bytecode against bytecode, Globw is ahead on the counting loop, about even on
+recursion and behind on the float loop and the sieve (array writes go through bounds
+checks and tagged values, where the JVM has typed array instructions). With its JIT,
+Java is 2.5 to 4 times faster than Globw.
+
 ## How to run
 
 Build the release binary first, then run a harness:
