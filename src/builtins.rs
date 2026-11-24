@@ -3657,7 +3657,7 @@ pub const BUILTIN_MODULES: &[&str] = &[
     "pentagonal", "hexagonal", "star", "lucas", "tribonacci", "padovan", "primorial", "primecount", "prevprime",
     "coprime", "amicable", "multi", "a1z26", "revbits", "luminance", "contrast", "splitbill", "elapsed",
     // databases, servers, processes, GUI
-    "db", "serve", "proc", "gtq", "model",
+    "db", "serve", "proc", "gtq", "model", "jit",
     "ease", "trig2", "special", "polar", "transform", "temp2", "storage", "area2", "kitchen",
     "chem", "elec", "finance2", "health2", "music", "space", "optics", "prob2", "rpg",
     "physics2", "stats2", "map", "date2", "wave2", "light", "sound2",

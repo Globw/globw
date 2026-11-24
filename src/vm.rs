@@ -569,6 +569,125 @@ struct Frame {
     dst: u16,
 }
 
+/// How many direct calls between compiled bodies may nest on the machine stack
+/// before the interpreter takes the next one (the frames are the interpreter's).
+#[cfg(feature = "jit")]
+const NATIVE_CALLS: usize = 1000;
+
+/// Compiled code calls function `callee` directly: the interpreter's frame is
+/// built exactly as its own Call would (registers, return record), and the
+/// callee's compiled body runs. Returns 0 when the callee returned (its value in
+/// `out`, or in register `dst` when it is not a number), 1 when the interpreter
+/// should make this call itself, and 2 when the callee stopped inside: its
+/// registers are written back, its frame stays, and `jit_pending` says where the
+/// interpreter goes on.
+#[cfg(feature = "jit")]
+unsafe extern "C" fn gw_call_body(
+    ctx: *mut crate::jit::Ctx,
+    callee: i64,
+    first: i64,
+    argc: i64,
+    dst: i64,
+    call_ip: i64,
+    args: *const crate::jit::Slot,
+    out: *mut crate::jit::Slot,
+) -> i64 {
+    use crate::jit::{Slot, TAG_NONE};
+    let vm = &mut *((*ctx).vm as *mut Vm<'static>);
+    let callee = callee as usize;
+    if vm.frames.len() >= MAX_CALL_DEPTH || vm.jit_depth >= NATIVE_CALLS {
+        return 1;
+    }
+    let jit: *mut crate::jit::Jit = match vm.jit.as_mut() {
+        Some(j) => &mut **j,
+        None => return 1,
+    };
+    let Some(body) = (*jit).entry(callee, 0) else { return 1 };
+    let (entry, used, written) = (body.entry, &body.used as *const Vec<u16>, &body.written as *const Vec<u16>);
+    let m = vm.module;
+    let (caller, caller_base) = ((*ctx).func, (*ctx).base);
+    let n_regs = m.functions[callee].n_regs as usize;
+    // the callee's registers: the arguments, then "no value yet"
+    let new_base = vm.regs.len();
+    vm.regs.reserve(n_regs);
+    for k in 0..n_regs {
+        let v = if (k as i64) < argc {
+            match (*args.add(k)).value() {
+                Some(v) => v,
+                None => vm.regs[caller_base + first as usize + k].clone(),
+            }
+        } else {
+            Value::Null
+        };
+        vm.regs.push(v);
+    }
+    vm.frames.push(Frame { func: caller, ip: call_ip as usize + 1, base: caller_base, dst: dst as u16 });
+    vm.jit_depth += 1;
+    let d = vm.jit_depth;
+    if vm.jit_pool.len() <= d {
+        vm.jit_pool.resize_with(d + 1, Vec::new);
+    }
+    let mut slots = std::mem::take(&mut vm.jit_pool[d]);
+    slots.clear();
+    slots.resize(n_regs, Slot::default());
+    for &r in &*used {
+        slots[r as usize] = Slot::of(&vm.regs[new_base + r as usize]);
+    }
+    let mut cx = crate::jit::Ctx {
+        regs: vm.regs.as_mut_ptr().add(new_base),
+        globals: (*ctx).globals,
+        strings: (*ctx).strings,
+        out: (*ctx).out,
+        env: (*ctx).env,
+        error: None,
+        vm: (*ctx).vm,
+        func: callee,
+        base: new_base,
+    };
+    let budget = crate::jit::budget(vm.frames.len(), MAX_CALL_DEPTH);
+    let resume = entry(slots.as_mut_ptr(), budget, &mut cx, 0);
+    let vm = &mut *((*ctx).vm as *mut Vm<'static>);
+    vm.jit_depth -= 1;
+    let code = &m.functions[callee].code;
+    let returned = resume != crate::jit::CALLEE_ACTIVE && cx.error.is_none() && matches!(code.get(resume as usize), Some(Op::Ret(_) | Op::RetNone));
+    let status = if returned {
+        // the callee returns: its value to the caller, its frame goes
+        if let Some(Op::Ret(s)) = code.get(resume as usize) {
+            let s = *s as usize;
+            let v = match slots[s].value() {
+                Some(v) => v,
+                None => std::mem::replace(&mut vm.regs[new_base + s], Value::Null),
+            };
+            let sl = Slot::of(&v);
+            if sl.tag == TAG_NONE {
+                vm.regs[caller_base + dst as usize] = v;
+            }
+            *out = sl;
+        }
+        vm.frames.pop();
+        release(&mut vm.regs, new_base);
+        0
+    } else {
+        // the callee stopped: its registers back, its frame stays for the interpreter
+        for &r in &*written {
+            if let Some(v) = slots[r as usize].value() {
+                vm.regs[new_base + r as usize] = v;
+            }
+        }
+        if resume != crate::jit::CALLEE_ACTIVE {
+            vm.jit_pending = Some((callee, new_base, resume as usize));
+            if let Some(e) = cx.error.take() {
+                vm.jit_pending_error = Some(e);
+            }
+        }
+        2
+    };
+    vm.jit_pool[d] = slots;
+    // the registers may have moved: the caller's view of its own
+    (*ctx).regs = vm.regs.as_mut_ptr().add(caller_base);
+    status
+}
+
 pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {
     let mut vm = Vm {
         module,
@@ -576,6 +695,14 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         jit: None,
         #[cfg(feature = "jit")]
         jit_slots: Vec::new(),
+        #[cfg(feature = "jit")]
+        jit_depth: 0,
+        #[cfg(feature = "jit")]
+        jit_pool: Vec::new(),
+        #[cfg(feature = "jit")]
+        jit_pending: None,
+        #[cfg(feature = "jit")]
+        jit_pending_error: None,
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -589,9 +716,10 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         trace: None,
         debug: None,
     };
+    // on with `import jit` (or GLOBW_JIT=1); GLOBW_NO_JIT=1 keeps it off
     #[cfg(feature = "jit")]
-    if std::env::var_os("GLOBW_NO_JIT").is_none() {
-        vm.jit = crate::jit::Jit::new(module).map(Box::new);
+    if (module.jit || std::env::var_os("GLOBW_JIT").is_some()) && std::env::var_os("GLOBW_NO_JIT").is_none() {
+        vm.jit = crate::jit::Jit::new(module, gw_call_body as *const u8).map(Box::new);
     }
     let result = vm.execute::<false>(input, output);
     let _ = output.flush();
@@ -617,6 +745,14 @@ pub fn run_traced(
         jit: None,
         #[cfg(feature = "jit")]
         jit_slots: Vec::new(),
+        #[cfg(feature = "jit")]
+        jit_depth: 0,
+        #[cfg(feature = "jit")]
+        jit_pool: Vec::new(),
+        #[cfg(feature = "jit")]
+        jit_pending: None,
+        #[cfg(feature = "jit")]
+        jit_pending_error: None,
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -652,6 +788,14 @@ pub fn run_debug<'m>(
         jit: None,
         #[cfg(feature = "jit")]
         jit_slots: Vec::new(),
+        #[cfg(feature = "jit")]
+        jit_depth: 0,
+        #[cfg(feature = "jit")]
+        jit_pool: Vec::new(),
+        #[cfg(feature = "jit")]
+        jit_pending: None,
+        #[cfg(feature = "jit")]
+        jit_pending_error: None,
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -686,6 +830,14 @@ pub fn run_profiled(
         jit: None,
         #[cfg(feature = "jit")]
         jit_slots: Vec::new(),
+        #[cfg(feature = "jit")]
+        jit_depth: 0,
+        #[cfg(feature = "jit")]
+        jit_pool: Vec::new(),
+        #[cfg(feature = "jit")]
+        jit_pending: None,
+        #[cfg(feature = "jit")]
+        jit_pending_error: None,
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -717,6 +869,16 @@ struct Vm<'m> {
     jit: Option<Box<crate::jit::Jit>>,
     #[cfg(feature = "jit")]
     jit_slots: Vec<crate::jit::Slot>,
+    /// direct calls between compiled bodies: how deep they nest on the machine
+    /// stack, a register buffer per level, and where to go on when one stops
+    #[cfg(feature = "jit")]
+    jit_depth: usize,
+    #[cfg(feature = "jit")]
+    jit_pool: Vec<Vec<crate::jit::Slot>>,
+    #[cfg(feature = "jit")]
+    jit_pending: Option<(usize, usize, usize)>,
+    #[cfg(feature = "jit")]
+    jit_pending_error: Option<String>,
     regs: Vec<Value>,
     globals: Vec<Value>,
     frames: Vec<Frame>,
@@ -1640,15 +1802,22 @@ impl<'m> Vm<'m> {
             #[cfg(feature = "jit")]
             if jit_try && !WATCH {
                 jit_try = false;
-                if let Some(jit) = self.jit.as_mut() {
-                    if let Some(body) = jit.entry(func, ip) {
-                        let entry = body.entry;
+                let jit: *mut crate::jit::Jit = match self.jit.as_mut() {
+                    Some(j) => &mut **j,
+                    None => std::ptr::null_mut(),
+                };
+                if !jit.is_null() {
+                    // SAFETY: no Rust reference into the JIT lives across the call;
+                    // compiled code reaches the VM only through `vm`
+                    let body = unsafe { (*jit).entry(func, ip) }.map(|b| (b.entry, &b.used as *const Vec<u16>, &b.written as *const Vec<u16>));
+                    if let Some((entry, used, written)) = body {
                         let n = m.functions[func].n_regs as usize;
                         self.jit_slots.clear();
                         self.jit_slots.resize(n, crate::jit::Slot::default());
-                        for &r in &body.used {
+                        for &r in unsafe { &*used } {
                             self.jit_slots[r as usize] = crate::jit::Slot::of(&self.regs[base + r as usize]);
                         }
+                        let vm_ptr = self as *mut Vm as *mut u8;
                         let mut cx = crate::jit::Ctx {
                             regs: self.regs.as_mut_ptr().wrapping_add(base),
                             globals: self.globals.as_mut_ptr(),
@@ -1657,28 +1826,46 @@ impl<'m> Vm<'m> {
                             out: unsafe { std::mem::transmute::<*mut (dyn Write + '_), *mut (dyn Write + 'static)>(output as *mut dyn Write) },
                             env: &mut self.env,
                             error: None,
+                            vm: vm_ptr,
+                            func,
+                            base,
                         };
                         let budget = crate::jit::budget(self.frames.len(), MAX_CALL_DEPTH);
+                        let slots = self.jit_slots.as_mut_ptr();
                         // SAFETY: the body reads and writes its slots, and through the
-                        // helpers only this frame's registers and the globals
-                        let resume = unsafe { entry(self.jit_slots.as_mut_ptr(), budget, &mut cx, ip as i64) } as usize;
-                        for &r in &body.written {
+                        // helpers this frame's registers, the globals and (direct calls) the VM
+                        let resume = unsafe { entry(slots, budget, &mut cx, ip as i64) };
+                        for &r in unsafe { &*written } {
                             if let Some(v) = self.jit_slots[r as usize].value() {
                                 self.regs[base + r as usize] = v;
                             }
                         }
-                        // stopped at an instruction it can run: an error to report,
-                        // or a call that gave up
-                        if jit.entry(func, resume).is_some() {
-                            jit.stopped(func, resume);
-                        }
-                        ip = resume;
                         jit_try = true;
-                        if let Some(msg) = cx.error.take() {
-                            // the next turn fetches that instruction and reports this
-                            jit_error = Some(msg);
+                        if resume == crate::jit::CALLEE_ACTIVE {
+                            // a callee stopped: its frame is on top, go on there
+                            if let Some((f2, b2, ip2)) = self.jit_pending.take() {
+                                func = f2;
+                                base = b2;
+                                ip = ip2;
+                                code = &m.functions[func].code;
+                            }
+                            if let Some(msg) = self.jit_pending_error.take() {
+                                jit_error = Some(msg);
+                            }
+                        } else {
+                            let resume = resume as usize;
+                            // stopped at an instruction it can run: an error to report,
+                            // or a call that gave up
+                            if unsafe { (*jit).entry(func, resume) }.is_some() {
+                                unsafe { (*jit).stopped(func, resume) };
+                            }
+                            ip = resume;
+                            if let Some(msg) = cx.error.take() {
+                                // the next turn fetches that instruction and reports this
+                                jit_error = Some(msg);
+                            }
                         }
-                    } else if jit.compiled(func) {
+                    } else if unsafe { (*jit).compiled(func) } {
                         jit_try = true;
                     }
                 }
@@ -1703,6 +1890,7 @@ mod tests {
             class_fields: vec![],
             vtable: vec![],
             class_parents: vec![],
+            jit: false,
         };
         let mut out = Vec::new();
         run(&module, &mut input.as_bytes(), &mut out)?;
@@ -1888,6 +2076,7 @@ mod tests {
             class_fields: vec![],
             vtable: vec![],
             class_parents: vec![],
+            jit: false,
         }
     }
 

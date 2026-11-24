@@ -410,6 +410,19 @@ end loop
   - `gpu3d_active()` is `true` if the current window draws its 3D on the graphics card.
   - Each time 2D drawing follows 3D, the 3D drawn so far is fetched from the graphics card. Draw the 3D of a frame first and the 2D (text, scores) after it: one fetch a frame instead of many.
 
+**Speed.** `import jit` compiles the program's hot code to machine code while it runs: functions called often and loops that turn many times. Results and errors are exactly those of the interpreter; only the time changes (a recursive Fibonacci about 7 times faster). Import it in programs that compute a lot; a short program gains nothing from it.
+
+```
+import jit
+function fib(n as int) as int
+    if(n < 2)
+        return n
+    end if
+    return fib(n - 1) + fib(n - 2)
+end function
+output(fib(35))
+```
+
 **3D models.** The `model` module (`import model`) loads models made in Blender or other 3D programs, or builds them in the program, and draws them as often as wanted, anywhere, at any size and turned any way.
 
 ```

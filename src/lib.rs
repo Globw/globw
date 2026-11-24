@@ -49,10 +49,16 @@ pub fn compile_program(
     dir: &std::path::Path,
 ) -> (Vec<SourceFile>, Result<bytecode::Module, Vec<Error>>) {
     let (files, program) = modules::load(main, dir);
+    // `import jit`: the program asks for machine code where it is hot
+    let wants_jit = program.as_ref().is_ok_and(|p| p.imports.iter().any(|i| i.module == "jit"));
     let result = program
         .and_then(|mut p| classes::lower(&mut p).map(|()| p))
         .and_then(|p| checker::check(&p))
-        .map(|t| compiler::compile(&t));
+        .map(|t| {
+            let mut m = compiler::compile(&t);
+            m.jit = wants_jit;
+            m
+        });
     (files, result)
 }
 

@@ -190,7 +190,16 @@ pub struct Ctx {
     /// an error a built-in raised: the interpreter reports it at the instruction
     /// compiled code stopped at, without running the built-in again
     pub error: Option<String>,
+    /// the interpreter (for direct calls between compiled bodies)
+    pub vm: *mut u8,
+    /// the function running in this frame and its first register's index
+    pub func: usize,
+    pub base: usize,
 }
+
+/// Returned by a compiled body instead of an instruction: a function it called
+/// stopped, so the interpreter goes on in that callee's frame (already pushed).
+pub const CALLEE_ACTIVE: i64 = u32::MAX as i64;
 
 /// `fn(args: *const Slot, budget: i64, out: *mut Slot)`
 type Trampoline = unsafe extern "C" fn(*const Slot, i64, *mut Slot);
@@ -485,7 +494,7 @@ pub fn callable_builtin(id: u16) -> bool {
     )
 }
 
-const HELPERS: [(&str, usize, bool); 20] = [
+const HELPERS: [(&str, usize, bool); 21] = [
     // name, number of i64 arguments after ctx, ends with an `out` pointer
     ("gw_get_elem", 3, true),
     ("gw_set_elem", 5, false),
@@ -507,6 +516,7 @@ const HELPERS: [(&str, usize, bool); 20] = [
     ("gw_println", 0, false),
     ("gw_new_list", 1, false),
     ("gw_builtin", 4, true),
+    ("gw_call_body", 5, true),
 ];
 
 fn helper_ptr(name: &str) -> *const u8 {
@@ -687,7 +697,7 @@ type V = cranelift_codegen::ir::Value;
 
 impl Jit {
     /// `None` when this machine has no Cranelift backend.
-    pub fn new(module: &Module) -> Option<Jit> {
+    pub fn new(module: &Module, call_body: *const u8) -> Option<Jit> {
         let mut flags = settings::builder();
         flags.set("opt_level", "speed").ok()?;
         flags.set("use_colocated_libcalls", "false").ok()?;
@@ -695,7 +705,7 @@ impl Jit {
         let isa = cranelift_native::builder().ok()?.finish(settings::Flags::new(flags)).ok()?;
         let mut jb = JITBuilder::with_isa(isa, default_libcall_names());
         for (name, _, _) in HELPERS {
-            jb.symbol(name, helper_ptr(name));
+            jb.symbol(name, if name == "gw_call_body" { call_body } else { helper_ptr(name) });
         }
         let mut jm = JITModule::new(jb);
         let ptr = jm.isa().pointer_type();
@@ -706,7 +716,7 @@ impl Jit {
             for _ in 0..n {
                 sig.params.push(AbiParam::new(types::I64));
             }
-            if name == "gw_builtin" {
+            if name == "gw_builtin" || name == "gw_call_body" {
                 sig.params.push(AbiParam::new(ptr)); // the arguments
             }
             if out {
@@ -902,7 +912,7 @@ impl Jit {
     /// Can compiled code run this instruction (with the native functions known)?
     fn runs_op(&self, op: &Op) -> bool {
         match op {
-            Op::Call { func, .. } => self.funcs.get(*func as usize).is_some_and(|x| x.is_some()),
+            Op::Call { .. } => true,
             Op::Builtin { id, .. } => callable_builtin(*id),
             op => plain_numeric(op) || loop_extra(op),
         }
@@ -910,6 +920,16 @@ impl Jit {
 
     fn compile_body(&mut self, m: &Module, f: usize) -> Option<BodyCode> {
         let func = &m.functions[f];
+        // without a loop a body does too little per call to pay for entering
+        // compiled code: the interpreter runs it faster
+        let has_loop = func.code.iter().enumerate().any(|(ip, op)| {
+            matches!(*op, Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) | Op::JumpUnlessIImm(_, _, _, t) if (t as usize) <= ip)
+                || matches!(op, Op::ForStep { .. })
+        });
+        if !has_loop {
+            return None;
+        }
+        let gives: Vec<bool> = m.functions.iter().map(|g| g.code.iter().any(|op| matches!(op, Op::Ret(_)))).collect();
         // calls to numeric functions go straight to their machine code
         if func.code.iter().any(|op| matches!(op, Op::Call { func, .. } if self.eligible.get(*func as usize).copied().unwrap_or(false))) {
             self.compile_functions(m);
@@ -933,7 +953,7 @@ impl Jit {
         written.sort_unstable();
         written.dedup();
         let ids: Vec<Option<FuncId>> = self.funcs.iter().map(|x| x.map(|(id, _)| id)).collect();
-        let id = match self.build_body(func, &runs, &used, &written, &ids) {
+        let id = match self.build_body(func, &runs, &used, &written, &ids, &gives) {
             Ok(id) => id,
             Err(e) => {
                 if self.log {
@@ -1013,6 +1033,7 @@ impl Jit {
                 views: &[],
                 epoch: None,
                 layout: None,
+                gives: &[],
             };
             for (ip, op) in code.iter().enumerate() {
                 b.switch_to_block(blocks[ip]);
@@ -1068,7 +1089,7 @@ impl Jit {
         Ok(id)
     }
 
-    fn build_body(&mut self, f: &Function, runs: &[bool], used: &[u16], written: &[u16], ids: &[Option<FuncId>]) -> Result<FuncId, String> {
+    fn build_body(&mut self, f: &Function, runs: &[bool], used: &[u16], written: &[u16], ids: &[Option<FuncId>], gives: &[bool]) -> Result<FuncId, String> {
         let (start, end) = (0, f.code.len());
         let ptr = self.module.isa().pointer_type();
         let mut sig = self.module.make_signature();
@@ -1168,6 +1189,7 @@ impl Jit {
                 views: &views,
                 epoch: Some(epoch),
                 layout: self.layout,
+                gives,
             };
             for ip in start..end {
                 b.switch_to_block(blocks[ip - start]);
@@ -1291,6 +1313,8 @@ struct Gen<'a> {
     /// bumped by every helper that may move or replace a container
     epoch: Option<Variable>,
     layout: Option<Layout>,
+    /// per function: does it give back a value
+    gives: &'a [bool],
 }
 
 impl Gen<'_> {
@@ -1904,6 +1928,39 @@ impl Gen<'_> {
                 let again = b.ins().bor(a1, a2);
                 let bb = self.block(b, body as usize);
                 b.ins().brif(again, bb, &[], n, &[]);
+            }
+            Op::Call { func, first, argc, dst } if !self.callee_refs.contains_key(&(func as usize)) => {
+                if self.leave.is_none() {
+                    return Err("internal: a call in a numeric function".into());
+                }
+                let n = (argc as u32).max(1) * 16;
+                let ss = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, n, 3));
+                let args = b.ins().stack_addr(types::I64, ss, 0);
+                for k in 0..argc {
+                    let v = self.vars[(first + k) as usize];
+                    let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                    b.ins().store(MemFlagsData::trusted(), bits, args, (k as i32) * 16);
+                    b.ins().store(MemFlagsData::trusted(), tag, args, (k as i32) * 16 + 8);
+                }
+                let (fc, firstc, nc, dc, ipc) =
+                    (self.konst(b, func as i64), self.konst(b, first as i64), self.konst(b, argc as i64), self.konst(b, dst as i64), self.konst(b, ip as i64));
+                let out = self.out.ok_or("not in a function")?;
+                let st = self.helper(b, "gw_call_body", &[fc, firstc, nc, dc, ipc, args, out])?;
+                // 1: the interpreter makes this call; 2: the callee stopped and its
+                // frame is the interpreter's now
+                let (not1, done) = (b.create_block(), b.create_block());
+                let is1 = b.ins().icmp_imm_s(IntCC::Equal, st, 1);
+                let stop = self.stop(b, ip);
+                b.ins().brif(is1, stop, &[], not1, &[]);
+                b.switch_to_block(not1);
+                let is2 = b.ins().icmp_imm_s(IntCC::Equal, st, 2);
+                let active = self.exit_to(b, CALLEE_ACTIVE as usize);
+                b.ins().brif(is2, active, &[], done, &[]);
+                b.switch_to_block(done);
+                if self.gives.get(func as usize).copied().unwrap_or(false) {
+                    self.take_out(b, dst);
+                }
+                self.jump_next(b, ip);
             }
             Op::Call { func, first, argc, dst } => {
                 let fref = *self.callee_refs.get(&(func as usize)).ok_or("internal: no callee")?;

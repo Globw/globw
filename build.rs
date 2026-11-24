@@ -7,6 +7,11 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     let target = std::env::var("TARGET").unwrap_or_default();
     let gpu = std::env::var_os("CARGO_FEATURE_GPU").is_some();
+    // compiled code calls compiled code on the machine stack: reserve 64 MB (pages
+    // are only committed when used), like the 8 MB Linux and macOS give
+    if target.contains("windows-msvc") {
+        println!("cargo:rustc-link-arg-bin=gw=/STACK:67108864");
+    }
     if gpu && target.contains("windows-msvc") {
         for dll in ["opengl32.dll", "dxgi.dll", "setupapi.dll", "oleaut32.dll"] {
             println!("cargo:rustc-link-arg-bin=gw=/DELAYLOAD:{}", dll);

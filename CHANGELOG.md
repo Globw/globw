@@ -2,8 +2,9 @@
 
 ## 0.1.7 — unreleased
 
-**A JIT.** Hot code becomes machine code (Cranelift), with the same results and
-the same errors as the interpreter.
+**A JIT.** `import jit` and the program's hot code becomes machine code
+(Cranelift), with the same results and the same errors as the interpreter. A
+program without it is interpreted, as before: the JIT is for when speed matters.
 
 - Functions made only of numbers, booleans and calls to such functions become
   native functions that call each other directly.
@@ -20,14 +21,19 @@ the same errors as the interpreter.
   ever differs.
 - fib(35) 0.53 → 0.09 s, a 200-million-step loop 1.05 → 0.22 s, Mandelbrot
   0.94 → 0.11 s: faster than Java.
-- On in normal runs; the debugger, `--trace`, `--profile` and the web playground
-  use the interpreter. `GLOBW_NO_JIT=1` turns it off.
+- On with `import jit` (in any file of the program); the debugger, `--trace`,
+  `--profile` and the web playground use the interpreter. `GLOBW_JIT=1` turns it
+  on without the import, `GLOBW_NO_JIT=1` keeps it off.
 - Hot functions are compiled whole, the main program too, and can start at any
   instruction: what compiled code cannot run (a call to an interpreted function, a
   return) it hands to the interpreter, which goes back into compiled code right
   after. Text (constants, `+`, comparisons, characters), `output` and calls to the
   library run inside compiled code; an error a library function raises there is
   reported by the interpreter at the same line, without calling it again.
+- Compiled functions call each other directly, the interpreter's frames built as
+  it would build them: when a callee stops, the interpreter goes on inside it,
+  with the same backtrace. Only functions with a loop are compiled whole; a short
+  one runs faster in the interpreter. Windows gives `gw` a 64 MB stack.
 - `gw --bytecode` prints a program's compiled instructions.
 
 **Faster start.** On Windows the graphics DLLs are loaded only when the GPU is

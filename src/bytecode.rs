@@ -253,4 +253,6 @@ pub struct Module {
     pub vtable: Vec<Vec<i32>>,
     /// per class, the parent class id, or -1
     pub class_parents: Vec<i32>,
+    /// the program imports `jit`: hot code is compiled to machine code
+    pub jit: bool,
 }

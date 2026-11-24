@@ -264,6 +264,8 @@ fn merge(mut modules: Vec<Module>, by_name: &HashMap<String, usize>) -> Result<P
     }
 
     let mut out = Program::default();
+    // `import jit` in any file turns the JIT on for the program
+    out.imports = modules.iter().flat_map(|m| m.program.imports.iter().filter(|i| i.module == "jit").cloned()).take(1).collect();
     for (k, m) in modules.iter_mut().enumerate() {
         let mut p = std::mem::take(&mut m.program);
         let classes = std::mem::take(&mut p.classes);

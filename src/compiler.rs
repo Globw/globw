@@ -30,6 +30,7 @@ pub fn compile(p: &TProgram) -> Module {
         class_fields,
         vtable,
         class_parents,
+        jit: false,
     }
 }
 
