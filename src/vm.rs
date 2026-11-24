@@ -203,6 +203,33 @@ fn matrix(v: &Value) -> &Rc<RefCell<Matrix>> {
 }
 
 /// 1-based index → 0-based position, or the error message.
+/// `n` values with no value yet. When "no value" is all zero bytes in memory
+/// (checked once), the memory comes zeroed from the system, which is much faster
+/// for a large array than writing every element.
+fn null_values(n: usize) -> Vec<Value> {
+    static ZERO_IS_NULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let zero = *ZERO_IS_NULL.get_or_init(|| {
+        let null = Value::Null;
+        // SAFETY: reading the bytes of a value; a zeroed buffer is checked to read as Null
+        let first_zero = unsafe { *(&null as *const Value as *const u8) } == 0;
+        let zeroed = std::mem::MaybeUninit::<Value>::zeroed();
+        first_zero && matches!(unsafe { zeroed.assume_init_ref() }, Value::Null)
+    });
+    if !zero || n == 0 {
+        return vec![Value::Null; n];
+    }
+    let Ok(layout) = std::alloc::Layout::array::<Value>(n) else { return vec![Value::Null; n] };
+    // SAFETY: zeroed memory from the global allocator with Vec's own layout; every
+    // element reads as Value::Null (checked above), which owns nothing
+    unsafe {
+        let p = std::alloc::alloc_zeroed(layout) as *mut Value;
+        if p.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
+        Vec::from_raw_parts(p, n, n)
+    }
+}
+
 fn position(i: i64, len: usize) -> Result<usize, String> {
     if i >= 1 && (i as u64) <= len as u64 {
         Ok(i as usize - 1)
@@ -1043,10 +1070,10 @@ impl<'m> Vm<'m> {
                     let v = reg!(s).clone();
                     self.globals[g as usize] = v;
                 }
-                Op::NewArray(d, n) => reg!(d) = Value::Seq(Rc::new(RefCell::new(vec![Value::Null; n as usize]))),
+                Op::NewArray(d, n) => reg!(d) = Value::Seq(Rc::new(RefCell::new(null_values(n as usize)))),
                 Op::NewMatrix(d, r, c) => {
                     let (rows, cols) = (r as usize, c as usize);
-                    let data = vec![Value::Null; rows * cols];
+                    let data = null_values(rows * cols);
                     reg!(d) = Value::Matrix(Rc::new(RefCell::new(Matrix { rows, cols, data })));
                 }
                 Op::NewList(d) => reg!(d) = Value::Seq(Rc::new(RefCell::new(Vec::new()))),

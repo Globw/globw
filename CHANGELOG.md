@@ -14,11 +14,21 @@ the same errors as the interpreter.
   interpreter goes on from that very instruction.
 - An overflow, a division by zero or an index out of range in compiled code gives
   the interpreter's error at the same line, and `try` catches it as before.
-- fib(35) 0.53 → 0.14 s, a 200-million-step loop 1.05 → 0.28 s, Mandelbrot
-  0.94 → 0.16 s, the sieve 0.77 → 0.48 s (faster than Java on the first three).
+- Array, list and matrix elements are read and written in place, as a few
+  machine instructions (bounds check, kind check, access); the memory layout of a
+  value is measured and checked at start-up, and the helpers take over if it
+  ever differs.
+- fib(35) 0.53 → 0.09 s, a 200-million-step loop 1.05 → 0.22 s, Mandelbrot
+  0.94 → 0.11 s, the sieve 0.77 → 0.26 s: faster than Java on the first three.
 - On in normal runs; the debugger, `--trace`, `--profile` and the web playground
   use the interpreter. `GLOBW_NO_JIT=1` turns it off.
 - `gw --bytecode` prints a program's compiled instructions.
+
+**Faster start.** On Windows the graphics DLLs are loaded only when the GPU is
+used: every program starts in about 45 ms instead of 105 ms.
+
+**Large arrays.** An array or matrix is created from memory the system hands out
+already zeroed, instead of writing every element.
 
 ## 0.1.6 — 2026-11-16
 

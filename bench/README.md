@@ -52,10 +52,10 @@ with NumPy 2.5.4, C++ built with MSVC `/O2` (plain loops, one core), Java 21:
 
 | Test | Globw | Python / NumPy | C++ | Java (JIT) | Java bytecode only |
 |---|---:|---:|---:|---:|---:|
-| Recursive fib(35) | 0.14 s | 0.75 s | 0.072 s | 0.20 s | 0.49 s |
-| Sum loop, 200 million steps | 0.28 s | 3.79 s | 0.14 s | 0.28 s | 1.20 s |
-| Mandelbrot, 900 x 600 | 0.16 s | 1.92 s | 0.087 s | 0.22 s | 0.70 s |
-| Sieve up to 10 million | 0.48 s | 0.77 s | 0.066 s | 0.18 s | 0.42 s |
+| Recursive fib(35) | 0.09 s | 0.75 s | 0.072 s | 0.20 s | 0.49 s |
+| Sum loop, 200 million steps | 0.22 s | 3.79 s | 0.14 s | 0.28 s | 1.20 s |
+| Mandelbrot, 900 x 600 | 0.11 s | 1.92 s | 0.087 s | 0.22 s | 0.70 s |
+| Sieve up to 10 million | 0.26 s | 0.77 s | 0.066 s | 0.18 s | 0.42 s |
 | sqrt(a*a + b*b), 20 M values x 10 | 0.34 s | 1.09 s | 0.33 s | 0.59 s | n/a |
 | exp, log and sin, 20 M values x 10 | 0.55 s | 2.66 s | 1.85 s | 4.87 s | n/a |
 | Sum, norm and mean, 50 M values x 20 | 0.52 s | 1.31 s | 0.88 s | 1.00 s | n/a |

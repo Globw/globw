@@ -87,6 +87,94 @@ impl Slot {
     }
 }
 
+/// Where a `Value` keeps its kind and its number, measured in this very binary.
+/// Rust does not promise an enum's layout, so it is checked at start-up (a value
+/// rebuilt from the measured layout must read back the same); when anything
+/// differs, compiled loops reach elements through the helpers only.
+#[derive(Clone, Copy, Debug)]
+pub struct Layout {
+    size: i64,
+    t_null: u8,
+    t_int: u8,
+    t_real: u8,
+    t_bool: u8,
+}
+
+fn probe_layout() -> Option<Layout> {
+    use std::cell::RefCell;
+    use std::mem::{size_of, MaybeUninit};
+    use std::rc::Rc;
+    let size = size_of::<Value>();
+    if size < 16 {
+        return None;
+    }
+    let byte0 = |v: &Value| unsafe { *(v as *const Value as *const u8) };
+    let (t_null, t_int, t_real, t_bool) = (byte0(&Value::Null), byte0(&Value::Int(7)), byte0(&Value::Real(1.5)), byte0(&Value::Bool(true)));
+    let scalar = [t_null, t_int, t_real, t_bool];
+    let mut uniq = scalar.to_vec();
+    uniq.sort_unstable();
+    uniq.dedup();
+    if uniq.len() != 4 {
+        return None;
+    }
+    // values that own memory must never look like a scalar (writes skip their drop)
+    let owners = [Value::Str("x".into()), Value::Seq(Rc::new(RefCell::new(Vec::new()))), Value::Func(3)];
+    if owners.iter().any(|v| scalar.contains(&byte0(v))) {
+        return None;
+    }
+    // numbers at offset 8, a bool at offset 1; rebuilt values must read back equal
+    for x in [0i64, 1, -1, i64::MIN, i64::MAX, 0x1234_5678_9abc_def0] {
+        let v = Value::Int(x);
+        let at8 = unsafe { *((&v as *const Value as *const u8).add(8) as *const i64) };
+        if at8 != x {
+            return None;
+        }
+        let mut buf = MaybeUninit::<Value>::zeroed();
+        unsafe {
+            let p = buf.as_mut_ptr() as *mut u8;
+            *p = t_int;
+            *(p.add(8) as *mut i64) = x;
+            if !matches!(buf.assume_init_ref(), Value::Int(y) if *y == x) {
+                return None;
+            }
+        }
+    }
+    for x in [0.0f64, -2.5, 1e300, f64::INFINITY] {
+        let mut buf = MaybeUninit::<Value>::zeroed();
+        unsafe {
+            let p = buf.as_mut_ptr() as *mut u8;
+            *p = t_real;
+            *(p.add(8) as *mut f64) = x;
+            if !matches!(buf.assume_init_ref(), Value::Real(y) if y.to_bits() == x.to_bits()) {
+                return None;
+            }
+        }
+    }
+    for x in [false, true] {
+        let v = Value::Bool(x);
+        if unsafe { *(&v as *const Value as *const u8).add(1) } != x as u8 {
+            return None;
+        }
+        let mut buf = MaybeUninit::<Value>::zeroed();
+        unsafe {
+            let p = buf.as_mut_ptr() as *mut u8;
+            *p = t_bool;
+            *p.add(1) = x as u8;
+            if !matches!(buf.assume_init_ref(), Value::Bool(y) if *y == x) {
+                return None;
+            }
+        }
+    }
+    let mut buf = MaybeUninit::<Value>::zeroed();
+    unsafe {
+        *(buf.as_mut_ptr() as *mut u8) = t_null;
+        if !matches!(buf.assume_init_ref(), Value::Null) {
+            return None;
+        }
+    }
+    Some(Layout { size: size as i64, t_null, t_int, t_real, t_bool })
+}
+
 /// What a compiled loop reaches of the interpreter: the current frame's registers
 /// (for values that are not numbers) and the global variables.
 #[repr(C)]
@@ -217,7 +305,27 @@ unsafe extern "C" fn gw_move(ctx: *mut Ctx, d: i64, s: i64) -> i64 {
     0
 }
 
-const HELPERS: [(&str, usize, bool); 9] = [
+/// An array or list's elements: `out` gets the address of the first and the
+/// count. 1 when the register holds no array or list.
+unsafe extern "C" fn gw_seq_view(ctx: *mut Ctx, c: i64, out: *mut i64) -> i64 {
+    let Value::Seq(q) = &*(*ctx).regs.add(c as usize) else { return 1 };
+    let v = &*q.as_ptr();
+    *out = v.as_ptr() as i64;
+    *out.add(1) = v.len() as i64;
+    0
+}
+
+/// A matrix's cells: address of the first, rows, columns.
+unsafe extern "C" fn gw_mat_view(ctx: *mut Ctx, c: i64, out: *mut i64) -> i64 {
+    let Value::Matrix(mx) = &*(*ctx).regs.add(c as usize) else { return 1 };
+    let mx = &*mx.as_ptr();
+    *out = mx.data.as_ptr() as i64;
+    *out.add(1) = mx.rows as i64;
+    *out.add(2) = mx.cols as i64;
+    0
+}
+
+const HELPERS: [(&str, usize, bool); 11] = [
     // name, number of i64 arguments after ctx, ends with an `out` pointer
     ("gw_get_elem", 3, true),
     ("gw_set_elem", 5, false),
@@ -228,6 +336,8 @@ const HELPERS: [(&str, usize, bool); 9] = [
     ("gw_get_global", 2, true),
     ("gw_set_global", 4, false),
     ("gw_move", 2, false),
+    ("gw_seq_view", 1, true),
+    ("gw_mat_view", 1, true),
 ];
 
 fn helper_ptr(name: &str) -> *const u8 {
@@ -240,6 +350,8 @@ fn helper_ptr(name: &str) -> *const u8 {
         "gw_append" => gw_append as *const u8,
         "gw_get_global" => gw_get_global as *const u8,
         "gw_set_global" => gw_set_global as *const u8,
+        "gw_seq_view" => gw_seq_view as *const u8,
+        "gw_mat_view" => gw_mat_view as *const u8,
         _ => gw_move as *const u8,
     }
 }
@@ -251,6 +363,8 @@ pub struct Jit {
     ctx: Context,
     fctx: FunctionBuilderContext,
     helpers: HashMap<&'static str, FuncId>,
+    /// how a Value lies in memory, when it could be checked
+    layout: Option<Layout>,
     /// functions that can be compiled (all their instructions are handled)
     eligible: Vec<bool>,
     /// once the eligible functions are compiled: typed entry and trampoline
@@ -366,6 +480,16 @@ fn written_reg(op: &Op) -> Option<u16> {
     })
 }
 
+/// A container register's cached view: the address of its first element, its
+/// length (rows for a matrix), its columns, and the epoch it was read in.
+#[derive(Clone, Copy)]
+struct ViewVars {
+    ptr: Variable,
+    len: Variable,
+    cols: Variable,
+    ep: Variable,
+}
+
 /// A register as Cranelift variables.
 #[derive(Clone, Copy)]
 struct RegVars {
@@ -437,6 +561,7 @@ impl Jit {
             module: jm,
             fctx: FunctionBuilderContext::new(),
             helpers,
+            layout: if std::env::var_os("GLOBW_JIT_NO_INLINE").is_some() { None } else { probe_layout() },
             eligible,
             funcs: (0..n).map(|_| None).collect(),
             compiled_funcs: false,
@@ -694,6 +819,9 @@ impl Jit {
                 helper_refs: &HashMap::new(),
                 ctxv: None,
                 out: None,
+                views: &[],
+                epoch: None,
+                layout: None,
             };
             for (ip, op) in code.iter().enumerate() {
                 b.switch_to_block(blocks[ip]);
@@ -777,7 +905,7 @@ impl Jit {
             for (name, id) in &self.helpers {
                 helper_refs.insert(*name, self.module.declare_func_in_func(*id, b.func));
             }
-            let out_slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
+            let out_slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 32, 3));
             let n_regs = f.n_regs as usize;
             let vars: Vec<RegVars> = (0..n_regs).map(|_| declare_reg(&mut b)).collect();
             let entry = b.create_block();
@@ -801,6 +929,19 @@ impl Jit {
                 }
             }
             let out = b.ins().stack_addr(ptr, out_slot, 0);
+            // views of containers: all stale at the start (epoch 0, views -1)
+            let views: Vec<ViewVars> = (0..n_regs)
+                .map(|_| ViewVars { ptr: b.declare_var(types::I64), len: b.declare_var(types::I64), cols: b.declare_var(types::I64), ep: b.declare_var(types::I64) })
+                .collect();
+            let epoch = b.declare_var(types::I64);
+            b.def_var(epoch, zero);
+            let minus1 = b.ins().iconst(types::I64, -1);
+            for v in &views {
+                b.def_var(v.ptr, zero);
+                b.def_var(v.len, zero);
+                b.def_var(v.cols, zero);
+                b.def_var(v.ep, minus1);
+            }
             let blocks: Vec<Block> = (start..end).map(|_| b.create_block()).collect();
             // the one way out: write the registers back, return where to go on
             let leave = b.create_block();
@@ -820,6 +961,9 @@ impl Jit {
                 helper_refs: &helper_refs,
                 ctxv: Some(ctxv),
                 out: Some(out),
+                views: &views,
+                epoch: Some(epoch),
+                layout: self.layout,
             };
             for ip in start..end {
                 b.switch_to_block(blocks[ip - start]);
@@ -934,6 +1078,10 @@ struct Gen<'a> {
     helper_refs: &'a HashMap<&'static str, cranelift_codegen::ir::FuncRef>,
     ctxv: Option<V>,
     out: Option<V>,
+    views: &'a [ViewVars],
+    /// bumped by every helper that may move or replace a container
+    epoch: Option<Variable>,
+    layout: Option<Layout>,
 }
 
 impl Gen<'_> {
@@ -1032,7 +1180,15 @@ impl Gen<'_> {
         let mut all = vec![self.ctxv.ok_or("no context")?];
         all.extend_from_slice(args);
         let call = b.ins().call(f, &all);
-        Ok(b.inst_results(call)[0])
+        let res = b.inst_results(call)[0];
+        if !name.ends_with("_view") {
+            if let Some(e) = self.epoch {
+                let x = b.use_var(e);
+                let x1 = b.ins().iadd_imm_s(x, 1);
+                b.def_var(e, x1);
+            }
+        }
+        Ok(res)
     }
 
     fn konst(&self, b: &mut FunctionBuilder, n: i64) -> V {
@@ -1048,7 +1204,179 @@ impl Gen<'_> {
         set_from_bits(b, self.vars[d as usize], bits, tag);
     }
 
+    /// The cached view of container `c` (refreshed when stale); goes to `slow`
+    /// when the register holds no container of that kind.
+    fn view(&self, b: &mut FunctionBuilder, c: u16, matrix: bool, slow: Block) -> Result<(V, V, V), String> {
+        let vv = self.views[c as usize];
+        let e = b.use_var(self.epoch.ok_or("no epoch")?);
+        let ep = b.use_var(vv.ep);
+        let stale = b.ins().icmp(IntCC::NotEqual, ep, e);
+        let (refresh, fresh, have) = (b.create_block(), b.create_block(), b.create_block());
+        b.ins().brif(stale, refresh, &[], have, &[]);
+        b.switch_to_block(refresh);
+        let cc = self.konst(b, c as i64);
+        let out = self.out.ok_or("no out slot")?;
+        let st = self.helper(b, if matrix { "gw_mat_view" } else { "gw_seq_view" }, &[cc, out])?;
+        b.ins().brif(st, slow, &[], fresh, &[]);
+        b.switch_to_block(fresh);
+        let p = b.ins().load(types::I64, MemFlagsData::trusted(), out, 0);
+        let n = b.ins().load(types::I64, MemFlagsData::trusted(), out, 8);
+        b.def_var(vv.ptr, p);
+        b.def_var(vv.len, n);
+        if matrix {
+            let k = b.ins().load(types::I64, MemFlagsData::trusted(), out, 16);
+            b.def_var(vv.cols, k);
+        }
+        b.def_var(vv.ep, e);
+        b.ins().jump(have, &[]);
+        b.switch_to_block(have);
+        Ok((b.use_var(vv.ptr), b.use_var(vv.len), b.use_var(vv.cols)))
+    }
+
+    /// The address of element `k` (0-based, already known in range).
+    fn elem_addr(&self, b: &mut FunctionBuilder, ptr: V, k: V, lay: Layout) -> V {
+        let off = b.ins().imul_imm_s(k, lay.size);
+        b.ins().iadd(ptr, off)
+    }
+
+    /// Reads the element at `addr` into register `d` when it is a number or a bool.
+    fn read_elem(&self, b: &mut FunctionBuilder, ip: usize, d: u16, addr: V, lay: Layout, slow: Block) {
+        let t = b.ins().uload8(types::I64, MemFlagsData::trusted(), addr, 0);
+        let (bi, nr, br, nb, bb) = (b.create_block(), b.create_block(), b.create_block(), b.create_block(), b.create_block());
+        let is_i = b.ins().icmp_imm_s(IntCC::Equal, t, lay.t_int as i64);
+        b.ins().brif(is_i, bi, &[], nr, &[]);
+        b.switch_to_block(bi);
+        let v = b.ins().load(types::I64, MemFlagsData::trusted(), addr, 8);
+        self.set_i(b, d, v);
+        self.jump_next(b, ip);
+        b.switch_to_block(nr);
+        let is_r = b.ins().icmp_imm_s(IntCC::Equal, t, lay.t_real as i64);
+        b.ins().brif(is_r, br, &[], nb, &[]);
+        b.switch_to_block(br);
+        let v = b.ins().load(types::F64, MemFlagsData::trusted(), addr, 8);
+        self.set_r(b, d, v);
+        self.jump_next(b, ip);
+        b.switch_to_block(nb);
+        let is_b = b.ins().icmp_imm_s(IntCC::Equal, t, lay.t_bool as i64);
+        b.ins().brif(is_b, bb, &[], slow, &[]);
+        b.switch_to_block(bb);
+        let v = b.ins().load(types::I8, MemFlagsData::trusted(), addr, 1);
+        self.set_b(b, d, v);
+        self.jump_next(b, ip);
+    }
+
+    /// Writes register `s` (a number or a bool) over the element at `addr`, when
+    /// the element owns no memory (a number, a bool, or no value yet).
+    fn write_elem(&self, b: &mut FunctionBuilder, ip: usize, s: u16, addr: V, lay: Layout, slow: Block) {
+        let old = b.ins().uload8(types::I64, MemFlagsData::trusted(), addr, 0);
+        let mut plain = None;
+        for t in [lay.t_null, lay.t_int, lay.t_real, lay.t_bool] {
+            let e = b.ins().icmp_imm_s(IntCC::Equal, old, t as i64);
+            plain = Some(match plain {
+                None => e,
+                Some(a) => b.ins().bor(a, e),
+            });
+        }
+        let ok = b.create_block();
+        b.ins().brif(plain.unwrap(), ok, &[], slow, &[]);
+        b.switch_to_block(ok);
+        let v = self.vars[s as usize];
+        let tag = b.use_var(v.t);
+        let (wi, nr, wr, nb, wb) = (b.create_block(), b.create_block(), b.create_block(), b.create_block(), b.create_block());
+        let is_i = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_INT);
+        b.ins().brif(is_i, wi, &[], nr, &[]);
+        b.switch_to_block(wi);
+        let x = b.use_var(v.i);
+        let t = b.ins().iconst(types::I8, lay.t_int as i64);
+        b.ins().store(MemFlagsData::trusted(), t, addr, 0);
+        b.ins().store(MemFlagsData::trusted(), x, addr, 8);
+        self.jump_next(b, ip);
+        b.switch_to_block(nr);
+        let is_r = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_REAL);
+        b.ins().brif(is_r, wr, &[], nb, &[]);
+        b.switch_to_block(wr);
+        let x = b.use_var(v.r);
+        let t = b.ins().iconst(types::I8, lay.t_real as i64);
+        b.ins().store(MemFlagsData::trusted(), t, addr, 0);
+        b.ins().store(MemFlagsData::trusted(), x, addr, 8);
+        self.jump_next(b, ip);
+        b.switch_to_block(nb);
+        let is_b = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_BOOL);
+        b.ins().brif(is_b, wb, &[], slow, &[]);
+        b.switch_to_block(wb);
+        let x = b.use_var(v.b);
+        let t = b.ins().iconst(types::I8, lay.t_bool as i64);
+        b.ins().store(MemFlagsData::trusted(), t, addr, 0);
+        b.ins().store(MemFlagsData::trusted(), x, addr, 1);
+        self.jump_next(b, ip);
+    }
+
+    /// Index `i` (1-based) in range 1..=n: its 0-based value, or a jump to `slow`.
+    fn in_range(&self, b: &mut FunctionBuilder, i: V, n: V, slow: Block) -> V {
+        let k = b.ins().iadd_imm_s(i, -1);
+        let ok = b.ins().icmp(IntCC::UnsignedLessThan, k, n);
+        let go = b.create_block();
+        b.ins().brif(ok, go, &[], slow, &[]);
+        b.switch_to_block(go);
+        k
+    }
+
     fn op(&self, b: &mut FunctionBuilder, ip: usize, op: Op) -> Result<(), String> {
+        // elements read and written in place, the helpers only for the rest
+        if let (Some(lay), true) = (self.layout, self.epoch.is_some()) {
+            match op {
+                Op::GetElem(d, c, i) => {
+                    let slow = b.create_block();
+                    let (p, n, _) = self.view(b, c, false, slow)?;
+                    let iv = self.i(b, i);
+                    let k = self.in_range(b, iv, n, slow);
+                    let a = self.elem_addr(b, p, k, lay);
+                    self.read_elem(b, ip, d, a, lay, slow);
+                    b.switch_to_block(slow);
+                    return self.slow_op(b, ip, op);
+                }
+                Op::SetElem(c, i, s) => {
+                    let slow = b.create_block();
+                    let (p, n, _) = self.view(b, c, false, slow)?;
+                    let iv = self.i(b, i);
+                    let k = self.in_range(b, iv, n, slow);
+                    let a = self.elem_addr(b, p, k, lay);
+                    self.write_elem(b, ip, s, a, lay, slow);
+                    b.switch_to_block(slow);
+                    return self.slow_op(b, ip, op);
+                }
+                Op::GetElem2(d, c, i, j) | Op::SetElem2(c, i, j, d) => {
+                    let slow = b.create_block();
+                    let (p, rows, cols) = self.view(b, c, true, slow)?;
+                    let (iv, jv) = (self.i(b, i), self.i(b, j));
+                    let ki = self.in_range(b, iv, rows, slow);
+                    let kj = self.in_range(b, jv, cols, slow);
+                    let row = b.ins().imul(ki, cols);
+                    let k = b.ins().iadd(row, kj);
+                    let a = self.elem_addr(b, p, k, lay);
+                    if matches!(op, Op::GetElem2(..)) {
+                        self.read_elem(b, ip, d, a, lay, slow);
+                    } else {
+                        self.write_elem(b, ip, d, a, lay, slow);
+                    }
+                    b.switch_to_block(slow);
+                    return self.slow_op(b, ip, op);
+                }
+                Op::Length(d, s) => {
+                    let slow = b.create_block();
+                    let (_, n, _) = self.view(b, s, false, slow)?;
+                    self.set_i(b, d, n);
+                    self.jump_next(b, ip);
+                    b.switch_to_block(slow);
+                    return self.slow_op(b, ip, op);
+                }
+                _ => {}
+            }
+        }
+        self.slow_op(b, ip, op)
+    }
+
+    fn slow_op(&self, b: &mut FunctionBuilder, ip: usize, op: Op) -> Result<(), String> {
         match op {
             Op::LoadInt(d, n) => {
                 let v = b.ins().iconst(types::I64, n);
