@@ -28,11 +28,11 @@ TESTS = [
 ]
 
 
-def best(cmd, runs=3):
+def best(cmd, runs=3, env=None):
     times, out = [], None
     for _ in range(runs):
         t = time.perf_counter()
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env)
         times.append(time.perf_counter() - t)
         if r.returncode != 0:
             return None, "ERR " + (r.stderr or r.stdout).strip()[:150]
@@ -54,17 +54,19 @@ def cell(t):
 
 rows = []
 for name, cls, label, plain in TESTS:
-    g, og = best([GW, os.path.join(HERE, name + ".gw")])
+    g, og = best([GW, os.path.join(HERE, name + ".gw")], env={**os.environ, "GLOBW_NO_JIT": "1"})
+    # the same program with the JIT on, as `import jit` does
+    gj, ogj = best([GW, os.path.join(HERE, name + ".gw")], env={**os.environ, "GLOBW_JIT": "1"})
     p, op = best([PY, os.path.join(HERE, name + ".py")])
     c, oc = best([os.path.join(HERE, "cpp", name + ".exe")])
     j, oj = best(JAVA + [cls])
     x, ox = best(JAVA[:1] + ["-Xint"] + JAVA[1:] + [cls]) if plain else (None, og)
-    bad = [who for who, o in (("Python", op), ("C++", oc), ("Java", oj), ("Java -Xint", ox)) if not same(og, o)]
-    rows.append((label, g, p, c, j, x, bad))
-    print(f"{label:<38} {cell(g):>8} {cell(p):>8} {cell(c):>8} {cell(j):>8} {cell(x):>8}  {'ok' if not bad else 'DIFF ' + ','.join(bad)}", flush=True)
+    bad = [who for who, o in (("Globw JIT", ogj), ("Python", op), ("C++", oc), ("Java", oj), ("Java -Xint", ox)) if not same(og, o)]
+    rows.append((label, g, gj, p, c, j, x, bad))
+    print(f"{label:<38} {cell(g):>8} {cell(gj):>8} {cell(p):>8} {cell(c):>8} {cell(j):>8} {cell(x):>8}  {'ok' if not bad else 'DIFF ' + ','.join(bad)}", flush=True)
 
 print()
-print("| Test | Globw | Python / NumPy | C++ | Java (JIT) | Java bytecode only |")
-print("|---|---:|---:|---:|---:|---:|")
-for label, g, p, c, j, x, bad in rows:
-    print(f"| {label} | {cell(g)} | {cell(p)} | {cell(c)} | {cell(j)} | {cell(x)} |")
+print("| Test | Globw | Globw JIT | Python / NumPy | C++ | Java (JIT) | Java bytecode only |")
+print("|---|---:|---:|---:|---:|---:|---:|")
+for label, g, gj, p, c, j, x, bad in rows:
+    print(f"| {label} | {cell(g)} | {cell(gj)} | {cell(p)} | {cell(c)} | {cell(j)} | {cell(x)} |")
