@@ -729,6 +729,40 @@ impl<'m> Vm<'m> {
                 }
             }};
         }
+        // A loop jumped back from instruction `$at` to `$t`: count the turn and,
+        // once the loop is compiled, run it as machine code. It hands back its
+        // registers and the instruction to go on with.
+        macro_rules! back_edge {
+            ($t:expr, $at:expr) => {
+                #[cfg(feature = "jit")]
+                if !WATCH && ($t) <= ($at) {
+                    if let Some(jit) = self.jit.as_mut() {
+                        if let Some(k) = jit.back_edge(m, func, $t) {
+                            let lc = jit.loop_code(k);
+                            let (entry, start, end) = (lc.entry, lc.start, lc.end);
+                            let mut slots = vec![crate::jit::Slot::default(); m.functions[func].n_regs as usize];
+                            for &r in &lc.used {
+                                slots[r as usize] = crate::jit::Slot::of(&self.regs[base + r as usize]);
+                            }
+                            let mut cx = crate::jit::Ctx { regs: self.regs.as_mut_ptr().wrapping_add(base), globals: self.globals.as_mut_ptr() };
+                            let budget = crate::jit::budget(self.frames.len(), MAX_CALL_DEPTH);
+                            // SAFETY: the loop reads and writes its slots, and through the
+                            // helpers only this frame's registers and the globals
+                            let resume = unsafe { entry(slots.as_mut_ptr(), budget, &mut cx) } as usize;
+                            for &r in &jit.loop_code(k).written {
+                                if let Some(v) = slots[r as usize].value() {
+                                    self.regs[base + r as usize] = v;
+                                }
+                            }
+                            ip = resume;
+                            if resume >= start && resume < end {
+                                jit.loop_stopped(k, func, $t);
+                            }
+                        }
+                    }
+                }
+            };
+        }
         macro_rules! fail {
             ($msg:expr) => {
                 break Some(($msg).to_string())
@@ -912,25 +946,37 @@ impl<'m> Vm<'m> {
                     let r = compare(c, &boolean(&reg!(a)), &boolean(&reg!(b)));
                     put!(d, Value::Bool(r));
                 }
-                Op::Jump(t) => ip = t as usize,
+                Op::Jump(t) => {
+                    let at = ip - 1;
+                    ip = t as usize;
+                    back_edge!(t as usize, at);
+                }
                 Op::JumpIfFalse(c, t) => {
                     if !boolean(&reg!(c)) {
+                        let at = ip - 1;
                         ip = t as usize;
+                        back_edge!(t as usize, at);
                     }
                 }
                 Op::JumpIfTrue(c, t) => {
                     if boolean(&reg!(c)) {
+                        let at = ip - 1;
                         ip = t as usize;
+                        back_edge!(t as usize, at);
                     }
                 }
                 Op::JumpUnlessI(c, a, b, t) => {
                     if !compare(c, &int(&reg!(a)), &int(&reg!(b))) {
+                        let at = ip - 1;
                         ip = t as usize;
+                        back_edge!(t as usize, at);
                     }
                 }
                 Op::JumpUnlessIImm(c, a, n, t) => {
                     if !compare(c, &int(&reg!(a)), &n) {
+                        let at = ip - 1;
                         ip = t as usize;
+                        back_edge!(t as usize, at);
                     }
                 }
                 Op::CmpIImm(c, d, a, n) => put!(d, Value::Bool(compare(c, &int(&reg!(a)), &n))),
@@ -955,38 +1001,7 @@ impl<'m> Vm<'m> {
                     None => fail!(OVERFLOW),
                 },
                 Op::ForInit { var, end, step, exit } => {
-                    let mut done = false;
-                    // a hot loop made of numeric instructions: run it as machine code
-                    #[cfg(feature = "jit")]
-                    if !WATCH {
-                        if let Some(jit) = self.jit.as_mut() {
-                            let (v0, e0, s0) = (int(&reg!(var)) as i128, int(&reg!(end)) as i128, int(&reg!(step)) as i128);
-                            let trips = if s0 > 0 { (e0 - v0) / s0 } else if s0 < 0 { (v0 - e0) / -s0 } else { 0 };
-                            if trips >= crate::jit::HOT_LOOP as i128 {
-                                if let Some(lc) = jit.loop_at(m, func, ip - 1) {
-                                    let mut slots = vec![crate::jit::Slot::default(); m.functions[func].n_regs as usize];
-                                    for &r in &lc.used {
-                                        slots[r as usize] = crate::jit::Slot::of(&self.regs[base + r as usize]);
-                                    }
-                                    let budget = crate::jit::budget(self.frames.len(), MAX_CALL_DEPTH);
-                                    // SAFETY: the loop reads and writes only the slots of its registers
-                                    let gave_up = unsafe { (lc.entry)(slots.as_mut_ptr(), budget) };
-                                    if gave_up == 0 {
-                                        for &r in &lc.written {
-                                            if let Some(v) = slots[r as usize].value() {
-                                                self.regs[base + r as usize] = v;
-                                            }
-                                        }
-                                        ip = lc.exit;
-                                        done = true;
-                                    } else {
-                                        jit.loop_bailed(func, ip - 1);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !done {
+                    {
                         let s = int(&reg!(step));
                         if s == 0 {
                             fail!("step cannot be 0");
@@ -1004,7 +1019,9 @@ impl<'m> Vm<'m> {
                         let e = int(&reg!(end));
                         put!(var, Value::Int(v));
                         if (s > 0 && v <= e) || (s < 0 && v >= e) {
+                            let at = ip - 1;
                             ip = body as usize;
+                            back_edge!(body as usize, at);
                         }
                     }
                 }

@@ -244,3 +244,104 @@ output(name)
     let (_, out, _) = same("text", src);
     assert!(out.contains("globw 500500 2\nglobw"), "{}", out);
 }
+
+#[test]
+fn while_loops_arrays_and_matrices() {
+    let src = "variables:
+    a as int[300]
+    m as float[20, 20]
+    i, j, k, t, n as int
+    total as float
+n = 300
+for(i from 1 to n)
+    a[i] = (i * 7919) mod 1000
+end loop
+' bubble sort, with while loops
+i = 1
+while(i < n)
+    j = 1
+    while(j <= n - i)
+        if(a[j] > a[j + 1])
+            t = a[j]
+            a[j] = a[j + 1]
+            a[j + 1] = t
+        end if
+        j = j + 1
+    end loop
+    i = i + 1
+end loop
+for(i from 1 to 20)
+    for(j from 1 to 20)
+        m[i, j] = i * 1.5 - j
+    end loop
+end loop
+total = 0.0
+for(k from 1 to 100)
+    for(i from 1 to 20)
+        total = total + m[i, (i + k) mod 20 + 1]
+    end loop
+end loop
+output(a[1], \" \", a[150], \" \", a[300], \" \", length(a), \" \", total)
+";
+    let (code, out, _) = same("arrays", src);
+    assert_eq!(code, 0, "{}", out);
+}
+
+#[test]
+fn lists_text_and_globals_in_compiled_loops() {
+    let src = "global variables:
+    hits as int
+variables:
+    words, copy as list of string
+    nums as list of int
+    i as int
+    w, last as string
+procedure tally()
+    variables:
+        k as int
+    for(k from 1 to 200)
+        hits = hits + 1
+    end loop
+end procedure
+hits = 0
+words = [\"red\", \"green\", \"blue\"]
+copy = []
+nums = []
+last = \"\"
+for(i from 1 to 300)
+    w = words[i mod 3 + 1]
+    last = w
+    append(copy, w)
+    append(nums, i * i)
+end loop
+tally()
+tally()
+output(last, \" \", length(copy), \" \", copy[299], \" \", nums[300], \" \", hits)
+";
+    let (code, out, _) = same("lists", src);
+    assert_eq!(code, 0, "{}", out);
+    assert!(out.starts_with("red 300 blue 90000 400"), "{}", out);
+}
+
+#[test]
+fn index_errors_inside_compiled_loops() {
+    let src = "variables:
+    a as int[100]
+    i, s as int
+    problem as string
+for(i from 1 to 100)
+    a[i] = i
+end loop
+s = 0
+try
+    for(i from 1 to 200)
+        s = s + a[i]
+    end loop
+catch problem
+    output(\"caught: \", problem, \" at i = \", i, \", s = \", s)
+end try
+";
+    let (code, out, _) = same("index", src);
+    assert_eq!(code, 0, "{}", out);
+    assert!(out.contains("caught: index 101"), "{}", out);
+}

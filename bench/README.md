@@ -52,14 +52,18 @@ with NumPy 2.5.4, C++ built with MSVC `/O2` (plain loops, one core), Java 21:
 
 | Test | Globw | Python / NumPy | C++ | Java (JIT) | Java bytecode only |
 |---|---:|---:|---:|---:|---:|
-| Recursive fib(35) | 0.53 s | 0.75 s | 0.071 s | 0.19 s | 0.49 s |
-| Sum loop, 200 million steps | 1.05 s | 3.85 s | 0.17 s | 0.29 s | 1.23 s |
-| Mandelbrot, 900 x 600 | 0.94 s | 1.93 s | 0.091 s | 0.23 s | 0.68 s |
-| Sieve up to 10 million | 0.77 s | 0.81 s | 0.066 s | 0.22 s | 0.43 s |
-| sqrt(a*a + b*b), 20 M values x 10 | 0.39 s | 1.11 s | 0.33 s | 0.64 s | n/a |
-| exp, log and sin, 20 M values x 10 | 0.58 s | 2.71 s | 1.84 s | 4.92 s | n/a |
-| Sum, norm and mean, 50 M values x 20 | 0.53 s | 1.37 s | 0.90 s | 1.06 s | n/a |
-| Matrix multiply, 1200 x 1200 x 10 | 0.23 s | 0.23 s | 3.89 s | 5.57 s | n/a |
+| Recursive fib(35) | 0.14 s | 0.75 s | 0.072 s | 0.20 s | 0.49 s |
+| Sum loop, 200 million steps | 0.28 s | 3.79 s | 0.14 s | 0.28 s | 1.20 s |
+| Mandelbrot, 900 x 600 | 0.16 s | 1.92 s | 0.087 s | 0.22 s | 0.70 s |
+| Sieve up to 10 million | 0.48 s | 0.77 s | 0.066 s | 0.18 s | 0.42 s |
+| sqrt(a*a + b*b), 20 M values x 10 | 0.34 s | 1.09 s | 0.33 s | 0.59 s | n/a |
+| exp, log and sin, 20 M values x 10 | 0.55 s | 2.66 s | 1.85 s | 4.87 s | n/a |
+| Sum, norm and mean, 50 M values x 20 | 0.52 s | 1.31 s | 0.88 s | 1.00 s | n/a |
+| Matrix multiply, 1200 x 1200 x 10 | 0.22 s | 0.19 s | 3.89 s | 5.54 s | n/a |
+
+Globw here runs with its JIT (on by default since 0.1.7); `GLOBW_NO_JIT=1` runs the
+interpreter alone, as in 0.1.6 (fib 0.53 s, sum loop 1.05 s, Mandelbrot 0.94 s, sieve
+0.77 s).
 
 The first four are plain code, the last four arrays (`nungw`, NumPy). Java's bytecode
 interpreter alone (`-Xint`) is run on plain code only: on the arrays it would take tens

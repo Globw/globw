@@ -1,29 +1,31 @@
-//! The JIT: hot numeric code becomes machine code, through Cranelift.
+//! The JIT: hot code becomes machine code, through Cranelift.
 //!
 //! Two kinds of unit are compiled:
-//! - **functions** whose instructions are all numeric (ints, reals, bools, jumps,
+//! - **functions** made only of numeric instructions (ints, reals, bools, jumps,
 //!   calls to other such functions): they become native functions that call each
-//!   other directly, with every value in a machine register;
-//! - **loops** (`for` loops, from `ForInit` to their exit) made only of numeric
-//!   instructions and calls to compiled functions, wherever they are (also in the
-//!   main program, which as a whole prints and so cannot be compiled).
-//!
-//! Both are *pure*: they change nothing but registers. So when compiled code meets
-//! anything it does not handle — an integer overflow, a division by zero, too many
-//! nested calls — it gives up ("bails") without writing anything back, and the
-//! interpreter runs that call or loop again from its start, producing the very same
-//! error at the very same line (and `try` catches it as usual).
+//!   other directly, every value in a machine register. They change nothing but
+//!   their own registers, so when one meets something it does not handle (an
+//!   overflow, a division by zero, too many nested calls) it gives up and the
+//!   interpreter runs that call again, with the very same result or error;
+//! - **loops**: any loop (`for`, `while`, `repeat`) that turns often, wherever it
+//!   is, also in the main program. Besides numbers a loop handles array, list and
+//!   matrix elements, `length`, `append` and global variables, through small Rust
+//!   helpers. A compiled loop always ends the same way: it writes its registers
+//!   back and returns the instruction the interpreter goes on with — the loop's
+//!   exit, or, when it meets something it does not handle, that very instruction
+//!   (which the interpreter then runs, with its own errors and messages).
 //!
 //! Every register `r` is held in four Cranelift variables: its value as an int, as
-//! a real, as a bool, and a tag saying which of the three it holds now. Typed
-//! instructions read and write the typed variable directly (the bytecode is typed,
-//! so a read as int always follows a write as int); `Move`, calls and the way back
-//! to the interpreter go through the tag.
+//! a real, as a bool, and a tag saying which of the three it holds now (or none:
+//! the value is a list, a string... and stays in the interpreter's register). The
+//! bytecode is typed, so a read as int always follows a write as int: typed
+//! instructions use the typed variable directly; `Move`, calls and the way back to
+//! the interpreter go through the tag.
 
 use std::collections::HashMap;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{types, AbiParam, Block, InstBuilder, MemFlagsData, Signature, UserFuncName};
+use cranelift_codegen::ir::{types, AbiParam, Block, InstBuilder, MemFlagsData, Signature, StackSlotData, StackSlotKind, UserFuncName};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::Context;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -37,19 +39,25 @@ pub const TAG_NONE: i64 = 0;
 pub const TAG_INT: i64 = 1;
 pub const TAG_REAL: i64 = 2;
 pub const TAG_BOOL: i64 = 3;
-/// returned as the tag of a result when compiled code gives up
+/// returned as the tag of a function's result when its compiled code gives up
 pub const TAG_BAIL: i64 = 255;
 
 /// How many compiled calls may nest before the interpreter takes over (the
 /// machine stack is small; the interpreter keeps its frames on the heap).
 const NATIVE_DEPTH: i64 = 2000;
-/// A `for` loop is compiled when it is about to run at least this many times.
-pub const HOT_LOOP: i64 = 64;
+/// A loop is compiled after this many turns in the interpreter.
+const HOT_EDGES: u32 = 50;
 /// A function is compiled from its second call.
 const HOT_CALLS: u32 = 2;
-/// After this many give-ups a function or loop is left to the interpreter (a deep
+/// After this many give-ups a function is left to the interpreter (a deep
 /// recursion or an error inside a `try` would otherwise make it start over and over).
 const MAX_BAILS: u32 = 8;
+/// After this many early exits (an instruction the loop does not handle, met
+/// again and again) a loop is left to the interpreter.
+const MAX_DEOPTS: u32 = 32;
+
+const FAILED: u32 = u32::MAX;
+const COMPILED: u32 = 1 << 31;
 
 /// One register on its way in or out of compiled code.
 #[repr(C)]
@@ -79,18 +87,161 @@ impl Slot {
     }
 }
 
+/// What a compiled loop reaches of the interpreter: the current frame's registers
+/// (for values that are not numbers) and the global variables.
+#[repr(C)]
+pub struct Ctx {
+    pub regs: *mut Value,
+    pub globals: *mut Value,
+}
+
 /// `fn(args: *const Slot, budget: i64, out: *mut Slot)`
 type Trampoline = unsafe extern "C" fn(*const Slot, i64, *mut Slot);
-/// `fn(regs: *mut Slot, budget: i64) -> i64` (0: done, 1: gave up)
-type LoopFn = unsafe extern "C" fn(*mut Slot, i64) -> i64;
+/// `fn(regs: *mut Slot, budget: i64, ctx: *mut Ctx) -> i64`: the instruction to go on with
+type LoopFn = unsafe extern "C" fn(*mut Slot, i64, *mut Ctx) -> i64;
 
-/// A compiled loop: its entry point and the registers it reads and writes.
+/// A compiled loop: its entry point, the registers it reads and writes, and the
+/// instructions it covers.
 pub struct LoopCode {
     pub entry: LoopFn,
     pub used: Vec<u16>,
     pub written: Vec<u16>,
-    /// where the interpreter continues when the loop is over
-    pub exit: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
+// ------------------------------------------------------------------ helpers
+// Called from compiled loops; `ctx.regs` is the current frame's first register.
+// Each returns 0, or 1 when the interpreter must run the instruction itself.
+
+/// The value to store: from the bits when it is a number, else the register itself.
+unsafe fn stored(ctx: *mut Ctx, bits: i64, tag: i64, src: i64) -> Value {
+    match (Slot { bits, tag }).value() {
+        Some(v) => v,
+        None => (*(*ctx).regs.add(src as usize)).clone(),
+    }
+}
+
+/// Puts an element's value in `out` (a number) or straight into register `d`.
+unsafe fn give(ctx: *mut Ctx, d: i64, v: &Value, out: *mut Slot) -> i64 {
+    if let Value::Null = v {
+        return 1; // "this element has no value yet": the interpreter says it
+    }
+    let s = Slot::of(v);
+    if s.tag == TAG_NONE {
+        *(*ctx).regs.add(d as usize) = v.clone();
+    }
+    *out = s;
+    0
+}
+
+unsafe extern "C" fn gw_get_elem(ctx: *mut Ctx, d: i64, c: i64, i: i64, out: *mut Slot) -> i64 {
+    let Value::Seq(q) = &*(*ctx).regs.add(c as usize) else { return 1 };
+    let v = {
+        let q = q.borrow();
+        if i < 1 || i as u64 > q.len() as u64 {
+            return 1;
+        }
+        q[i as usize - 1].clone()
+    };
+    give(ctx, d, &v, out)
+}
+
+unsafe extern "C" fn gw_set_elem(ctx: *mut Ctx, c: i64, i: i64, bits: i64, tag: i64, s: i64) -> i64 {
+    let v = stored(ctx, bits, tag, s);
+    let Value::Seq(q) = &*(*ctx).regs.add(c as usize) else { return 1 };
+    let mut q = q.borrow_mut();
+    if i < 1 || i as u64 > q.len() as u64 {
+        return 1;
+    }
+    q[i as usize - 1] = v;
+    0
+}
+
+unsafe extern "C" fn gw_get_elem2(ctx: *mut Ctx, d: i64, c: i64, i: i64, j: i64, out: *mut Slot) -> i64 {
+    let Value::Matrix(mx) = &*(*ctx).regs.add(c as usize) else { return 1 };
+    let v = {
+        let mx = mx.borrow();
+        if i < 1 || i as u64 > mx.rows as u64 || j < 1 || j as u64 > mx.cols as u64 {
+            return 1;
+        }
+        mx.data[(i as usize - 1) * mx.cols + (j as usize - 1)].clone()
+    };
+    give(ctx, d, &v, out)
+}
+
+unsafe extern "C" fn gw_set_elem2(ctx: *mut Ctx, c: i64, i: i64, j: i64, bits: i64, tag: i64, s: i64) -> i64 {
+    let v = stored(ctx, bits, tag, s);
+    let Value::Matrix(mx) = &*(*ctx).regs.add(c as usize) else { return 1 };
+    let mut mx = mx.borrow_mut();
+    if i < 1 || i as u64 > mx.rows as u64 || j < 1 || j as u64 > mx.cols as u64 {
+        return 1;
+    }
+    let cols = mx.cols;
+    mx.data[(i as usize - 1) * cols + (j as usize - 1)] = v;
+    0
+}
+
+/// The length, or -1 when the interpreter must work it out.
+unsafe extern "C" fn gw_length(ctx: *mut Ctx, s: i64) -> i64 {
+    match &*(*ctx).regs.add(s as usize) {
+        Value::Seq(q) => q.borrow().len() as i64,
+        Value::Dict(t) | Value::Set(t) => t.borrow().len() as i64,
+        Value::Str(t) => t.chars().count() as i64,
+        _ => -1,
+    }
+}
+
+unsafe extern "C" fn gw_append(ctx: *mut Ctx, l: i64, bits: i64, tag: i64, s: i64) -> i64 {
+    let v = stored(ctx, bits, tag, s);
+    let Value::Seq(q) = &*(*ctx).regs.add(l as usize) else { return 1 };
+    q.borrow_mut().push(v);
+    0
+}
+
+unsafe extern "C" fn gw_get_global(ctx: *mut Ctx, g: i64, d: i64, out: *mut Slot) -> i64 {
+    let v = (*(*ctx).globals.add(g as usize)).clone();
+    give(ctx, d, &v, out)
+}
+
+unsafe extern "C" fn gw_set_global(ctx: *mut Ctx, g: i64, bits: i64, tag: i64, s: i64) -> i64 {
+    let v = stored(ctx, bits, tag, s);
+    *(*ctx).globals.add(g as usize) = v;
+    0
+}
+
+/// `d = s` for a value that is not a number (it stays in the registers).
+unsafe extern "C" fn gw_move(ctx: *mut Ctx, d: i64, s: i64) -> i64 {
+    let v = (*(*ctx).regs.add(s as usize)).clone();
+    *(*ctx).regs.add(d as usize) = v;
+    0
+}
+
+const HELPERS: [(&str, usize, bool); 9] = [
+    // name, number of i64 arguments after ctx, ends with an `out` pointer
+    ("gw_get_elem", 3, true),
+    ("gw_set_elem", 5, false),
+    ("gw_get_elem2", 4, true),
+    ("gw_set_elem2", 6, false),
+    ("gw_length", 1, false),
+    ("gw_append", 4, false),
+    ("gw_get_global", 2, true),
+    ("gw_set_global", 4, false),
+    ("gw_move", 2, false),
+];
+
+fn helper_ptr(name: &str) -> *const u8 {
+    match name {
+        "gw_get_elem" => gw_get_elem as *const u8,
+        "gw_set_elem" => gw_set_elem as *const u8,
+        "gw_get_elem2" => gw_get_elem2 as *const u8,
+        "gw_set_elem2" => gw_set_elem2 as *const u8,
+        "gw_length" => gw_length as *const u8,
+        "gw_append" => gw_append as *const u8,
+        "gw_get_global" => gw_get_global as *const u8,
+        "gw_set_global" => gw_set_global as *const u8,
+        _ => gw_move as *const u8,
+    }
 }
 
 pub struct Jit {
@@ -99,6 +250,7 @@ pub struct Jit {
     module: JITModule,
     ctx: Context,
     fctx: FunctionBuilderContext,
+    helpers: HashMap<&'static str, FuncId>,
     /// functions that can be compiled (all their instructions are handled)
     eligible: Vec<bool>,
     /// once the eligible functions are compiled: typed entry and trampoline
@@ -106,12 +258,15 @@ pub struct Jit {
     compiled_funcs: bool,
     calls: Vec<u32>,
     func_bails: Vec<u32>,
-    loops: HashMap<(usize, usize), Option<LoopCode>>,
-    loop_bails: HashMap<(usize, usize), u32>,
+    /// per function, per instruction that a loop jumps back to: turns counted,
+    /// FAILED, or COMPILED + index into `loops`
+    edges: Vec<Vec<u32>>,
+    loops: Vec<LoopCode>,
+    deopts: Vec<u32>,
     next_name: u32,
 }
 
-/// Is this instruction handled by compiled code? (`Call` is checked separately.)
+/// Instructions a compiled function handles (`Call` is checked separately).
 fn plain_numeric(op: &Op) -> bool {
     matches!(
         op,
@@ -151,6 +306,14 @@ fn plain_numeric(op: &Op) -> bool {
     )
 }
 
+/// Instructions a compiled loop handles besides the numeric ones and calls.
+fn loop_extra(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::GetElem(..) | Op::SetElem(..) | Op::GetElem2(..) | Op::SetElem2(..) | Op::Length(..) | Op::Append(..) | Op::GetGlobal(..) | Op::SetGlobal(..)
+    )
+}
+
 fn jump_target(op: &Op) -> Option<usize> {
     Some(match *op {
         Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) => t as usize,
@@ -161,11 +324,11 @@ fn jump_target(op: &Op) -> Option<usize> {
     })
 }
 
-/// The registers an instruction reads and the one it writes.
+/// The registers an instruction touches.
 fn regs_of(op: &Op, out: &mut Vec<u16>) {
     match *op {
         Op::LoadInt(d, _) | Op::LoadReal(d, _) | Op::LoadBool(d, _) => out.push(d),
-        Op::Move(d, s) | Op::NegI(d, s) | Op::NegR(d, s) | Op::Not(d, s) | Op::ToReal(d, s) => out.extend([d, s]),
+        Op::Move(d, s) | Op::NegI(d, s) | Op::NegR(d, s) | Op::Not(d, s) | Op::ToReal(d, s) | Op::Length(d, s) => out.extend([d, s]),
         Op::AddI(d, a, b) | Op::SubI(d, a, b) | Op::MulI(d, a, b) | Op::DivI(d, a, b) | Op::ModI(d, a, b) => out.extend([d, a, b]),
         Op::AddR(d, a, b) | Op::SubR(d, a, b) | Op::MulR(d, a, b) | Op::DivR(d, a, b) => out.extend([d, a, b]),
         Op::CmpI(_, d, a, b) | Op::CmpR(_, d, a, b) | Op::CmpB(_, d, a, b) => out.extend([d, a, b]),
@@ -180,6 +343,10 @@ fn regs_of(op: &Op, out: &mut Vec<u16>) {
             out.push(dst);
         }
         Op::Ret(s) => out.push(s),
+        Op::GetElem(d, c, i) | Op::SetElem(c, i, d) => out.extend([d, c, i]),
+        Op::GetElem2(d, c, i, j) | Op::SetElem2(c, i, j, d) => out.extend([d, c, i, j]),
+        Op::Append(l, s) => out.extend([l, s]),
+        Op::GetGlobal(d, _) | Op::SetGlobal(_, d) => out.push(d),
         _ => {}
     }
 }
@@ -189,16 +356,17 @@ fn written_reg(op: &Op) -> Option<u16> {
         Op::LoadInt(d, _) | Op::LoadReal(d, _) | Op::LoadBool(d, _) | Op::Move(d, _) => d,
         Op::AddI(d, ..) | Op::SubI(d, ..) | Op::MulI(d, ..) | Op::DivI(d, ..) | Op::ModI(d, ..) => d,
         Op::AddR(d, ..) | Op::SubR(d, ..) | Op::MulR(d, ..) | Op::DivR(d, ..) => d,
-        Op::NegI(d, _) | Op::NegR(d, _) | Op::Not(d, _) | Op::ToReal(d, _) => d,
+        Op::NegI(d, _) | Op::NegR(d, _) | Op::Not(d, _) | Op::ToReal(d, _) | Op::Length(d, _) => d,
         Op::CmpI(_, d, ..) | Op::CmpR(_, d, ..) | Op::CmpB(_, d, ..) | Op::CmpIImm(_, d, ..) => d,
         Op::AddIImm(d, ..) | Op::SubIImm(d, ..) | Op::MulIImm(d, ..) | Op::DivIImm(d, ..) | Op::ModIImm(d, ..) => d,
         Op::ForStep { var, .. } => var,
         Op::Call { dst, .. } => dst,
+        Op::GetElem(d, ..) | Op::GetElem2(d, ..) | Op::GetGlobal(d, _) => d,
         _ => return None,
     })
 }
 
-/// The registers of one compiled unit, as Cranelift variables.
+/// A register as Cranelift variables.
 #[derive(Clone, Copy)]
 struct RegVars {
     i: Variable,
@@ -206,6 +374,8 @@ struct RegVars {
     b: Variable,
     t: Variable,
 }
+
+type V = cranelift_codegen::ir::Value;
 
 impl Jit {
     /// `None` when this machine has no Cranelift backend.
@@ -215,7 +385,25 @@ impl Jit {
         flags.set("use_colocated_libcalls", "false").ok()?;
         flags.set("is_pic", "false").ok()?;
         let isa = cranelift_native::builder().ok()?.finish(settings::Flags::new(flags)).ok()?;
-        let jm = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
+        let mut jb = JITBuilder::with_isa(isa, default_libcall_names());
+        for (name, _, _) in HELPERS {
+            jb.symbol(name, helper_ptr(name));
+        }
+        let mut jm = JITModule::new(jb);
+        let ptr = jm.isa().pointer_type();
+        let mut helpers = HashMap::new();
+        for (name, n, out) in HELPERS {
+            let mut sig = jm.make_signature();
+            sig.params.push(AbiParam::new(ptr));
+            for _ in 0..n {
+                sig.params.push(AbiParam::new(types::I64));
+            }
+            if out {
+                sig.params.push(AbiParam::new(ptr));
+            }
+            sig.returns.push(AbiParam::new(types::I64));
+            helpers.insert(name, jm.declare_function(name, Linkage::Import, &sig).ok()?);
+        }
         // eligible functions: every instruction handled, every call to an eligible
         // function; repeated until nothing changes (a call can make its caller fall out)
         let n = module.functions.len();
@@ -248,13 +436,15 @@ impl Jit {
             ctx: jm.make_context(),
             module: jm,
             fctx: FunctionBuilderContext::new(),
+            helpers,
             eligible,
             funcs: (0..n).map(|_| None).collect(),
             compiled_funcs: false,
             calls: vec![0; n],
             func_bails: vec![0; n],
-            loops: HashMap::new(),
-            loop_bails: HashMap::new(),
+            edges: vec![Vec::new(); n],
+            loops: Vec::new(),
+            deopts: Vec::new(),
             next_name: 0,
         })
     }
@@ -296,7 +486,10 @@ impl Jit {
         let mut tramps: Vec<Option<FuncId>> = vec![None; m.functions.len()];
         for (i, f) in m.functions.iter().enumerate() {
             let Some(id) = ids[i] else { continue };
-            if self.build_function(m, f, id, &ids).is_err() {
+            if let Err(e) = self.build_function(f, id, &ids) {
+                if self.log {
+                    eprintln!("[jit] functions not compiled: {}", e);
+                }
                 return false;
             }
             tramps[i] = self.build_trampoline(f, id).ok();
@@ -340,39 +533,65 @@ impl Jit {
         }
     }
 
-    /// Compiled code for the loop at (`f`, `ip`) gave up (the interpreter runs it instead).
-    pub fn loop_bailed(&mut self, f: usize, ip: usize) {
-        *self.loop_bails.entry((f, ip)).or_insert(0) += 1;
+    /// The interpreter jumped back to `header` in function `f`: one more turn of a
+    /// loop. Returns the index of its compiled code once it is hot and compiled.
+    pub fn back_edge(&mut self, m: &Module, f: usize, header: usize) -> Option<usize> {
+        if self.edges[f].is_empty() {
+            self.edges[f] = vec![0; m.functions[f].code.len()];
+        }
+        let s = self.edges[f][header];
+        if s == FAILED {
+            return None;
+        }
+        if s >= COMPILED {
+            return Some((s - COMPILED) as usize);
+        }
+        if s + 1 < HOT_EDGES {
+            self.edges[f][header] = s + 1;
+            return None;
+        }
+        let code = self.compile_loop(m, f, header);
         if self.log {
-            eprintln!("[jit] loop at {}:{} gave up", f, ip);
+            eprintln!("[jit] loop at {}:{} {}", f, header, if code.is_some() { "compiled" } else { "not compilable" });
         }
-    }
-
-    /// The compiled code of the loop starting at `ForInit` instruction `ip` of
-    /// function `f`, compiled on first use; `None` if it cannot be compiled.
-    pub fn loop_at(&mut self, m: &Module, f: usize, ip: usize) -> Option<&LoopCode> {
-        if self.loop_bails.get(&(f, ip)).copied().unwrap_or(0) >= MAX_BAILS {
-            return None;
-        }
-        if !self.loops.contains_key(&(f, ip)) {
-            let code = self.compile_loop(m, f, ip);
-            if self.log {
-                eprintln!("[jit] loop at {}:{} {}", f, ip, if code.is_some() { "compiled" } else { "not compilable" });
+        match code {
+            Some(c) => {
+                self.loops.push(c);
+                self.deopts.push(0);
+                let k = self.loops.len() - 1;
+                self.edges[f][header] = COMPILED + k as u32;
+                Some(k)
             }
-            self.loops.insert((f, ip), code);
+            None => {
+                self.edges[f][header] = FAILED;
+                None
+            }
         }
-        self.loops.get(&(f, ip)).and_then(|c| c.as_ref())
     }
 
-    fn compile_loop(&mut self, m: &Module, f: usize, start: usize) -> Option<LoopCode> {
-        let func = &m.functions[f];
-        let Op::ForInit { exit, .. } = func.code[start] else { return None };
-        let exit = exit as usize;
-        if exit <= start || exit > func.code.len() {
-            return None;
+    pub fn loop_code(&self, k: usize) -> &LoopCode {
+        &self.loops[k]
+    }
+
+    /// Compiled loop `k` stopped inside itself (at an instruction it does not
+    /// handle): after too many such stops it is left to the interpreter.
+    pub fn loop_stopped(&mut self, k: usize, f: usize, header: usize) {
+        self.deopts[k] += 1;
+        if self.deopts[k] >= MAX_DEOPTS {
+            self.edges[f][header] = FAILED;
+            if self.log {
+                eprintln!("[jit] loop at {}:{} left to the interpreter", f, header);
+            }
         }
+    }
+
+    fn compile_loop(&mut self, m: &Module, f: usize, header: usize) -> Option<LoopCode> {
+        let func = &m.functions[f];
+        // the loop runs from its header to the last instruction that jumps back to it
+        let last = (header..func.code.len()).filter(|&j| jump_target(&func.code[j]) == Some(header)).max()?;
+        let (start, end) = (header, last + 1);
         let mut needs_funcs = false;
-        for op in &func.code[start..exit] {
+        for op in &func.code[start..end] {
             match op {
                 Op::Call { func: c, .. } => {
                     if !self.eligible.get(*c as usize).copied().unwrap_or(false) {
@@ -380,13 +599,8 @@ impl Jit {
                     }
                     needs_funcs = true;
                 }
-                op if plain_numeric(op) => {}
+                op if plain_numeric(op) || loop_extra(op) => {}
                 _ => return None,
-            }
-            if let Some(t) = jump_target(op) {
-                if t < start || t > exit {
-                    return None;
-                }
             }
         }
         if needs_funcs && !self.compile_functions(m) {
@@ -394,7 +608,7 @@ impl Jit {
         }
         let mut used = Vec::new();
         let mut written = Vec::new();
-        for op in &func.code[start..exit] {
+        for op in &func.code[start..end] {
             regs_of(op, &mut used);
             if let Some(w) = written_reg(op) {
                 written.push(w);
@@ -405,18 +619,25 @@ impl Jit {
         written.sort_unstable();
         written.dedup();
         let ids: Vec<Option<FuncId>> = self.funcs.iter().map(|x| x.map(|(id, _)| id)).collect();
-        let id = self.build_loop(func, start, exit, &used, &written, &ids).ok()?;
+        let id = match self.build_loop(func, start, end, &used, &written, &ids) {
+            Ok(id) => id,
+            Err(e) => {
+                if self.log {
+                    eprintln!("[jit] loop at {}:{}: {}", f, header, e);
+                }
+                return None;
+            }
+        };
         self.module.finalize_definitions().ok()?;
         let p = self.module.get_finalized_function(id);
         // SAFETY: built with the LoopFn signature
         let entry = unsafe { std::mem::transmute::<*const u8, LoopFn>(p) };
-        Some(LoopCode { entry, used, written, exit })
+        Some(LoopCode { entry, used, written, start, end })
     }
 
     // ------------------------------------------------------------------ codegen
 
-    fn build_function(&mut self, m: &Module, f: &Function, id: FuncId, ids: &[Option<FuncId>]) -> Result<(), String> {
-        let _ = m;
+    fn build_function(&mut self, f: &Function, id: FuncId, ids: &[Option<FuncId>]) -> Result<(), String> {
         self.module.clear_context(&mut self.ctx);
         self.ctx.func.signature = self.typed_signature(f.n_params as usize);
         self.ctx.func.name = UserFuncName::user(0, id.as_u32());
@@ -450,9 +671,7 @@ impl Jit {
             let zb = b.ins().iconst(types::I8, 0);
             for (r, v) in vars.iter().enumerate() {
                 if r < f.n_params as usize {
-                    let bits = params[2 * r];
-                    let tag = params[2 * r + 1];
-                    set_from_bits(&mut b, *v, bits, tag);
+                    set_from_bits(&mut b, *v, params[2 * r], params[2 * r + 1]);
                 } else {
                     b.def_var(v.i, zero);
                     b.def_var(v.r, zf);
@@ -462,7 +681,20 @@ impl Jit {
             }
             let blocks: Vec<Block> = (0..code.len()).map(|_| b.create_block()).collect();
             b.ins().jump(blocks[0], &[]);
-            let g = Gen { vars: &vars, blocks: &blocks, lo: 0, exit_block: None, bail, budget, callee_refs: &callee_refs, function: true };
+            let g = Gen {
+                vars: &vars,
+                blocks: &blocks,
+                lo: 0,
+                hi: code.len(),
+                leave: None,
+                exits: std::cell::RefCell::new(HashMap::new()),
+                bail,
+                budget,
+                callee_refs: &callee_refs,
+                helper_refs: &HashMap::new(),
+                ctxv: None,
+                out: None,
+            };
             for (ip, op) in code.iter().enumerate() {
                 b.switch_to_block(blocks[ip]);
                 g.op(&mut b, ip, *op)?;
@@ -517,11 +749,12 @@ impl Jit {
         Ok(id)
     }
 
-    fn build_loop(&mut self, f: &Function, start: usize, exit: usize, used: &[u16], written: &[u16], ids: &[Option<FuncId>]) -> Result<FuncId, String> {
+    fn build_loop(&mut self, f: &Function, start: usize, end: usize, used: &[u16], written: &[u16], ids: &[Option<FuncId>]) -> Result<FuncId, String> {
         let ptr = self.module.isa().pointer_type();
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(ptr));
         sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(ptr));
         sig.returns.push(AbiParam::new(types::I64));
         let name = self.fresh_name("loop");
         let id = self.module.declare_function(&name, Linkage::Local, &sig).map_err(|e| format!("{:?}", e))?;
@@ -530,23 +763,28 @@ impl Jit {
         self.ctx.func.name = UserFuncName::user(0, id.as_u32());
         let code = &f.code[..];
         let mut callee_refs = HashMap::new();
+        let mut helper_refs = HashMap::new();
         let fc = self.module.isa().frontend_config();
         {
             let mut b = FunctionBuilder::new(&mut self.ctx.func, &mut self.fctx);
             for (i, fid) in ids.iter().enumerate() {
                 if let Some(fid) = fid {
-                    if code[start..exit].iter().any(|op| matches!(op, Op::Call { func, .. } if *func as usize == i)) {
+                    if code[start..end].iter().any(|op| matches!(op, Op::Call { func, .. } if *func as usize == i)) {
                         callee_refs.insert(i, self.module.declare_func_in_func(*fid, b.func));
                     }
                 }
             }
+            for (name, id) in &self.helpers {
+                helper_refs.insert(*name, self.module.declare_func_in_func(*id, b.func));
+            }
+            let out_slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
             let n_regs = f.n_regs as usize;
             let vars: Vec<RegVars> = (0..n_regs).map(|_| declare_reg(&mut b)).collect();
             let entry = b.create_block();
             b.append_block_params_for_function_params(entry);
             b.switch_to_block(entry);
             let p = b.block_params(entry).to_vec();
-            let (slots, budget) = (p[0], p[1]);
+            let (slots, budget, ctxv) = (p[0], p[1], p[2]);
             let zero = b.ins().iconst(types::I64, 0);
             let zf = b.ins().f64const(0.0);
             let zb = b.ins().iconst(types::I8, 0);
@@ -562,17 +800,40 @@ impl Jit {
                     b.def_var(v.t, zero);
                 }
             }
-            let blocks: Vec<Block> = (start..exit).map(|_| b.create_block()).collect();
-            let exit_block = b.create_block();
-            let bail = b.create_block();
+            let out = b.ins().stack_addr(ptr, out_slot, 0);
+            let blocks: Vec<Block> = (start..end).map(|_| b.create_block()).collect();
+            // the one way out: write the registers back, return where to go on
+            let leave = b.create_block();
+            b.append_block_param(leave, types::I64);
+            let bail = b.create_block(); // unused in loops (calls that give up leave at the call)
             b.ins().jump(blocks[0], &[]);
-            let g = Gen { vars: &vars, blocks: &blocks, lo: start, exit_block: Some((exit, exit_block)), bail, budget, callee_refs: &callee_refs, function: false };
-            for ip in start..exit {
+            let g = Gen {
+                vars: &vars,
+                blocks: &blocks,
+                lo: start,
+                hi: end,
+                leave: Some(leave),
+                exits: std::cell::RefCell::new(HashMap::new()),
+                bail,
+                budget,
+                callee_refs: &callee_refs,
+                helper_refs: &helper_refs,
+                ctxv: Some(ctxv),
+                out: Some(out),
+            };
+            for ip in start..end {
                 b.switch_to_block(blocks[ip - start]);
                 g.op(&mut b, ip, code[ip])?;
             }
-            // the loop is over: hand the written registers back
-            b.switch_to_block(exit_block);
+            // exit blocks: each passes its instruction to `leave`
+            let exits: Vec<(usize, Block)> = g.exits.borrow().iter().map(|(k, v)| (*k, *v)).collect();
+            for (ip, blk) in exits {
+                b.switch_to_block(blk);
+                let c = b.ins().iconst(types::I64, ip as i64);
+                b.ins().jump(leave, &[c.into()]);
+            }
+            b.switch_to_block(leave);
+            let resume = b.block_params(leave)[0];
             for &r in written {
                 let v = vars[r as usize];
                 let bits = bits_of(&mut b, v);
@@ -580,11 +841,10 @@ impl Jit {
                 b.ins().store(MemFlagsData::trusted(), bits, slots, (r as usize * 16) as i32);
                 b.ins().store(MemFlagsData::trusted(), tag, slots, (r as usize * 16 + 8) as i32);
             }
-            let done = b.ins().iconst(types::I64, 0);
-            b.ins().return_(&[done]);
+            b.ins().return_(&[resume]);
             b.switch_to_block(bail);
-            let gave_up = b.ins().iconst(types::I64, 1);
-            b.ins().return_(&[gave_up]);
+            let c = b.ins().iconst(types::I64, start as i64);
+            b.ins().return_(&[c]);
             b.seal_all_blocks();
             b.finalize(fc);
         }
@@ -598,7 +858,7 @@ fn declare_reg(b: &mut FunctionBuilder) -> RegVars {
 }
 
 /// Sets all of a register's variables from raw bits and a tag.
-fn set_from_bits(b: &mut FunctionBuilder, v: RegVars, bits: cranelift_codegen::ir::Value, tag: cranelift_codegen::ir::Value) {
+fn set_from_bits(b: &mut FunctionBuilder, v: RegVars, bits: V, tag: V) {
     b.def_var(v.i, bits);
     let r = b.ins().bitcast(types::F64, MemFlagsData::new(), bits);
     b.def_var(v.r, r);
@@ -608,7 +868,7 @@ fn set_from_bits(b: &mut FunctionBuilder, v: RegVars, bits: cranelift_codegen::i
 }
 
 /// The register's current value as raw bits, chosen by its tag.
-fn bits_of(b: &mut FunctionBuilder, v: RegVars) -> cranelift_codegen::ir::Value {
+fn bits_of(b: &mut FunctionBuilder, v: RegVars) -> V {
     let tag = b.use_var(v.t);
     let i = b.use_var(v.i);
     let r = b.use_var(v.r);
@@ -656,34 +916,50 @@ fn float_cc(c: Cmp) -> FloatCC {
     }
 }
 
-/// Translates instructions of one unit.
+/// Translates the instructions of one unit (a function or a loop).
 struct Gen<'a> {
     vars: &'a [RegVars],
     blocks: &'a [Block],
-    /// the index of the unit's first instruction
+    /// the unit covers instructions lo..hi
     lo: usize,
-    /// a loop: its exit instruction and the block that hands the registers back
-    exit_block: Option<(usize, Block)>,
+    hi: usize,
+    /// a loop: the block that writes the registers back and returns
+    leave: Option<Block>,
+    /// a loop: one block per instruction it leaves to, made on demand
+    exits: std::cell::RefCell<HashMap<usize, Block>>,
+    /// a function: the block that gives up
     bail: Block,
-    budget: cranelift_codegen::ir::Value,
+    budget: V,
     callee_refs: &'a HashMap<usize, cranelift_codegen::ir::FuncRef>,
-    function: bool,
+    helper_refs: &'a HashMap<&'static str, cranelift_codegen::ir::FuncRef>,
+    ctxv: Option<V>,
+    out: Option<V>,
 }
 
-type V = cranelift_codegen::ir::Value;
-
 impl Gen<'_> {
-    fn block(&self, ip: usize) -> Block {
-        if let Some((exit, blk)) = self.exit_block {
-            if ip == exit {
-                return blk;
-            }
+    /// The block for instruction `ip`: inside the unit, or (a loop) a way out to it.
+    fn block(&self, b: &mut FunctionBuilder, ip: usize) -> Block {
+        if ip >= self.lo && ip < self.hi {
+            return self.blocks[ip - self.lo];
         }
-        self.blocks[ip - self.lo]
+        self.exit_to(b, ip)
     }
 
-    fn next(&self, ip: usize) -> Block {
-        self.block(ip + 1)
+    fn exit_to(&self, b: &mut FunctionBuilder, ip: usize) -> Block {
+        if self.leave.is_none() {
+            return self.bail;
+        }
+        *self.exits.borrow_mut().entry(ip).or_insert_with(|| b.create_block())
+    }
+
+    /// Where to go when instruction `ip` cannot run here: a function gives up, a
+    /// loop leaves to that very instruction (the interpreter runs it).
+    fn stop(&self, b: &mut FunctionBuilder, ip: usize) -> Block {
+        self.exit_to(b, ip)
+    }
+
+    fn next(&self, b: &mut FunctionBuilder, ip: usize) -> Block {
+        self.block(b, ip + 1)
     }
 
     fn i(&self, b: &mut FunctionBuilder, r: u16) -> V {
@@ -712,59 +988,104 @@ impl Gen<'_> {
         self.tag(b, r, TAG_BOOL);
     }
 
-    /// dst = checked `op`: gives up on overflow
+    /// Goes on in a fresh block when `bad` is false; stops at `ip` when it is true.
+    /// The destination is written only on the way on, so a stop leaves it as it was.
+    fn guard(&self, b: &mut FunctionBuilder, ip: usize, bad: V) {
+        let ok = b.create_block();
+        let stop = self.stop(b, ip);
+        b.ins().brif(bad, stop, &[], ok, &[]);
+        b.switch_to_block(ok);
+    }
+
+    fn jump_next(&self, b: &mut FunctionBuilder, ip: usize) {
+        let n = self.next(b, ip);
+        b.ins().jump(n, &[]);
+    }
+
+    /// dst = checked add / sub / mul
     fn checked(&self, b: &mut FunctionBuilder, ip: usize, d: u16, x: V, y: V, which: u8) {
         let (v, of) = match which {
             0 => b.ins().sadd_overflow(x, y),
             1 => b.ins().ssub_overflow(x, y),
             _ => b.ins().smul_overflow(x, y),
         };
+        self.guard(b, ip, of);
         self.set_i(b, d, v);
-        let next = self.next(ip);
-        b.ins().brif(of, self.bail, &[], next, &[]);
+        self.jump_next(b, ip);
     }
 
-    /// dst = x / y or x mod y: gives up on y == 0 and on MIN / -1
+    /// dst = x / y or x mod y; y == 0 and MIN / -1 are left to the interpreter
     fn divide(&self, b: &mut FunctionBuilder, ip: usize, d: u16, x: V, y: V, rem: bool) {
         let y0 = b.ins().icmp_imm_s(IntCC::Equal, y, 0);
         let xm = b.ins().icmp_imm_s(IntCC::Equal, x, i64::MIN);
         let ym = b.ins().icmp_imm_s(IntCC::Equal, y, -1);
         let both = b.ins().band(xm, ym);
         let bad = b.ins().bor(y0, both);
-        let ok = b.create_block();
-        b.ins().brif(bad, self.bail, &[], ok, &[]);
-        b.switch_to_block(ok);
+        self.guard(b, ip, bad);
         let v = if rem { b.ins().srem(x, y) } else { b.ins().sdiv(x, y) };
         self.set_i(b, d, v);
-        let next = self.next(ip);
-        b.ins().jump(next, &[]);
+        self.jump_next(b, ip);
+    }
+
+    fn helper(&self, b: &mut FunctionBuilder, name: &str, args: &[V]) -> Result<V, String> {
+        let f = *self.helper_refs.get(name).ok_or_else(|| format!("not compiled here: {}", name))?;
+        let mut all = vec![self.ctxv.ok_or("no context")?];
+        all.extend_from_slice(args);
+        let call = b.ins().call(f, &all);
+        Ok(b.inst_results(call)[0])
+    }
+
+    fn konst(&self, b: &mut FunctionBuilder, n: i64) -> V {
+        b.ins().iconst(types::I64, n)
+    }
+
+    /// After a helper that filled the `out` slot for register `d`: a number goes
+    /// into its variables; anything else is already in the interpreter's register.
+    fn take_out(&self, b: &mut FunctionBuilder, d: u16) {
+        let out = self.out.expect("a loop");
+        let bits = b.ins().load(types::I64, MemFlagsData::trusted(), out, 0);
+        let tag = b.ins().load(types::I64, MemFlagsData::trusted(), out, 8);
+        set_from_bits(b, self.vars[d as usize], bits, tag);
     }
 
     fn op(&self, b: &mut FunctionBuilder, ip: usize, op: Op) -> Result<(), String> {
-        let next = |s: &Self| s.next(ip);
         match op {
             Op::LoadInt(d, n) => {
                 let v = b.ins().iconst(types::I64, n);
                 self.set_i(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::LoadReal(d, x) => {
                 let v = b.ins().f64const(x);
                 self.set_r(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::LoadBool(d, x) => {
                 let v = b.ins().iconst(types::I8, x as i64);
                 self.set_b(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::Move(d, s) => {
                 let (vd, vs) = (self.vars[d as usize], self.vars[s as usize]);
+                if self.leave.is_some() {
+                    // a value that is not a number moves in the interpreter's registers
+                    let t = b.use_var(vs.t);
+                    let none = b.ins().icmp_imm_s(IntCC::Equal, t, TAG_NONE);
+                    let (other, num, join) = (b.create_block(), b.create_block(), b.create_block());
+                    b.ins().brif(none, other, &[], num, &[]);
+                    b.switch_to_block(other);
+                    let (dc, sc) = (self.konst(b, d as i64), self.konst(b, s as i64));
+                    self.helper(b, "gw_move", &[dc, sc])?;
+                    b.ins().jump(join, &[]);
+                    b.switch_to_block(num);
+                    b.ins().jump(join, &[]);
+                    b.switch_to_block(join);
+                }
                 for (to, from) in [(vd.i, vs.i), (vd.r, vs.r), (vd.b, vs.b), (vd.t, vs.t)] {
                     let x = b.use_var(from);
                     b.def_var(to, x);
                 }
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::AddI(d, x, y) | Op::SubI(d, x, y) | Op::MulI(d, x, y) => {
                 let (a, c) = (self.i(b, x), self.i(b, y));
@@ -777,7 +1098,7 @@ impl Gen<'_> {
             }
             Op::AddIImm(d, x, n) | Op::SubIImm(d, x, n) | Op::MulIImm(d, x, n) => {
                 let a = self.i(b, x);
-                let c = b.ins().iconst(types::I64, n);
+                let c = self.konst(b, n);
                 let which = match op {
                     Op::AddIImm(..) => 0,
                     Op::SubIImm(..) => 1,
@@ -791,7 +1112,7 @@ impl Gen<'_> {
             }
             Op::DivIImm(d, x, n) | Op::ModIImm(d, x, n) => {
                 let a = self.i(b, x);
-                let c = b.ins().iconst(types::I64, n);
+                let c = self.konst(b, n);
                 self.divide(b, ip, d, a, c, matches!(op, Op::ModIImm(..)));
             }
             Op::AddR(d, x, y) | Op::SubR(d, x, y) | Op::MulR(d, x, y) => {
@@ -802,99 +1123,97 @@ impl Gen<'_> {
                     _ => b.ins().fmul(a, c),
                 };
                 self.set_r(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::DivR(d, x, y) => {
                 let (a, c) = (self.r(b, x), self.r(b, y));
                 let z = b.ins().f64const(0.0);
                 let is0 = b.ins().fcmp(FloatCC::Equal, c, z);
+                self.guard(b, ip, is0);
                 let v = b.ins().fdiv(a, c);
                 self.set_r(b, d, v);
-                let n = next(self);
-                b.ins().brif(is0, self.bail, &[], n, &[]);
+                self.jump_next(b, ip);
             }
             Op::NegI(d, s) => {
                 let a = self.i(b, s);
                 let m = b.ins().icmp_imm_s(IntCC::Equal, a, i64::MIN);
+                self.guard(b, ip, m);
                 let v = b.ins().ineg(a);
                 self.set_i(b, d, v);
-                let n = next(self);
-                b.ins().brif(m, self.bail, &[], n, &[]);
+                self.jump_next(b, ip);
             }
             Op::NegR(d, s) => {
                 let a = self.r(b, s);
                 let v = b.ins().fneg(a);
                 self.set_r(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::Not(d, s) => {
                 let a = self.bo(b, s);
                 let v = b.ins().bxor_imm_s(a, 1);
                 self.set_b(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::ToReal(d, s) => {
                 let a = self.i(b, s);
                 let v = b.ins().fcvt_from_sint(types::F64, a);
                 self.set_r(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::CmpI(c, d, x, y) => {
                 let (a, e) = (self.i(b, x), self.i(b, y));
                 let v = b.ins().icmp(int_cc(c), a, e);
                 self.set_b(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::CmpIImm(c, d, x, n) => {
                 let a = self.i(b, x);
                 let v = b.ins().icmp_imm_s(int_cc(c), a, n);
                 self.set_b(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::CmpR(c, d, x, y) => {
                 let (a, e) = (self.r(b, x), self.r(b, y));
                 let v = b.ins().fcmp(float_cc(c), a, e);
                 self.set_b(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::CmpB(c, d, x, y) => {
                 let (a, e) = (self.bo(b, x), self.bo(b, y));
                 let v = b.ins().icmp(bool_cc(c), a, e);
                 self.set_b(b, d, v);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
             Op::Jump(t) => {
-                let blk = self.block(t as usize);
+                let blk = self.block(b, t as usize);
                 b.ins().jump(blk, &[]);
             }
             Op::JumpIfFalse(c, t) => {
                 let v = self.bo(b, c);
-                let (n, tb) = (next(self), self.block(t as usize));
+                let (n, tb) = (self.next(b, ip), self.block(b, t as usize));
                 b.ins().brif(v, n, &[], tb, &[]);
             }
             Op::JumpIfTrue(c, t) => {
                 let v = self.bo(b, c);
-                let (n, tb) = (next(self), self.block(t as usize));
+                let (n, tb) = (self.next(b, ip), self.block(b, t as usize));
                 b.ins().brif(v, tb, &[], n, &[]);
             }
             Op::JumpUnlessI(c, x, y, t) => {
                 let (a, e) = (self.i(b, x), self.i(b, y));
                 let v = b.ins().icmp(int_cc(c), a, e);
-                let (n, tb) = (next(self), self.block(t as usize));
+                let (n, tb) = (self.next(b, ip), self.block(b, t as usize));
                 b.ins().brif(v, n, &[], tb, &[]);
             }
             Op::JumpUnlessIImm(c, x, k, t) => {
                 let a = self.i(b, x);
                 let v = b.ins().icmp_imm_s(int_cc(c), a, k);
-                let (n, tb) = (next(self), self.block(t as usize));
+                let (n, tb) = (self.next(b, ip), self.block(b, t as usize));
                 b.ins().brif(v, n, &[], tb, &[]);
             }
             Op::ForInit { var, end, step, exit } => {
                 let s = self.i(b, step);
                 let s0 = b.ins().icmp_imm_s(IntCC::Equal, s, 0);
-                let go = b.create_block();
-                b.ins().brif(s0, self.bail, &[], go, &[]);
-                b.switch_to_block(go);
+                self.guard(b, ip, s0);
                 let (v, e) = (self.i(b, var), self.i(b, end));
                 let up = b.ins().icmp_imm_s(IntCC::SignedGreaterThan, s, 0);
                 let past_up = b.ins().icmp(IntCC::SignedGreaterThan, v, e);
@@ -903,14 +1222,14 @@ impl Gen<'_> {
                 let a1 = b.ins().band(up, past_up);
                 let a2 = b.ins().band(down, past_down);
                 let skip = b.ins().bor(a1, a2);
-                let (n, tb) = (next(self), self.block(exit as usize));
+                let (n, tb) = (self.next(b, ip), self.block(b, exit as usize));
                 b.ins().brif(skip, tb, &[], n, &[]);
             }
             Op::ForStep { var, end, step, body } => {
                 let (v, s) = (self.i(b, var), self.i(b, step));
                 let (nv, of) = b.ins().sadd_overflow(v, s);
                 let cont = b.create_block();
-                let n = next(self);
+                let n = self.next(b, ip);
                 // on overflow the counter is past any end: the loop is over
                 b.ins().brif(of, n, &[], cont, &[]);
                 b.switch_to_block(cont);
@@ -923,38 +1242,118 @@ impl Gen<'_> {
                 let a1 = b.ins().band(up, in_up);
                 let a2 = b.ins().band(down, in_down);
                 let again = b.ins().bor(a1, a2);
-                let bb = self.block(body as usize);
+                let bb = self.block(b, body as usize);
                 b.ins().brif(again, bb, &[], n, &[]);
             }
             Op::Call { func, first, argc, dst } => {
                 let fref = *self.callee_refs.get(&(func as usize)).ok_or("internal: no callee")?;
                 let mut args = Vec::with_capacity(argc as usize * 2 + 1);
+                let mut any_none = None;
                 for k in 0..argc {
                     let v = self.vars[(first + k) as usize];
                     let bits = bits_of(b, v);
                     let tag = b.use_var(v.t);
+                    let none = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_NONE);
+                    any_none = Some(match any_none {
+                        None => none,
+                        Some(a) => b.ins().bor(a, none),
+                    });
                     args.push(bits);
                     args.push(tag);
+                }
+                // an argument that is not a number: the interpreter makes this call
+                if let Some(bad) = any_none {
+                    self.guard(b, ip, bad);
                 }
                 let nb = b.ins().iadd_imm_s(self.budget, -1);
                 args.push(nb);
                 let call = b.ins().call(fref, &args);
                 let res = b.inst_results(call).to_vec();
                 let gave_up = b.ins().icmp_imm_s(IntCC::Equal, res[1], TAG_BAIL);
-                let ok = b.create_block();
-                b.ins().brif(gave_up, self.bail, &[], ok, &[]);
-                b.switch_to_block(ok);
+                self.guard(b, ip, gave_up);
                 set_from_bits(b, self.vars[dst as usize], res[0], res[1]);
-                b.ins().jump(next(self), &[]);
+                self.jump_next(b, ip);
             }
-            Op::Ret(s) if self.function => {
+            Op::Ret(s) if self.leave.is_none() => {
                 let v = self.vars[s as usize];
                 let bits = bits_of(b, v);
                 let tag = b.use_var(v.t);
                 b.ins().return_(&[bits, tag]);
             }
-            Op::RetNone if self.function => {
+            Op::RetNone if self.leave.is_none() => {
                 b.ins().jump(self.bail, &[]);
+            }
+            Op::GetElem(d, c, i) => {
+                let (dc, cc) = (self.konst(b, d as i64), self.konst(b, c as i64));
+                let iv = self.i(b, i);
+                let out = self.out.ok_or("not in a function")?;
+                let st = self.helper(b, "gw_get_elem", &[dc, cc, iv, out])?;
+                self.guard(b, ip, st);
+                self.take_out(b, d);
+                self.jump_next(b, ip);
+            }
+            Op::GetElem2(d, c, i, j) => {
+                let (dc, cc) = (self.konst(b, d as i64), self.konst(b, c as i64));
+                let (iv, jv) = (self.i(b, i), self.i(b, j));
+                let out = self.out.ok_or("not in a function")?;
+                let st = self.helper(b, "gw_get_elem2", &[dc, cc, iv, jv, out])?;
+                self.guard(b, ip, st);
+                self.take_out(b, d);
+                self.jump_next(b, ip);
+            }
+            Op::SetElem(c, i, s) => {
+                let cc = self.konst(b, c as i64);
+                let iv = self.i(b, i);
+                let v = self.vars[s as usize];
+                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let sc = self.konst(b, s as i64);
+                let st = self.helper(b, "gw_set_elem", &[cc, iv, bits, tag, sc])?;
+                self.guard(b, ip, st);
+                self.jump_next(b, ip);
+            }
+            Op::SetElem2(c, i, j, s) => {
+                let cc = self.konst(b, c as i64);
+                let (iv, jv) = (self.i(b, i), self.i(b, j));
+                let v = self.vars[s as usize];
+                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let sc = self.konst(b, s as i64);
+                let st = self.helper(b, "gw_set_elem2", &[cc, iv, jv, bits, tag, sc])?;
+                self.guard(b, ip, st);
+                self.jump_next(b, ip);
+            }
+            Op::Length(d, s) => {
+                let sc = self.konst(b, s as i64);
+                let n = self.helper(b, "gw_length", &[sc])?;
+                let bad = b.ins().icmp_imm_s(IntCC::SignedLessThan, n, 0);
+                self.guard(b, ip, bad);
+                self.set_i(b, d, n);
+                self.jump_next(b, ip);
+            }
+            Op::Append(l, s) => {
+                let lc = self.konst(b, l as i64);
+                let v = self.vars[s as usize];
+                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let sc = self.konst(b, s as i64);
+                let st = self.helper(b, "gw_append", &[lc, bits, tag, sc])?;
+                self.guard(b, ip, st);
+                self.jump_next(b, ip);
+            }
+            Op::GetGlobal(d, g) => {
+                let (gc, dc) = (self.konst(b, g as i64), self.konst(b, d as i64));
+                let out = self.out.ok_or("not in a function")?;
+                let st = self.helper(b, "gw_get_global", &[gc, dc, out])?;
+                self.guard(b, ip, st);
+                self.take_out(b, d);
+                self.jump_next(b, ip);
+            }
+            Op::SetGlobal(g, s) => {
+                let gc = self.konst(b, g as i64);
+                let v = self.vars[s as usize];
+                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let sc = self.konst(b, s as i64);
+                let st = self.helper(b, "gw_set_global", &[gc, bits, tag, sc])?;
+                self.guard(b, ip, st);
+                self.jump_next(b, ip);
             }
             other => return Err(format!("not compiled: {:?}", other)),
         }

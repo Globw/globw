@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.7 — unreleased
+
+**A JIT.** Hot code becomes machine code (Cranelift), with the same results and
+the same errors as the interpreter.
+
+- Functions made only of numbers, booleans and calls to such functions become
+  native functions that call each other directly.
+- Any loop (`for`, `while`, `repeat`) that turns 50 times is compiled, also in the
+  main program: numbers, array, list and matrix elements, `length`, `append`,
+  global variables and calls to compiled functions run as machine code. When a loop
+  meets something it does not handle, it hands its registers back and the
+  interpreter goes on from that very instruction.
+- An overflow, a division by zero or an index out of range in compiled code gives
+  the interpreter's error at the same line, and `try` catches it as before.
+- fib(35) 0.53 → 0.14 s, a 200-million-step loop 1.05 → 0.28 s, Mandelbrot
+  0.94 → 0.16 s, the sieve 0.77 → 0.48 s (faster than Java on the first three).
+- On in normal runs; the debugger, `--trace`, `--profile` and the web playground
+  use the interpreter. `GLOBW_NO_JIT=1` turns it off.
+- `gw --bytecode` prints a program's compiled instructions.
+
 ## 0.1.6 — 2026-11-16
 
 **Web interfaces.** Build a graphical interface with real HTML and CSS and keep
