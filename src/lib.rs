@@ -16,6 +16,8 @@ pub mod gui;
 pub mod gpu;
 pub mod lexer;
 pub mod classes;
+#[cfg(feature = "jit")]
+pub mod jit;
 pub mod library;
 pub mod model3d;
 pub mod modules;

@@ -56,6 +56,7 @@ fn main() -> ExitCode {
     // the security boundary for running untrusted .gw files and gwget packages.
     let mut check_only = false;
     let mut profile = false;
+    let mut dump_bytecode = false;
     let mut trace = false;
     let mut json = false;
     let mut dump_builtins = false;
@@ -72,6 +73,7 @@ fn main() -> ExitCode {
         match key {
             "--check" => check_only = true,
             "--profile" => profile = true,
+            "--bytecode" => dump_bytecode = true,
             "--trace" => trace = true,
             "--json" => json = true,
             "--builtins" => dump_builtins = true,
@@ -163,6 +165,16 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    if dump_bytecode {
+        // the compiled instructions of every function (for working on the VM and the JIT)
+        for (i, f) in module.functions.iter().enumerate() {
+            println!("fn {} {} (params {}, registers {})", i, f.name, f.n_params, f.n_regs);
+            for (ip, op) in f.code.iter().enumerate() {
+                println!("  {:4}  {:?}", ip, op);
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
     if check_only {
         if json {
             println!("[]");

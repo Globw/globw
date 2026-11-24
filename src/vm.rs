@@ -442,6 +442,8 @@ struct Frame {
 pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {
     let mut vm = Vm {
         module,
+        #[cfg(feature = "jit")]
+        jit: None,
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -455,6 +457,10 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         trace: None,
         debug: None,
     };
+    #[cfg(feature = "jit")]
+    if std::env::var_os("GLOBW_NO_JIT").is_none() {
+        vm.jit = crate::jit::Jit::new(module).map(Box::new);
+    }
     let result = vm.execute::<false>(input, output);
     let _ = output.flush();
     if result.is_ok() {
@@ -475,6 +481,8 @@ pub fn run_traced(
         files.iter().map(|f| f.text.lines().map(|l| l.trim_end().to_string()).collect()).collect();
     let mut vm = Vm {
         module,
+        #[cfg(feature = "jit")]
+        jit: None,
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -506,6 +514,8 @@ pub fn run_debug<'m>(
 ) -> Result<(), Error> {
     let mut vm = Vm {
         module,
+        #[cfg(feature = "jit")]
+        jit: None,
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -536,6 +546,8 @@ pub fn run_profiled(
 ) -> Result<Vec<(&'static str, u64)>, Error> {
     let mut vm = Vm {
         module,
+        #[cfg(feature = "jit")]
+        jit: None,
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -562,6 +574,9 @@ pub fn run_profiled(
 
 struct Vm<'m> {
     module: &'m Module,
+    /// machine code for hot numeric functions and loops (normal runs only)
+    #[cfg(feature = "jit")]
+    jit: Option<Box<crate::jit::Jit>>,
     regs: Vec<Value>,
     globals: Vec<Value>,
     frames: Vec<Frame>,
@@ -940,13 +955,46 @@ impl<'m> Vm<'m> {
                     None => fail!(OVERFLOW),
                 },
                 Op::ForInit { var, end, step, exit } => {
-                    let s = int(&reg!(step));
-                    if s == 0 {
-                        fail!("step cannot be 0");
+                    let mut done = false;
+                    // a hot loop made of numeric instructions: run it as machine code
+                    #[cfg(feature = "jit")]
+                    if !WATCH {
+                        if let Some(jit) = self.jit.as_mut() {
+                            let (v0, e0, s0) = (int(&reg!(var)) as i128, int(&reg!(end)) as i128, int(&reg!(step)) as i128);
+                            let trips = if s0 > 0 { (e0 - v0) / s0 } else if s0 < 0 { (v0 - e0) / -s0 } else { 0 };
+                            if trips >= crate::jit::HOT_LOOP as i128 {
+                                if let Some(lc) = jit.loop_at(m, func, ip - 1) {
+                                    let mut slots = vec![crate::jit::Slot::default(); m.functions[func].n_regs as usize];
+                                    for &r in &lc.used {
+                                        slots[r as usize] = crate::jit::Slot::of(&self.regs[base + r as usize]);
+                                    }
+                                    let budget = crate::jit::budget(self.frames.len(), MAX_CALL_DEPTH);
+                                    // SAFETY: the loop reads and writes only the slots of its registers
+                                    let gave_up = unsafe { (lc.entry)(slots.as_mut_ptr(), budget) };
+                                    if gave_up == 0 {
+                                        for &r in &lc.written {
+                                            if let Some(v) = slots[r as usize].value() {
+                                                self.regs[base + r as usize] = v;
+                                            }
+                                        }
+                                        ip = lc.exit;
+                                        done = true;
+                                    } else {
+                                        jit.loop_bailed(func, ip - 1);
+                                    }
+                                }
+                            }
+                        }
                     }
-                    let (v, e) = (int(&reg!(var)), int(&reg!(end)));
-                    if (s > 0 && v > e) || (s < 0 && v < e) {
-                        ip = exit as usize;
+                    if !done {
+                        let s = int(&reg!(step));
+                        if s == 0 {
+                            fail!("step cannot be 0");
+                        }
+                        let (v, e) = (int(&reg!(var)), int(&reg!(end)));
+                        if (s > 0 && v > e) || (s < 0 && v < e) {
+                            ip = exit as usize;
+                        }
                     }
                 }
                 Op::ForStep { var, end, step, body } => {
@@ -1167,6 +1215,31 @@ impl<'m> Vm<'m> {
                     base = new_base;
                 }
                 Op::Call { func: f, first, argc, dst } => {
+                    let mut done = false;
+                    // a compiled function: run its machine code; if it gives up, the
+                    // call goes on in the interpreter below
+                    #[cfg(feature = "jit")]
+                    if !WATCH {
+                        if let Some(jit) = self.jit.as_mut() {
+                            if let Some(entry) = jit.function(m, f as usize) {
+                                let start = base + first as usize;
+                                let args: Vec<crate::jit::Slot> = (0..argc as usize).map(|k| crate::jit::Slot::of(&self.regs[start + k])).collect();
+                                if args.iter().all(|a| a.tag != crate::jit::TAG_NONE) {
+                                    let mut out = crate::jit::Slot::default();
+                                    let budget = crate::jit::budget(self.frames.len(), MAX_CALL_DEPTH);
+                                    // SAFETY: the trampoline reads `argc` slots and writes one
+                                    unsafe { entry(args.as_ptr(), budget, &mut out) };
+                                    if let Some(v) = out.value() {
+                                        set!(dst, v);
+                                        done = true;
+                                    } else {
+                                        jit.function_bailed(f as usize);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !done {
                     if self.frames.len() >= MAX_CALL_DEPTH {
                         fail!("too many nested calls (maybe a recursion that never ends)");
                     }
@@ -1182,6 +1255,7 @@ impl<'m> Vm<'m> {
                     code = &callee.code;
                     ip = 0;
                     base = new_base;
+                    }
                 }
                 Op::Ensure { flag, func: f } => {
                     if !matches!(self.globals[flag as usize], Value::Bool(true)) {
