@@ -450,6 +450,36 @@ unsafe extern "C" fn gw_new_list(ctx: *mut Ctx, d: i64) -> i64 {
     0
 }
 
+/// Where the interpreter may go into a compiled body: the start, the heads of
+/// loops, after a call, a handler's catch and after an instruction the body
+/// leaves to the interpreter. Elsewhere the interpreter goes on until one of
+/// these: fewer entries leave the compiler fewer join points, so faster code.
+fn entries(code: &[Op], runs: &[bool]) -> Vec<bool> {
+    let n = code.len();
+    let mut e = vec![false; n];
+    if n > 0 {
+        e[0] = true;
+    }
+    let mut mark = |t: usize| {
+        if t < n {
+            e[t] = true;
+        }
+    };
+    for (ip, op) in code.iter().enumerate() {
+        match *op {
+            Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) | Op::JumpUnlessIImm(_, _, _, t) if (t as usize) <= ip => mark(t as usize),
+            Op::ForStep { body, .. } => mark(body as usize),
+            Op::PushHandler(c, _) => mark(c as usize),
+            Op::Call { .. } | Op::CallValue { .. } | Op::Builtin { .. } => mark(ip + 1),
+            _ => {}
+        }
+        if !runs[ip] {
+            mark(ip + 1);
+        }
+    }
+    e
+}
+
 /// Calls built-in `id` with `argc` arguments (their bits and tags at `args`; a
 /// value that is not a number is read from register `first + k`). A function's
 /// result goes to `out` (a number) or straight into register `dst`.
@@ -567,6 +597,8 @@ pub struct Jit {
     bodies: Vec<BodyCode>,
     /// per compiled function, per instruction: can the compiled body run it
     runs: Vec<Vec<bool>>,
+    /// per compiled function, per instruction: may the interpreter enter there
+    enter: Vec<Vec<bool>>,
     /// per compiled function, per instruction: times compiled code stopped there
     stops: Vec<Vec<u16>>,
     next_name: u32,
@@ -768,6 +800,7 @@ impl Jit {
             state: vec![0; n],
             bodies: Vec::new(),
             runs: vec![Vec::new(); n],
+            enter: vec![Vec::new(); n],
             stops: vec![Vec::new(); n],
             next_name: 0,
         })
@@ -888,10 +921,15 @@ impl Jit {
     /// The compiled body of `f`, if it can start at instruction `ip`.
     pub fn entry(&self, f: usize, ip: usize) -> Option<&BodyCode> {
         let s = self.state[f];
-        if s < COMPILED || s == FAILED || !self.runs[f].get(ip).copied().unwrap_or(false) {
+        if s < COMPILED || s == FAILED || !self.runs[f].get(ip).copied().unwrap_or(false) || !self.enter[f][ip] {
             return None;
         }
         Some(&self.bodies[(s - COMPILED) as usize])
+    }
+
+    /// Can the compiled body of `f` run instruction `ip` (wherever it entered)?
+    pub fn runs_at(&self, f: usize, ip: usize) -> bool {
+        self.compiled(f) && self.runs[f].get(ip).copied().unwrap_or(false)
     }
 
     /// Compiled code stopped at instruction `ip` of `f`, one it can run (an error
@@ -938,6 +976,7 @@ impl Jit {
         if !runs.iter().any(|&r| r) {
             return None;
         }
+        let enter = entries(&func.code, &runs);
         let mut used = Vec::new();
         let mut written = Vec::new();
         for (op, &r) in func.code.iter().zip(&runs) {
@@ -953,7 +992,7 @@ impl Jit {
         written.sort_unstable();
         written.dedup();
         let ids: Vec<Option<FuncId>> = self.funcs.iter().map(|x| x.map(|(id, _)| id)).collect();
-        let id = match self.build_body(func, &runs, &used, &written, &ids, &gives) {
+        let id = match self.build_body(func, &runs, &enter, &used, &written, &ids, &gives) {
             Ok(id) => id,
             Err(e) => {
                 if self.log {
@@ -968,6 +1007,7 @@ impl Jit {
         let entry = unsafe { std::mem::transmute::<*const u8, BodyFn>(p) };
         self.stops[f] = vec![0; func.code.len()];
         self.runs[f] = runs;
+        self.enter[f] = enter;
         Some(BodyCode { entry, used, written })
     }
 
@@ -1089,7 +1129,7 @@ impl Jit {
         Ok(id)
     }
 
-    fn build_body(&mut self, f: &Function, runs: &[bool], used: &[u16], written: &[u16], ids: &[Option<FuncId>], gives: &[bool]) -> Result<FuncId, String> {
+    fn build_body(&mut self, f: &Function, runs: &[bool], enter: &[bool], used: &[u16], written: &[u16], ids: &[Option<FuncId>], gives: &[bool]) -> Result<FuncId, String> {
         let (start, end) = (0, f.code.len());
         let ptr = self.module.isa().pointer_type();
         let mut sig = self.module.make_signature();
@@ -1101,6 +1141,7 @@ impl Jit {
         let name = self.fresh_name("body");
         let id = self.module.declare_function(&name, Linkage::Local, &sig).map_err(|e| format!("{:?}", e))?;
         self.module.clear_context(&mut self.ctx);
+        self.ctx.set_disasm(std::env::var_os("GLOBW_JIT_ASM").is_some());
         self.ctx.func.signature = sig;
         self.ctx.func.name = UserFuncName::user(0, id.as_u32());
         let code = &f.code[..];
@@ -1165,7 +1206,7 @@ impl Jit {
             // enter at instruction `from`
             let calls: Vec<_> = (start..end)
                 .map(|ip| {
-                    let blk = if runs[ip] { blocks[ip - start] } else { bail };
+                    let blk = if runs[ip] && enter[ip] { blocks[ip - start] } else { bail };
                     b.func.dfg.block_call(blk, &[])
                 })
                 .collect();
@@ -1224,6 +1265,14 @@ impl Jit {
             b.finalize(fc);
         }
         self.module.define_function(id, &mut self.ctx).map_err(|e| format!("{:?}", e))?;
+        if std::env::var_os("GLOBW_JIT_ASM").is_some() {
+            if let Some(c) = self.ctx.compiled_code() {
+                if let Some(v) = &c.vcode {
+                    eprintln!("[jit asm] {}
+{}", f.name, v);
+                }
+            }
+        }
         Ok(id)
     }
 }

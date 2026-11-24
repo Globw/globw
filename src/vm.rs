@@ -1856,7 +1856,7 @@ impl<'m> Vm<'m> {
                             let resume = resume as usize;
                             // stopped at an instruction it can run: an error to report,
                             // or a call that gave up
-                            if unsafe { (*jit).entry(func, resume) }.is_some() {
+                            if unsafe { (*jit).runs_at(func, resume) } {
                                 unsafe { (*jit).stopped(func, resume) };
                             }
                             ip = resume;

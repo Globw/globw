@@ -1,0 +1,27 @@
+import jit
+variables:
+    prime as bool[10000000]
+    i, j, n, primes as int
+n = 10000000
+for(i from 2 to n)
+    prime[i] = true
+end loop
+prime[1] = false
+i = 2
+while(i * i <= n)
+    if(prime[i])
+        j = i * i
+        while(j <= n)
+            prime[j] = false
+            j = j + i
+        end loop
+    end if
+    i = i + 1
+end loop
+primes = 0
+for(i from 1 to n)
+    if(prime[i])
+        primes = primes + 1
+    end if
+end loop
+output(primes)
