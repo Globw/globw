@@ -185,17 +185,16 @@ pub struct Ctx {
 
 /// `fn(args: *const Slot, budget: i64, out: *mut Slot)`
 type Trampoline = unsafe extern "C" fn(*const Slot, i64, *mut Slot);
-/// `fn(regs: *mut Slot, budget: i64, ctx: *mut Ctx) -> i64`: the instruction to go on with
-type LoopFn = unsafe extern "C" fn(*mut Slot, i64, *mut Ctx) -> i64;
+/// `fn(regs: *mut Slot, budget: i64, ctx: *mut Ctx, from: i64) -> i64`: runs a
+/// compiled function body from instruction `from`; returns the instruction the
+/// interpreter goes on with
+type BodyFn = unsafe extern "C" fn(*mut Slot, i64, *mut Ctx, i64) -> i64;
 
-/// A compiled loop: its entry point, the registers it reads and writes, and the
-/// instructions it covers.
-pub struct LoopCode {
-    pub entry: LoopFn,
+/// A compiled function body: its entry point and the registers it reads and writes.
+pub struct BodyCode {
+    pub entry: BodyFn,
     pub used: Vec<u16>,
     pub written: Vec<u16>,
-    pub start: usize,
-    pub end: usize,
 }
 
 // ------------------------------------------------------------------ helpers
@@ -411,11 +410,15 @@ pub struct Jit {
     compiled_funcs: bool,
     calls: Vec<u32>,
     func_bails: Vec<u32>,
-    /// per function, per instruction that a loop jumps back to: turns counted,
-    /// FAILED, or COMPILED + index into `loops`
-    edges: Vec<Vec<u32>>,
-    loops: Vec<LoopCode>,
-    deopts: Vec<u32>,
+    /// per function: how hot it is (calls and loop turns)
+    heat: Vec<u32>,
+    /// per function: not tried yet (0), FAILED, or COMPILED + index into `bodies`
+    state: Vec<u32>,
+    bodies: Vec<BodyCode>,
+    /// per compiled function, per instruction: can the compiled body run it
+    runs: Vec<Vec<bool>>,
+    /// per compiled function, per instruction: times compiled code stopped there
+    stops: Vec<Vec<u16>>,
     next_name: u32,
 }
 
@@ -465,16 +468,6 @@ fn loop_extra(op: &Op) -> bool {
         op,
         Op::GetElem(..) | Op::SetElem(..) | Op::GetElem2(..) | Op::SetElem2(..) | Op::Length(..) | Op::Append(..) | Op::GetGlobal(..) | Op::SetGlobal(..)
     )
-}
-
-fn jump_target(op: &Op) -> Option<usize> {
-    Some(match *op {
-        Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) => t as usize,
-        Op::JumpUnlessI(_, _, _, t) | Op::JumpUnlessIImm(_, _, _, t) => t as usize,
-        Op::ForInit { exit, .. } => exit as usize,
-        Op::ForStep { body, .. } => body as usize,
-        _ => return None,
-    })
 }
 
 /// The registers an instruction touches.
@@ -608,9 +601,11 @@ impl Jit {
             compiled_funcs: false,
             calls: vec![0; n],
             func_bails: vec![0; n],
-            edges: vec![Vec::new(); n],
-            loops: Vec::new(),
-            deopts: Vec::new(),
+            heat: vec![0; n],
+            state: vec![0; n],
+            bodies: Vec::new(),
+            runs: vec![Vec::new(); n],
+            stops: vec![Vec::new(); n],
             next_name: 0,
         })
     }
@@ -699,85 +694,84 @@ impl Jit {
         }
     }
 
-    /// The interpreter jumped back to `header` in function `f`: one more turn of a
-    /// loop. Returns the index of its compiled code once it is hot and compiled.
-    pub fn back_edge(&mut self, m: &Module, f: usize, header: usize) -> Option<usize> {
-        if self.edges[f].is_empty() {
-            self.edges[f] = vec![0; m.functions[f].code.len()];
+    /// Function `f` was called (`weight` 25) or one of its loops turned (1): once
+    /// hot enough, its whole body is compiled.
+    pub fn heat(&mut self, m: &Module, f: usize, weight: u32) {
+        if self.state[f] != 0 {
+            return;
         }
-        let s = self.edges[f][header];
-        if s == FAILED {
-            return None;
+        self.heat[f] += weight;
+        if self.heat[f] < HOT_EDGES {
+            return;
         }
-        if s >= COMPILED {
-            return Some((s - COMPILED) as usize);
-        }
-        if s + 1 < HOT_EDGES {
-            self.edges[f][header] = s + 1;
-            return None;
-        }
-        let code = self.compile_loop(m, f, header);
+        let code = self.compile_body(m, f);
         if self.log {
-            eprintln!("[jit] loop at {}:{} {}", f, header, if code.is_some() { "compiled" } else { "not compilable" });
+            eprintln!("[jit] {} ({}) {}", m.functions[f].name, f, if code.is_some() { "compiled" } else { "not compilable" });
         }
         match code {
             Some(c) => {
-                self.loops.push(c);
-                self.deopts.push(0);
-                let k = self.loops.len() - 1;
-                self.edges[f][header] = COMPILED + k as u32;
-                Some(k)
+                self.bodies.push(c);
+                self.state[f] = COMPILED + (self.bodies.len() - 1) as u32;
             }
-            None => {
-                self.edges[f][header] = FAILED;
-                None
-            }
+            None => self.state[f] = FAILED,
         }
     }
 
-    pub fn loop_code(&self, k: usize) -> &LoopCode {
-        &self.loops[k]
+    /// Is function `f`'s body compiled?
+    pub fn compiled(&self, f: usize) -> bool {
+        self.state[f] >= COMPILED && self.state[f] != FAILED
     }
 
-    /// Compiled loop `k` stopped inside itself (at an instruction it does not
-    /// handle): after too many such stops it is left to the interpreter.
-    pub fn loop_stopped(&mut self, k: usize, f: usize, header: usize) {
-        self.deopts[k] += 1;
-        if self.deopts[k] >= MAX_DEOPTS {
-            self.edges[f][header] = FAILED;
-            if self.log {
-                eprintln!("[jit] loop at {}:{} left to the interpreter", f, header);
-            }
+    /// The compiled body of `f`, if it can start at instruction `ip`.
+    pub fn entry(&self, f: usize, ip: usize) -> Option<&BodyCode> {
+        let s = self.state[f];
+        if s < COMPILED || s == FAILED || !self.runs[f].get(ip).copied().unwrap_or(false) {
+            return None;
         }
+        Some(&self.bodies[(s - COMPILED) as usize])
     }
 
-    fn compile_loop(&mut self, m: &Module, f: usize, header: usize) -> Option<LoopCode> {
-        let func = &m.functions[f];
-        // the loop runs from its header to the last instruction that jumps back to it
-        let last = (header..func.code.len()).filter(|&j| jump_target(&func.code[j]) == Some(header)).max()?;
-        let (start, end) = (header, last + 1);
-        let mut needs_funcs = false;
-        for op in &func.code[start..end] {
-            match op {
-                Op::Call { func: c, .. } => {
-                    if !self.eligible.get(*c as usize).copied().unwrap_or(false) {
-                        return None;
-                    }
-                    needs_funcs = true;
+    /// Compiled code stopped at instruction `ip` of `f`, one it can run (an error
+    /// for the interpreter to report, a call that gave up): after too many stops
+    /// there, that instruction is left to the interpreter.
+    pub fn stopped(&mut self, f: usize, ip: usize) {
+        if let Some(c) = self.stops[f].get_mut(ip) {
+            *c += 1;
+            if *c as u32 >= MAX_DEOPTS {
+                self.runs[f][ip] = false;
+                if self.log {
+                    eprintln!("[jit] {}:{} left to the interpreter", f, ip);
                 }
-                op if plain_numeric(op) || loop_extra(op) => {}
-                _ => return None,
             }
         }
-        if needs_funcs && !self.compile_functions(m) {
+    }
+
+    /// Can compiled code run this instruction (with the native functions known)?
+    fn runs_op(&self, op: &Op) -> bool {
+        match op {
+            Op::Call { func, .. } => self.funcs.get(*func as usize).is_some_and(|x| x.is_some()),
+            op => plain_numeric(op) || loop_extra(op),
+        }
+    }
+
+    fn compile_body(&mut self, m: &Module, f: usize) -> Option<BodyCode> {
+        let func = &m.functions[f];
+        // calls to numeric functions go straight to their machine code
+        if func.code.iter().any(|op| matches!(op, Op::Call { func, .. } if self.eligible.get(*func as usize).copied().unwrap_or(false))) {
+            self.compile_functions(m);
+        }
+        let runs: Vec<bool> = func.code.iter().map(|op| self.runs_op(op)).collect();
+        if !runs.iter().any(|&r| r) {
             return None;
         }
         let mut used = Vec::new();
         let mut written = Vec::new();
-        for op in &func.code[start..end] {
-            regs_of(op, &mut used);
-            if let Some(w) = written_reg(op) {
-                written.push(w);
+        for (op, &r) in func.code.iter().zip(&runs) {
+            if r {
+                regs_of(op, &mut used);
+                if let Some(w) = written_reg(op) {
+                    written.push(w);
+                }
             }
         }
         used.sort_unstable();
@@ -785,20 +779,22 @@ impl Jit {
         written.sort_unstable();
         written.dedup();
         let ids: Vec<Option<FuncId>> = self.funcs.iter().map(|x| x.map(|(id, _)| id)).collect();
-        let id = match self.build_loop(func, start, end, &used, &written, &ids) {
+        let id = match self.build_body(func, &runs, &used, &written, &ids) {
             Ok(id) => id,
             Err(e) => {
                 if self.log {
-                    eprintln!("[jit] loop at {}:{}: {}", f, header, e);
+                    eprintln!("[jit] {}: {}", func.name, e);
                 }
                 return None;
             }
         };
         self.module.finalize_definitions().ok()?;
         let p = self.module.get_finalized_function(id);
-        // SAFETY: built with the LoopFn signature
-        let entry = unsafe { std::mem::transmute::<*const u8, LoopFn>(p) };
-        Some(LoopCode { entry, used, written, start, end })
+        // SAFETY: built with the BodyFn signature
+        let entry = unsafe { std::mem::transmute::<*const u8, BodyFn>(p) };
+        self.stops[f] = vec![0; func.code.len()];
+        self.runs[f] = runs;
+        Some(BodyCode { entry, used, written })
     }
 
     // ------------------------------------------------------------------ codegen
@@ -918,14 +914,16 @@ impl Jit {
         Ok(id)
     }
 
-    fn build_loop(&mut self, f: &Function, start: usize, end: usize, used: &[u16], written: &[u16], ids: &[Option<FuncId>]) -> Result<FuncId, String> {
+    fn build_body(&mut self, f: &Function, runs: &[bool], used: &[u16], written: &[u16], ids: &[Option<FuncId>]) -> Result<FuncId, String> {
+        let (start, end) = (0, f.code.len());
         let ptr = self.module.isa().pointer_type();
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(ptr));
         sig.params.push(AbiParam::new(types::I64));
         sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
-        let name = self.fresh_name("loop");
+        let name = self.fresh_name("body");
         let id = self.module.declare_function(&name, Linkage::Local, &sig).map_err(|e| format!("{:?}", e))?;
         self.module.clear_context(&mut self.ctx);
         self.ctx.func.signature = sig;
@@ -953,7 +951,7 @@ impl Jit {
             b.append_block_params_for_function_params(entry);
             b.switch_to_block(entry);
             let p = b.block_params(entry).to_vec();
-            let (slots, budget, ctxv) = (p[0], p[1], p[2]);
+            let (slots, budget, ctxv, from) = (p[0], p[1], p[2], p[3]);
             let zero = b.ins().iconst(types::I64, 0);
             let zf = b.ins().f64const(0.0);
             let zb = b.ins().iconst(types::I8, 0);
@@ -988,8 +986,18 @@ impl Jit {
             // the one way out: write the registers back, return where to go on
             let leave = b.create_block();
             b.append_block_param(leave, types::I64);
-            let bail = b.create_block(); // unused in loops (calls that give up leave at the call)
-            b.ins().jump(blocks[0], &[]);
+            let bail = b.create_block(); // an unknown entry: back to the interpreter
+            // enter at instruction `from`
+            let calls: Vec<_> = (start..end)
+                .map(|ip| {
+                    let blk = if runs[ip] { blocks[ip - start] } else { bail };
+                    b.func.dfg.block_call(blk, &[])
+                })
+                .collect();
+            let default = b.func.dfg.block_call(bail, &[]);
+            let jt = b.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
+            let from32 = b.ins().ireduce(types::I32, from);
+            b.ins().br_table(from32, jt);
             let g = Gen {
                 vars: &vars,
                 blocks: &blocks,
@@ -1009,7 +1017,13 @@ impl Jit {
             };
             for ip in start..end {
                 b.switch_to_block(blocks[ip - start]);
-                g.op(&mut b, ip, code[ip])?;
+                if runs[ip] {
+                    g.op(&mut b, ip, code[ip])?;
+                } else {
+                    // the interpreter runs this one
+                    let out_to = g.exit_to(&mut b, ip);
+                    b.ins().jump(out_to, &[]);
+                }
             }
             // exit blocks: each passes its instruction to `leave`
             let exits: Vec<(usize, Block)> = g.exits.borrow().iter().map(|(k, v)| (*k, *v)).collect();
@@ -1029,8 +1043,7 @@ impl Jit {
             }
             b.ins().return_(&[resume]);
             b.switch_to_block(bail);
-            let c = b.ins().iconst(types::I64, start as i64);
-            b.ins().return_(&[c]);
+            b.ins().return_(&[from]);
             b.seal_all_blocks();
             b.finalize(fc);
         }

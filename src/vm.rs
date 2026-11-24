@@ -574,6 +574,8 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
         module,
         #[cfg(feature = "jit")]
         jit: None,
+        #[cfg(feature = "jit")]
+        jit_slots: Vec::new(),
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -613,6 +615,8 @@ pub fn run_traced(
         module,
         #[cfg(feature = "jit")]
         jit: None,
+        #[cfg(feature = "jit")]
+        jit_slots: Vec::new(),
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -646,6 +650,8 @@ pub fn run_debug<'m>(
         module,
         #[cfg(feature = "jit")]
         jit: None,
+        #[cfg(feature = "jit")]
+        jit_slots: Vec::new(),
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -678,6 +684,8 @@ pub fn run_profiled(
         module,
         #[cfg(feature = "jit")]
         jit: None,
+        #[cfg(feature = "jit")]
+        jit_slots: Vec::new(),
         regs: Vec::with_capacity(1 << 12),
         globals: vec![Value::Null; module.globals.len()],
         frames: Vec::new(),
@@ -707,6 +715,8 @@ struct Vm<'m> {
     /// machine code for hot numeric functions and loops (normal runs only)
     #[cfg(feature = "jit")]
     jit: Option<Box<crate::jit::Jit>>,
+    #[cfg(feature = "jit")]
+    jit_slots: Vec<crate::jit::Slot>,
     regs: Vec<Value>,
     globals: Vec<Value>,
     frames: Vec<Frame>,
@@ -818,6 +828,9 @@ impl<'m> Vm<'m> {
         let mut ip = 0usize;
         let mut base = 0usize;
         let mut trace_last: (u16, u32) = (u16::MAX, 0); // last (file, line) traced
+        // try to go on in compiled code after this instruction
+        #[allow(unused_mut, unused_variables)]
+        let mut jit_try = false;
         let mut debug_last: (u16, u32, usize) = (u16::MAX, 0, 0); // last (file, line, depth) debugged
         self.regs.resize(m.functions[0].n_regs as usize, Value::Null);
         // task 0 is the main program; its live state is in the locals above and in
@@ -859,36 +872,15 @@ impl<'m> Vm<'m> {
                 }
             }};
         }
-        // A loop jumped back from instruction `$at` to `$t`: count the turn and,
-        // once the loop is compiled, run it as machine code. It hands back its
-        // registers and the instruction to go on with.
+        // A loop jumped back from instruction `$at` to `$t`: one more turn makes its
+        // function hotter; once compiled, the body runs from here.
         macro_rules! back_edge {
             ($t:expr, $at:expr) => {
                 #[cfg(feature = "jit")]
                 if !WATCH && ($t) <= ($at) {
                     if let Some(jit) = self.jit.as_mut() {
-                        if let Some(k) = jit.back_edge(m, func, $t) {
-                            let lc = jit.loop_code(k);
-                            let (entry, start, end) = (lc.entry, lc.start, lc.end);
-                            let mut slots = vec![crate::jit::Slot::default(); m.functions[func].n_regs as usize];
-                            for &r in &lc.used {
-                                slots[r as usize] = crate::jit::Slot::of(&self.regs[base + r as usize]);
-                            }
-                            let mut cx = crate::jit::Ctx { regs: self.regs.as_mut_ptr().wrapping_add(base), globals: self.globals.as_mut_ptr() };
-                            let budget = crate::jit::budget(self.frames.len(), MAX_CALL_DEPTH);
-                            // SAFETY: the loop reads and writes its slots, and through the
-                            // helpers only this frame's registers and the globals
-                            let resume = unsafe { entry(slots.as_mut_ptr(), budget, &mut cx) } as usize;
-                            for &r in &jit.loop_code(k).written {
-                                if let Some(v) = slots[r as usize].value() {
-                                    self.regs[base + r as usize] = v;
-                                }
-                            }
-                            ip = resume;
-                            if resume >= start && resume < end {
-                                jit.loop_stopped(k, func, $t);
-                            }
-                        }
+                        jit.heat(m, func, 1);
+                        jit_try = true;
                     }
                 }
             };
@@ -1422,6 +1414,13 @@ impl<'m> Vm<'m> {
                     code = &callee.code;
                     ip = 0;
                     base = new_base;
+                    #[cfg(feature = "jit")]
+                    if !WATCH {
+                        if let Some(jit) = self.jit.as_mut() {
+                            jit.heat(m, func, 25);
+                            jit_try = true;
+                        }
+                    }
                     }
                 }
                 Op::Ensure { flag, func: f } => {
@@ -1451,6 +1450,7 @@ impl<'m> Vm<'m> {
                             base = fr.base;
                             set!(fr.dst, v);
                             self.drop_handlers_above();
+                            jit_try = true;
                         }
                         None => finish_task!(),
                     }
@@ -1463,6 +1463,7 @@ impl<'m> Vm<'m> {
                         ip = fr.ip;
                         base = fr.base;
                         self.drop_handlers_above();
+                        jit_try = true;
                     }
                     None => finish_task!(),
                 },
@@ -1620,6 +1621,7 @@ impl<'m> Vm<'m> {
                         base = h.base;
                         ip = h.catch_ip;
                         self.regs[base + h.err as usize] = Value::Str(msg.as_str().into());
+                        jit_try = true;
                     }
                     None => {
                         if let Some(mut hook) = self.debug.take() {
@@ -1628,6 +1630,41 @@ impl<'m> Vm<'m> {
                             hook.on_error(&state, &msg);
                         }
                         return Err(self.error_at(func, ip, base, msg));
+                    }
+                }
+            }
+            // go on in the function's compiled body, from this instruction
+            #[cfg(feature = "jit")]
+            if jit_try && !WATCH {
+                jit_try = false;
+                if let Some(jit) = self.jit.as_mut() {
+                    if let Some(body) = jit.entry(func, ip) {
+                        let entry = body.entry;
+                        let n = m.functions[func].n_regs as usize;
+                        self.jit_slots.clear();
+                        self.jit_slots.resize(n, crate::jit::Slot::default());
+                        for &r in &body.used {
+                            self.jit_slots[r as usize] = crate::jit::Slot::of(&self.regs[base + r as usize]);
+                        }
+                        let mut cx = crate::jit::Ctx { regs: self.regs.as_mut_ptr().wrapping_add(base), globals: self.globals.as_mut_ptr() };
+                        let budget = crate::jit::budget(self.frames.len(), MAX_CALL_DEPTH);
+                        // SAFETY: the body reads and writes its slots, and through the
+                        // helpers only this frame's registers and the globals
+                        let resume = unsafe { entry(self.jit_slots.as_mut_ptr(), budget, &mut cx, ip as i64) } as usize;
+                        for &r in &body.written {
+                            if let Some(v) = self.jit_slots[r as usize].value() {
+                                self.regs[base + r as usize] = v;
+                            }
+                        }
+                        // stopped at an instruction it can run: an error to report,
+                        // or a call that gave up
+                        if jit.entry(func, resume).is_some() {
+                            jit.stopped(func, resume);
+                        }
+                        ip = resume;
+                        jit_try = true;
+                    } else if jit.compiled(func) {
+                        jit_try = true;
                     }
                 }
             }
