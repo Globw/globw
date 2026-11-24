@@ -1598,6 +1598,7 @@ use fmtspec::*;
 fn enum_text(v: &Value, names: &Value) -> String {
     let names: Vec<String> = match names {
         Value::Seq(q) => q.borrow().iter().map(display).collect(),
+        Value::Packed(p) => p.borrow().values().iter().map(display).collect(),
         _ => Vec::new(),
     };
     let name = |x: &Value| match x {
@@ -1606,6 +1607,7 @@ fn enum_text(v: &Value, names: &Value) -> String {
     };
     match v {
         Value::Seq(q) => format!("[{}]", q.borrow().iter().map(name).collect::<Vec<_>>().join(", ")),
+        Value::Packed(p) => format!("[{}]", p.borrow().values().iter().map(name).collect::<Vec<_>>().join(", ")),
         Value::Dict(d) => {
             let d = d.borrow();
             let pairs: Vec<String> =

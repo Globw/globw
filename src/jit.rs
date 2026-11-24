@@ -33,7 +33,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module as _};
 
 use crate::bytecode::{Cmp, Function, Module, Op};
-use crate::vm::Value;
+use crate::vm::{Packed, Value};
 
 pub const TAG_NONE: i64 = 0;
 pub const TAG_INT: i64 = 1;
@@ -224,6 +224,14 @@ unsafe fn give(ctx: *mut Ctx, d: i64, v: &Value, out: *mut Slot) -> i64 {
 }
 
 unsafe extern "C" fn gw_get_elem(ctx: *mut Ctx, d: i64, c: i64, i: i64, out: *mut Slot) -> i64 {
+    if let Value::Packed(p) = &*(*ctx).regs.add(c as usize) {
+        let p = p.borrow();
+        if i < 1 || i as u64 > p.len() as u64 {
+            return 1;
+        }
+        let v = p.get(i as usize - 1);
+        return give(ctx, d, &v, out);
+    }
     let Value::Seq(q) = &*(*ctx).regs.add(c as usize) else { return 1 };
     let v = {
         let q = q.borrow();
@@ -237,6 +245,14 @@ unsafe extern "C" fn gw_get_elem(ctx: *mut Ctx, d: i64, c: i64, i: i64, out: *mu
 
 unsafe extern "C" fn gw_set_elem(ctx: *mut Ctx, c: i64, i: i64, bits: i64, tag: i64, s: i64) -> i64 {
     let v = stored(ctx, bits, tag, s);
+    if let Value::Packed(p) = &*(*ctx).regs.add(c as usize) {
+        let mut p = p.borrow_mut();
+        if i < 1 || i as u64 > p.len() as u64 {
+            return 1;
+        }
+        p.set(i as usize - 1, &v);
+        return 0;
+    }
     let Value::Seq(q) = &*(*ctx).regs.add(c as usize) else { return 1 };
     let mut q = q.borrow_mut();
     if i < 1 || i as u64 > q.len() as u64 {
@@ -274,6 +290,7 @@ unsafe extern "C" fn gw_set_elem2(ctx: *mut Ctx, c: i64, i: i64, j: i64, bits: i
 unsafe extern "C" fn gw_length(ctx: *mut Ctx, s: i64) -> i64 {
     match &*(*ctx).regs.add(s as usize) {
         Value::Seq(q) => q.borrow().len() as i64,
+        Value::Packed(p) => p.borrow().len() as i64,
         Value::Dict(t) | Value::Set(t) => t.borrow().len() as i64,
         Value::Str(t) => t.chars().count() as i64,
         _ => -1,
@@ -282,6 +299,10 @@ unsafe extern "C" fn gw_length(ctx: *mut Ctx, s: i64) -> i64 {
 
 unsafe extern "C" fn gw_append(ctx: *mut Ctx, l: i64, bits: i64, tag: i64, s: i64) -> i64 {
     let v = stored(ctx, bits, tag, s);
+    if let Value::Packed(p) = &*(*ctx).regs.add(l as usize) {
+        p.borrow_mut().push(&v);
+        return 0;
+    }
     let Value::Seq(q) = &*(*ctx).regs.add(l as usize) else { return 1 };
     q.borrow_mut().push(v);
     0
@@ -305,14 +326,32 @@ unsafe extern "C" fn gw_move(ctx: *mut Ctx, d: i64, s: i64) -> i64 {
     0
 }
 
-/// An array or list's elements: `out` gets the address of the first and the
-/// count. 1 when the register holds no array or list.
+/// An array or list's elements: `out` gets the address of the first, the count,
+/// the kind (-1: values, 0: ints, 1: floats, 2: bools) and, for compact ints and
+/// floats, the address of the "has a value" bits. 1 when it is no array or list.
 unsafe extern "C" fn gw_seq_view(ctx: *mut Ctx, c: i64, out: *mut i64) -> i64 {
-    let Value::Seq(q) = &*(*ctx).regs.add(c as usize) else { return 1 };
-    let v = &*q.as_ptr();
-    *out = v.as_ptr() as i64;
-    *out.add(1) = v.len() as i64;
-    0
+    match &*(*ctx).regs.add(c as usize) {
+        Value::Seq(q) => {
+            let v = &*q.as_ptr();
+            *out = v.as_ptr() as i64;
+            *out.add(1) = v.len() as i64;
+            *out.add(2) = -1;
+            0
+        }
+        Value::Packed(p) => {
+            let (data, n, kind, bits) = match &*p.as_ptr() {
+                Packed::Ints(v, b) => (v.as_ptr() as i64, v.len(), 0, b.as_ptr() as i64),
+                Packed::Reals(v, b) => (v.as_ptr() as i64, v.len(), 1, b.as_ptr() as i64),
+                Packed::Bools(v) => (v.as_ptr() as i64, v.len(), 2, 0),
+            };
+            *out = data;
+            *out.add(1) = n as i64;
+            *out.add(2) = kind;
+            *out.add(3) = bits;
+            0
+        }
+        _ => 1,
+    }
 }
 
 /// A matrix's cells: address of the first, rows, columns.
@@ -486,7 +525,9 @@ fn written_reg(op: &Op) -> Option<u16> {
 struct ViewVars {
     ptr: Variable,
     len: Variable,
+    /// columns of a matrix; the kind of an array or list
     cols: Variable,
+    bits: Variable,
     ep: Variable,
 }
 
@@ -931,7 +972,7 @@ impl Jit {
             let out = b.ins().stack_addr(ptr, out_slot, 0);
             // views of containers: all stale at the start (epoch 0, views -1)
             let views: Vec<ViewVars> = (0..n_regs)
-                .map(|_| ViewVars { ptr: b.declare_var(types::I64), len: b.declare_var(types::I64), cols: b.declare_var(types::I64), ep: b.declare_var(types::I64) })
+                .map(|_| ViewVars { ptr: b.declare_var(types::I64), len: b.declare_var(types::I64), cols: b.declare_var(types::I64), bits: b.declare_var(types::I64), ep: b.declare_var(types::I64) })
                 .collect();
             let epoch = b.declare_var(types::I64);
             b.def_var(epoch, zero);
@@ -940,6 +981,7 @@ impl Jit {
                 b.def_var(v.ptr, zero);
                 b.def_var(v.len, zero);
                 b.def_var(v.cols, zero);
+                b.def_var(v.bits, zero);
                 b.def_var(v.ep, minus1);
             }
             let blocks: Vec<Block> = (start..end).map(|_| b.create_block()).collect();
@@ -1223,9 +1265,12 @@ impl Gen<'_> {
         let n = b.ins().load(types::I64, MemFlagsData::trusted(), out, 8);
         b.def_var(vv.ptr, p);
         b.def_var(vv.len, n);
-        if matrix {
-            let k = b.ins().load(types::I64, MemFlagsData::trusted(), out, 16);
-            b.def_var(vv.cols, k);
+        // a matrix: columns; an array or list: its kind, and the bits
+        let k = b.ins().load(types::I64, MemFlagsData::trusted(), out, 16);
+        b.def_var(vv.cols, k);
+        if !matrix {
+            let bits = b.ins().load(types::I64, MemFlagsData::trusted(), out, 24);
+            b.def_var(vv.bits, bits);
         }
         b.def_var(vv.ep, e);
         b.ins().jump(have, &[]);
@@ -1311,6 +1356,121 @@ impl Gen<'_> {
         self.jump_next(b, ip);
     }
 
+    /// Reads element `k` of a compact array of `kind` (data at `p`, bits at `bits`).
+    fn read_packed(&self, b: &mut FunctionBuilder, ip: usize, d: u16, p: V, bits: V, kind: V, k: V, slow: Block) {
+        let (ints, not_int, reals, bools) = (b.create_block(), b.create_block(), b.create_block(), b.create_block());
+        let is0 = b.ins().icmp_imm_s(IntCC::Equal, kind, 0);
+        b.ins().brif(is0, ints, &[], not_int, &[]);
+        b.switch_to_block(not_int);
+        let is1 = b.ins().icmp_imm_s(IntCC::Equal, kind, 1);
+        b.ins().brif(is1, reals, &[], bools, &[]);
+        for (blk, real) in [(ints, false), (reals, true)] {
+            b.switch_to_block(blk);
+            let has = self.has_bit(b, bits, k);
+            let ok = b.create_block();
+            b.ins().brif(has, ok, &[], slow, &[]);
+            b.switch_to_block(ok);
+            let off = b.ins().ishl_imm_s(k, 3);
+            let a = b.ins().iadd(p, off);
+            if real {
+                let v = b.ins().load(types::F64, MemFlagsData::trusted(), a, 0);
+                self.set_r(b, d, v);
+            } else {
+                let v = b.ins().load(types::I64, MemFlagsData::trusted(), a, 0);
+                self.set_i(b, d, v);
+            }
+            self.jump_next(b, ip);
+        }
+        b.switch_to_block(bools);
+        let a = b.ins().iadd(p, k);
+        let v = b.ins().load(types::I8, MemFlagsData::trusted(), a, 0);
+        let unset = b.ins().icmp_imm_s(IntCC::Equal, v, crate::vm::UNSET_BOOL as i64);
+        let ok = b.create_block();
+        b.ins().brif(unset, slow, &[], ok, &[]);
+        b.switch_to_block(ok);
+        self.set_b(b, d, v);
+        self.jump_next(b, ip);
+    }
+
+    /// The "has a value" bit of element `k`.
+    fn has_bit(&self, b: &mut FunctionBuilder, bits: V, k: V) -> V {
+        let w = b.ins().ushr_imm_s(k, 6);
+        let off = b.ins().ishl_imm_s(w, 3);
+        let a = b.ins().iadd(bits, off);
+        let word = b.ins().load(types::I64, MemFlagsData::trusted(), a, 0);
+        let sh = b.ins().band_imm_s(k, 63);
+        let x = b.ins().ushr(word, sh);
+        b.ins().band_imm_s(x, 1)
+    }
+
+    /// Writes register `s` into element `k` of a compact array of `kind`.
+    fn write_packed(&self, b: &mut FunctionBuilder, ip: usize, s: u16, p: V, bits: V, kind: V, k: V, slow: Block) {
+        let v = self.vars[s as usize];
+        let tag = b.use_var(v.t);
+        let (ints, not_int, reals, bools) = (b.create_block(), b.create_block(), b.create_block(), b.create_block());
+        let is0 = b.ins().icmp_imm_s(IntCC::Equal, kind, 0);
+        b.ins().brif(is0, ints, &[], not_int, &[]);
+        b.switch_to_block(not_int);
+        let is1 = b.ins().icmp_imm_s(IntCC::Equal, kind, 1);
+        b.ins().brif(is1, reals, &[], bools, &[]);
+        // ints: an int value
+        b.switch_to_block(ints);
+        let ok = b.create_block();
+        let t_int = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_INT);
+        b.ins().brif(t_int, ok, &[], slow, &[]);
+        b.switch_to_block(ok);
+        let x = b.use_var(v.i);
+        let off = b.ins().ishl_imm_s(k, 3);
+        let a = b.ins().iadd(p, off);
+        b.ins().store(MemFlagsData::trusted(), x, a, 0);
+        self.set_bit(b, bits, k);
+        self.jump_next(b, ip);
+        // floats: a float, or an int made a float
+        b.switch_to_block(reals);
+        let (from_r, not_r, from_i) = (b.create_block(), b.create_block(), b.create_block());
+        let t_real = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_REAL);
+        b.ins().brif(t_real, from_r, &[], not_r, &[]);
+        b.switch_to_block(not_r);
+        let t_int = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_INT);
+        b.ins().brif(t_int, from_i, &[], slow, &[]);
+        for (blk, conv) in [(from_r, false), (from_i, true)] {
+            b.switch_to_block(blk);
+            let x = if conv {
+                let n = b.use_var(v.i);
+                b.ins().fcvt_from_sint(types::F64, n)
+            } else {
+                b.use_var(v.r)
+            };
+            let off = b.ins().ishl_imm_s(k, 3);
+            let a = b.ins().iadd(p, off);
+            b.ins().store(MemFlagsData::trusted(), x, a, 0);
+            self.set_bit(b, bits, k);
+            self.jump_next(b, ip);
+        }
+        // bools: a bool
+        b.switch_to_block(bools);
+        let ok = b.create_block();
+        let t_bool = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_BOOL);
+        b.ins().brif(t_bool, ok, &[], slow, &[]);
+        b.switch_to_block(ok);
+        let x = b.use_var(v.b);
+        let a = b.ins().iadd(p, k);
+        b.ins().store(MemFlagsData::trusted(), x, a, 0);
+        self.jump_next(b, ip);
+    }
+
+    fn set_bit(&self, b: &mut FunctionBuilder, bits: V, k: V) {
+        let w = b.ins().ushr_imm_s(k, 6);
+        let off = b.ins().ishl_imm_s(w, 3);
+        let a = b.ins().iadd(bits, off);
+        let word = b.ins().load(types::I64, MemFlagsData::trusted(), a, 0);
+        let sh = b.ins().band_imm_s(k, 63);
+        let one = b.ins().iconst(types::I64, 1);
+        let m = b.ins().ishl(one, sh);
+        let nw = b.ins().bor(word, m);
+        b.ins().store(MemFlagsData::trusted(), nw, a, 0);
+    }
+
     /// Index `i` (1-based) in range 1..=n: its 0-based value, or a jump to `slow`.
     fn in_range(&self, b: &mut FunctionBuilder, i: V, n: V, slow: Block) -> V {
         let k = b.ins().iadd_imm_s(i, -1);
@@ -1325,23 +1485,28 @@ impl Gen<'_> {
         // elements read and written in place, the helpers only for the rest
         if let (Some(lay), true) = (self.layout, self.epoch.is_some()) {
             match op {
-                Op::GetElem(d, c, i) => {
+                Op::GetElem(d, c, i) | Op::SetElem(c, i, d) => {
                     let slow = b.create_block();
-                    let (p, n, _) = self.view(b, c, false, slow)?;
+                    let (p, n, kind) = self.view(b, c, false, slow)?;
+                    let bits = b.use_var(self.views[c as usize].bits);
                     let iv = self.i(b, i);
                     let k = self.in_range(b, iv, n, slow);
+                    let (values, packed) = (b.create_block(), b.create_block());
+                    let is_values = b.ins().icmp_imm_s(IntCC::Equal, kind, -1);
+                    b.ins().brif(is_values, values, &[], packed, &[]);
+                    b.switch_to_block(packed);
+                    if matches!(op, Op::GetElem(..)) {
+                        self.read_packed(b, ip, d, p, bits, kind, k, slow);
+                    } else {
+                        self.write_packed(b, ip, d, p, bits, kind, k, slow);
+                    }
+                    b.switch_to_block(values);
                     let a = self.elem_addr(b, p, k, lay);
-                    self.read_elem(b, ip, d, a, lay, slow);
-                    b.switch_to_block(slow);
-                    return self.slow_op(b, ip, op);
-                }
-                Op::SetElem(c, i, s) => {
-                    let slow = b.create_block();
-                    let (p, n, _) = self.view(b, c, false, slow)?;
-                    let iv = self.i(b, i);
-                    let k = self.in_range(b, iv, n, slow);
-                    let a = self.elem_addr(b, p, k, lay);
-                    self.write_elem(b, ip, s, a, lay, slow);
+                    if matches!(op, Op::GetElem(..)) {
+                        self.read_elem(b, ip, d, a, lay, slow);
+                    } else {
+                        self.write_elem(b, ip, d, a, lay, slow);
+                    }
                     b.switch_to_block(slow);
                     return self.slow_op(b, ip, op);
                 }

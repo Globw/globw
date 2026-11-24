@@ -345,3 +345,57 @@ end try
     assert_eq!(code, 0, "{}", out);
     assert!(out.contains("caught: index 101"), "{}", out);
 }
+
+#[test]
+fn compact_arrays_behave_like_arrays() {
+    let src = "variables:
+    a as int[200]
+    f as float[200]
+    flags as bool[200]
+    i, s as int
+    problem as string
+procedure fill(xs as int[])
+    variables:
+        k as int
+    for(k from 1 to 200)
+        xs[k] = (k * 37) mod 101
+    end loop
+end procedure
+fill(a)
+for(i from 1 to 200)
+    f[i] = i
+    flags[i] = i mod 3 == 0
+end loop
+sort(a)
+s = 0
+for(i from 1 to 200)
+    if(flags[i])
+        s = s + a[i]
+    end if
+end loop
+output(s, \" \", a[1], \" \", a[200], \" \", f[200] / 3, \" \", flags[3], \" \", length(a))
+output(sum(f))
+try
+    output(a[201])
+catch problem
+    output(problem)
+end try
+";
+    let (code, out, _) = same("packed", src);
+    assert_eq!(code, 0, "{}", out);
+    let unset = "variables:
+    a as int[100]
+    i, s as int
+for(i from 1 to 99)
+    a[i] = i
+end loop
+s = 0
+for(i from 1 to 100)
+    s = s + a[i]
+end loop
+output(s)
+";
+    let (code, _, err) = same("packed_unset", unset);
+    assert_ne!(code, 0);
+    assert!(err.contains("no value"), "{}", err);
+}

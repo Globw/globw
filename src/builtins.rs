@@ -4250,6 +4250,24 @@ impl Env {
 
     /// Runs a built-in; procedures return `Value::Null`.
     pub fn call(&mut self, b: Builtin, args: &[Value]) -> Result<Value, String> {
+        // a compact array reaches a built-in as a list, and what the built-in
+        // changes in it (a sort, a shuffle...) is taken back
+        if args.iter().any(|a| matches!(a, Value::Packed(_))) {
+            let lists: Vec<Value> = args
+                .iter()
+                .map(|a| match a {
+                    Value::Packed(p) => Value::Seq(std::rc::Rc::new(std::cell::RefCell::new(p.borrow().values()))),
+                    other => other.clone(),
+                })
+                .collect();
+            let result = self.call(b, &lists);
+            for (a, l) in args.iter().zip(&lists) {
+                if let (Value::Packed(p), Value::Seq(q)) = (a, l) {
+                    p.borrow_mut().take(&q.borrow());
+                }
+            }
+            return result;
+        }
         // the permissions (--allow-...) of every built-in, here or in the library
         #[cfg(feature = "native")]
         library::cap_check(b, args)?;

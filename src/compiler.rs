@@ -51,9 +51,16 @@ impl Strings {
     }
 }
 
-fn alloc(shape: &Shape, dst: Reg) -> Option<Op> {
+fn alloc(shape: &Shape, ty: &crate::tir::Type, dst: Reg) -> Option<Op> {
+    use crate::tir::{BaseType, Type};
     match *shape {
-        Shape::Array(n) => Some(Op::NewArray(dst, n as u32)),
+        // arrays of numbers or bools are compact: one machine value per element
+        Shape::Array(n) => Some(match ty {
+            Type::Array(Some(BaseType::Int)) => Op::NewPacked(dst, n as u32, 0),
+            Type::Array(Some(BaseType::Real)) => Op::NewPacked(dst, n as u32, 1),
+            Type::Array(Some(BaseType::Bool)) => Op::NewPacked(dst, n as u32, 2),
+            _ => Op::NewArray(dst, n as u32),
+        }),
         Shape::Matrix(r, c) => Some(Op::NewMatrix(dst, r as u32, c as u32)),
         Shape::List => Some(Op::NewList(dst)),
         Shape::Dict => Some(Op::NewDict(dst)),
@@ -160,7 +167,7 @@ impl<'a> FnCompiler<'a> {
         if let Some(globals) = self.globals {
             for (g, slot) in globals.iter().enumerate() {
                 let t = self.temp();
-                if let Some(op) = alloc(&slot.shape, t) {
+                if let Some(op) = alloc(&slot.shape, &slot.ty, t) {
                     self.emit(op, start);
                     self.emit(Op::SetGlobal(g as u16, t), start);
                 }
@@ -170,7 +177,7 @@ impl<'a> FnCompiler<'a> {
         let f = self.f;
         for (k, slot) in f.locals.iter().enumerate() {
             if !slot.is_param {
-                if let Some(op) = alloc(&slot.shape, k as Reg) {
+                if let Some(op) = alloc(&slot.shape, &slot.ty, k as Reg) {
                     self.emit(op, start);
                 }
             }

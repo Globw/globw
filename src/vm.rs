@@ -20,6 +20,8 @@ pub enum Value {
     Str(Rc<str>),
     /// arrays and lists
     Seq(Rc<RefCell<Vec<Value>>>),
+    /// a compact array of ints, floats or bools (`int[n]`, `float[n]`, `bool[n]`)
+    Packed(Rc<RefCell<Packed>>),
     Matrix(Rc<RefCell<Matrix>>),
     Dict(Rc<RefCell<Dict>>),
     Object(Rc<RefCell<Obj>>),
@@ -35,6 +37,106 @@ pub enum Value {
     /// this keeps a handle that frees it on drop, plus the shape). Data is f32.
     #[cfg(feature = "gpu")]
     GpuFloats(Rc<crate::gpu::GpuHandle>, Rc<Vec<usize>>),
+}
+
+/// A compact array: one machine value per element, and for ints and floats one bit
+/// per element saying it has a value (reading one that has none is an error, as
+/// with any array). Bools keep 0 (false), 1 (true) or 2 (no value) in a byte.
+#[derive(Debug, Clone)]
+pub enum Packed {
+    Ints(Vec<i64>, Vec<u64>),
+    Reals(Vec<f64>, Vec<u64>),
+    Bools(Vec<u8>),
+}
+
+pub const UNSET_BOOL: u8 = 2;
+
+impl Packed {
+    pub fn new(n: usize, kind: u8) -> Packed {
+        let bits = vec![0u64; n.div_ceil(64)];
+        match kind {
+            0 => Packed::Ints(vec![0; n], bits),
+            1 => Packed::Reals(vec![0.0; n], bits),
+            _ => Packed::Bools(vec![UNSET_BOOL; n]),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Packed::Ints(v, _) => v.len(),
+            Packed::Reals(v, _) => v.len(),
+            Packed::Bools(v) => v.len(),
+        }
+    }
+
+    /// Element `k` (0-based, in range); `Value::Null` when it has no value yet.
+    pub fn get(&self, k: usize) -> Value {
+        let has = |bits: &Vec<u64>| bits[k >> 6] >> (k & 63) & 1 == 1;
+        match self {
+            Packed::Ints(v, b) if has(b) => Value::Int(v[k]),
+            Packed::Reals(v, b) if has(b) => Value::Real(v[k]),
+            Packed::Bools(v) if v[k] != UNSET_BOOL => Value::Bool(v[k] == 1),
+            _ => Value::Null,
+        }
+    }
+
+    /// Stores `x` at `k` (0-based, in range). `Null` takes the value away; an int
+    /// stored in a float array becomes a float.
+    pub fn set(&mut self, k: usize, x: &Value) {
+        match (self, x) {
+            (Packed::Ints(v, b), Value::Int(n)) => {
+                v[k] = *n;
+                b[k >> 6] |= 1 << (k & 63);
+            }
+            (Packed::Reals(v, b), Value::Real(r)) => {
+                v[k] = *r;
+                b[k >> 6] |= 1 << (k & 63);
+            }
+            (Packed::Reals(v, b), Value::Int(n)) => {
+                v[k] = *n as f64;
+                b[k >> 6] |= 1 << (k & 63);
+            }
+            (Packed::Bools(v), Value::Bool(t)) => v[k] = *t as u8,
+            (Packed::Ints(_, b), _) | (Packed::Reals(_, b), _) => b[k >> 6] &= !(1 << (k & 63)),
+            (Packed::Bools(v), _) => v[k] = UNSET_BOOL,
+        }
+    }
+
+    pub fn push(&mut self, x: &Value) {
+        let k = self.len();
+        match self {
+            Packed::Ints(v, b) => {
+                v.push(0);
+                if b.len() * 64 <= k {
+                    b.push(0);
+                }
+            }
+            Packed::Reals(v, b) => {
+                v.push(0.0);
+                if b.len() * 64 <= k {
+                    b.push(0);
+                }
+            }
+            Packed::Bools(v) => v.push(UNSET_BOOL),
+        }
+        self.set(k, x);
+    }
+
+    /// The elements as values (`Null` where there is none), for code that works on
+    /// any list.
+    pub fn values(&self) -> Vec<Value> {
+        (0..self.len()).map(|k| self.get(k)).collect()
+    }
+
+    /// Takes back elements from a list made with `values` (after a library call
+    /// that may have changed it, e.g. a sort).
+    pub fn take(&mut self, items: &[Value]) {
+        if items.len() == self.len() {
+            for (k, x) in items.iter().enumerate() {
+                self.set(k, x);
+            }
+        }
+    }
 }
 
 /// An object: its class id and the values of its fields, in slot order.
@@ -306,6 +408,7 @@ fn repr_at(v: &Value, depth: usize) -> String {
         Value::Str(s) if s.contains('\'') && !s.contains('"') => format!("\"{}\"", s),
         Value::Str(s) => format!("'{}'", s.replace('\'', "\\'")),
         Value::Seq(q) => format!("[{}]", items(&mut q.borrow().iter())),
+        Value::Packed(p) => format!("[{}]", items(&mut p.borrow().values().iter())),
         Value::Matrix(m) => {
             let m = m.borrow();
             let rows: Vec<String> =
@@ -1071,6 +1174,7 @@ impl<'m> Vm<'m> {
                     self.globals[g as usize] = v;
                 }
                 Op::NewArray(d, n) => reg!(d) = Value::Seq(Rc::new(RefCell::new(null_values(n as usize)))),
+                Op::NewPacked(d, n, kind) => reg!(d) = Value::Packed(Rc::new(RefCell::new(Packed::new(n as usize, kind)))),
                 Op::NewMatrix(d, r, c) => {
                     let (rows, cols) = (r as usize, c as usize);
                     let data = null_values(rows * cols);
@@ -1123,7 +1227,13 @@ impl<'m> Vm<'m> {
                 }
                 Op::GetElem(d, c, i) => {
                     let i = int(&reg!(i));
-                    let v = {
+                    let v = if let Value::Packed(p) = &reg!(c) {
+                        let p = p.borrow();
+                        match position(i, p.len()) {
+                            Ok(k) => p.get(k),
+                            Err(msg) => fail!(msg),
+                        }
+                    } else {
                         let s = seq(&reg!(c)).borrow();
                         match position(i, s.len()) {
                             Ok(k) => s[k].clone(),
@@ -1137,11 +1247,19 @@ impl<'m> Vm<'m> {
                 }
                 Op::SetElem(c, i, s) => {
                     let i = int(&reg!(i));
+                    if let Value::Packed(p) = &reg!(c) {
+                        let mut p = p.borrow_mut();
+                        match position(i, p.len()) {
+                            Ok(k) => p.set(k, &reg!(s)),
+                            Err(msg) => fail!(msg),
+                        }
+                    } else {
                     let v = reg!(s).clone();
                     let mut q = seq(&reg!(c)).borrow_mut();
                     match position(i, q.len()) {
                         Ok(k) => q[k] = v,
                         Err(msg) => fail!(msg),
+                    }
                     }
                 }
                 Op::GetElem2(d, c, i, j) => {
@@ -1182,6 +1300,7 @@ impl<'m> Vm<'m> {
                 Op::Length(d, s) => {
                     let n = match &reg!(s) {
                         Value::Seq(q) => q.borrow().len(),
+                        Value::Packed(p) => p.borrow().len(),
                         Value::Dict(t) => t.borrow().len(),
                         Value::Set(t) => t.borrow().len(),
                         Value::Str(t) => t.chars().count(),
@@ -1191,7 +1310,11 @@ impl<'m> Vm<'m> {
                 }
                 Op::Append(l, s) => {
                     let v = reg!(s).clone();
+                    if let Value::Packed(p) = &reg!(l) {
+                        p.borrow_mut().push(&v);
+                    } else {
                     seq(&reg!(l)).borrow_mut().push(v);
+                    }
                 }
                 Op::Remove(l, i) => {
                     let i = int(&reg!(i));

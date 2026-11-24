@@ -950,6 +950,7 @@ pub fn sorted_order(rows: &[Vec<String>], sort: Option<(usize, bool)>) -> Vec<us
 pub(crate) fn strings_of(v: &crate::vm::Value) -> Vec<String> {
     match v {
         crate::vm::Value::Seq(q) => q.borrow().iter().map(crate::vm::display).collect(),
+        crate::vm::Value::Packed(p) => p.borrow().values().iter().map(crate::vm::display).collect(),
         _ => Vec::new(),
     }
 }

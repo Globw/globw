@@ -51,6 +51,7 @@ pub(super) fn to_json_value(v: &Value) -> Result<Json, String> {
         Value::Bool(b) => Json::Bool(*b),
         Value::Str(s) => Json::String(s.to_string()),
         Value::Seq(items) => Json::Array(items.borrow().iter().map(to_json_value).collect::<Result<_, _>>()?),
+        Value::Packed(p) => Json::Array(p.borrow().values().iter().map(to_json_value).collect::<Result<_, _>>()?),
         Value::Floats(g, _) => Json::Array(
             g.borrow()
                 .iter()

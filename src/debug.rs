@@ -130,6 +130,15 @@ fn var(name: String, v: &Value, depth: usize) -> DebugVar {
         Value::Real(_) => ("float".into(), vec![]),
         Value::Bool(_) => ("bool".into(), vec![]),
         Value::Str(_) => ("string".into(), vec![]),
+        Value::Packed(p) => {
+            let items = p.borrow().values();
+            let kids = if depth < MAX_DEPTH {
+                items.iter().take(MAX_ITEMS).enumerate().map(|(i, x)| var(format!("[{}]", i + 1), x, depth + 1)).collect()
+            } else {
+                vec![]
+            };
+            (format!("array ({})", items.len()), kids)
+        }
         Value::Seq(q) => {
             let items = q.borrow();
             let kids = if depth < MAX_DEPTH {
