@@ -22,6 +22,12 @@ the same errors as the interpreter.
   0.94 → 0.11 s: faster than Java.
 - On in normal runs; the debugger, `--trace`, `--profile` and the web playground
   use the interpreter. `GLOBW_NO_JIT=1` turns it off.
+- Hot functions are compiled whole, the main program too, and can start at any
+  instruction: what compiled code cannot run (a call to an interpreted function, a
+  return) it hands to the interpreter, which goes back into compiled code right
+  after. Text (constants, `+`, comparisons, characters), `output` and calls to the
+  library run inside compiled code; an error a library function raises there is
+  reported by the interpreter at the same line, without calling it again.
 - `gw --bytecode` prints a program's compiled instructions.
 
 **Faster start.** On Windows the graphics DLLs are loaded only when the GPU is

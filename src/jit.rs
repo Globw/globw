@@ -181,6 +181,15 @@ fn probe_layout() -> Option<Layout> {
 pub struct Ctx {
     pub regs: *mut Value,
     pub globals: *mut Value,
+    /// the program's string constants
+    pub strings: *const std::rc::Rc<str>,
+    /// where `output` writes
+    pub out: *mut dyn std::io::Write,
+    /// the built-ins' state (windows, files, random numbers...)
+    pub env: *mut crate::builtins::Env,
+    /// an error a built-in raised: the interpreter reports it at the instruction
+    /// compiled code stopped at, without running the built-in again
+    pub error: Option<String>,
 }
 
 /// `fn(args: *const Slot, budget: i64, out: *mut Slot)`
@@ -363,7 +372,120 @@ unsafe extern "C" fn gw_mat_view(ctx: *mut Ctx, c: i64, out: *mut i64) -> i64 {
     0
 }
 
-const HELPERS: [(&str, usize, bool); 11] = [
+/// The value of a register as text, from its bits when it is a number.
+unsafe fn value_of(ctx: *mut Ctx, bits: i64, tag: i64, r: i64) -> Value {
+    stored(ctx, bits, tag, r)
+}
+
+unsafe extern "C" fn gw_load_str(ctx: *mut Ctx, d: i64, k: i64) -> i64 {
+    *(*ctx).regs.add(d as usize) = Value::Str((*(*ctx).strings.add(k as usize)).clone());
+    0
+}
+
+unsafe extern "C" fn gw_concat(ctx: *mut Ctx, d: i64, a: i64, b: i64) -> i64 {
+    let (Value::Str(x), Value::Str(y)) = (&*(*ctx).regs.add(a as usize), &*(*ctx).regs.add(b as usize)) else { return 1 };
+    let mut t = String::with_capacity(x.len() + y.len());
+    t.push_str(x);
+    t.push_str(y);
+    *(*ctx).regs.add(d as usize) = Value::Str(t.into());
+    0
+}
+
+unsafe extern "C" fn gw_to_str(ctx: *mut Ctx, d: i64, bits: i64, tag: i64, s: i64) -> i64 {
+    let t = crate::vm::display(&value_of(ctx, bits, tag, s));
+    *(*ctx).regs.add(d as usize) = Value::Str(t.into());
+    0
+}
+
+/// 0 or 1: the comparison of two strings; 2 when they are not both strings.
+unsafe extern "C" fn gw_cmp_str(ctx: *mut Ctx, c: i64, a: i64, b: i64) -> i64 {
+    let (Value::Str(x), Value::Str(y)) = (&*(*ctx).regs.add(a as usize), &*(*ctx).regs.add(b as usize)) else { return 2 };
+    let (x, y): (&str, &str) = (x, y);
+    (match c {
+        0 => x == y,
+        1 => x != y,
+        2 => x < y,
+        3 => x <= y,
+        4 => x > y,
+        _ => x >= y,
+    }) as i64
+}
+
+unsafe extern "C" fn gw_char_at(ctx: *mut Ctx, d: i64, s: i64, i: i64) -> i64 {
+    let Value::Str(t) = &*(*ctx).regs.add(s as usize) else { return 1 };
+    if i < 1 {
+        return 1;
+    }
+    match t.chars().nth(i as usize - 1) {
+        Some(ch) => {
+            *(*ctx).regs.add(d as usize) = Value::Str(ch.to_string().into());
+            0
+        }
+        None => 1,
+    }
+}
+
+unsafe extern "C" fn gw_print(ctx: *mut Ctx, bits: i64, tag: i64, s: i64) -> i64 {
+    let t = crate::vm::display(&value_of(ctx, bits, tag, s));
+    let _ = (*(*ctx).out).write_all(t.as_bytes());
+    0
+}
+
+unsafe extern "C" fn gw_println(ctx: *mut Ctx) -> i64 {
+    let _ = (*(*ctx).out).write_all(b"\n");
+    0
+}
+
+unsafe extern "C" fn gw_new_list(ctx: *mut Ctx, d: i64) -> i64 {
+    *(*ctx).regs.add(d as usize) = Value::Seq(std::rc::Rc::new(std::cell::RefCell::new(Vec::new())));
+    0
+}
+
+/// Calls built-in `id` with `argc` arguments (their bits and tags at `args`; a
+/// value that is not a number is read from register `first + k`). A function's
+/// result goes to `out` (a number) or straight into register `dst`.
+unsafe extern "C" fn gw_builtin(ctx: *mut Ctx, id: i64, first: i64, argc: i64, dst: i64, args: *const Slot, out: *mut Slot) -> i64 {
+    let vals: Vec<Value> = (0..argc as usize)
+        .map(|k| {
+            let a = *args.add(k);
+            match a.value() {
+                Some(v) => v,
+                None => (*(*ctx).regs.add(first as usize + k)).clone(),
+            }
+        })
+        .collect();
+    let b = crate::builtins::Builtin::from_id(id as u16);
+    match (*(*ctx).env).call(b, &vals) {
+        Ok(v) => {
+            if b.is_function() {
+                let sl = Slot::of(&v);
+                if sl.tag == TAG_NONE {
+                    *(*ctx).regs.add(dst as usize) = v;
+                }
+                *out = sl;
+            }
+            0
+        }
+        Err(msg) => {
+            (*ctx).error = Some(msg);
+            1
+        }
+    }
+}
+
+/// Built-ins compiled code may call: all but those that need the interpreter
+/// itself (tasks, dialogs that flush the output first, stop).
+pub fn callable_builtin(id: u16) -> bool {
+    use crate::builtins::Builtin as B;
+    let b = B::from_id(id);
+    !matches!(
+        b,
+        B::TaskSpawn | B::TaskYield | B::TaskAwait | B::TaskDone | B::TaskId | B::TaskCount | B::TaskChannel | B::TaskSend | B::TaskRecv | B::TaskHas
+            | B::Message | B::Confirm | B::Ask | B::Stop
+    )
+}
+
+const HELPERS: [(&str, usize, bool); 20] = [
     // name, number of i64 arguments after ctx, ends with an `out` pointer
     ("gw_get_elem", 3, true),
     ("gw_set_elem", 5, false),
@@ -376,6 +498,15 @@ const HELPERS: [(&str, usize, bool); 11] = [
     ("gw_move", 2, false),
     ("gw_seq_view", 1, true),
     ("gw_mat_view", 1, true),
+    ("gw_load_str", 2, false),
+    ("gw_concat", 3, false),
+    ("gw_to_str", 4, false),
+    ("gw_cmp_str", 3, false),
+    ("gw_char_at", 3, false),
+    ("gw_print", 3, false),
+    ("gw_println", 0, false),
+    ("gw_new_list", 1, false),
+    ("gw_builtin", 4, true),
 ];
 
 fn helper_ptr(name: &str) -> *const u8 {
@@ -389,6 +520,15 @@ fn helper_ptr(name: &str) -> *const u8 {
         "gw_get_global" => gw_get_global as *const u8,
         "gw_set_global" => gw_set_global as *const u8,
         "gw_seq_view" => gw_seq_view as *const u8,
+        "gw_load_str" => gw_load_str as *const u8,
+        "gw_concat" => gw_concat as *const u8,
+        "gw_to_str" => gw_to_str as *const u8,
+        "gw_cmp_str" => gw_cmp_str as *const u8,
+        "gw_char_at" => gw_char_at as *const u8,
+        "gw_print" => gw_print as *const u8,
+        "gw_println" => gw_println as *const u8,
+        "gw_new_list" => gw_new_list as *const u8,
+        "gw_builtin" => gw_builtin as *const u8,
         "gw_mat_view" => gw_mat_view as *const u8,
         _ => gw_move as *const u8,
     }
@@ -467,6 +607,7 @@ fn loop_extra(op: &Op) -> bool {
     matches!(
         op,
         Op::GetElem(..) | Op::SetElem(..) | Op::GetElem2(..) | Op::SetElem2(..) | Op::Length(..) | Op::Append(..) | Op::GetGlobal(..) | Op::SetGlobal(..)
+            | Op::LoadStr(..) | Op::Concat(..) | Op::ToStr(..) | Op::CmpS(..) | Op::CharAt(..) | Op::Print(..) | Op::PrintLn | Op::NewList(..)
     )
 }
 
@@ -493,6 +634,13 @@ fn regs_of(op: &Op, out: &mut Vec<u16>) {
         Op::GetElem2(d, c, i, j) | Op::SetElem2(c, i, j, d) => out.extend([d, c, i, j]),
         Op::Append(l, s) => out.extend([l, s]),
         Op::GetGlobal(d, _) | Op::SetGlobal(_, d) => out.push(d),
+        Op::LoadStr(d, _) | Op::NewList(d) | Op::Print(d) => out.push(d),
+        Op::Builtin { first, argc, dst, .. } => {
+            out.extend(first..first + argc);
+            out.push(dst);
+        }
+        Op::Concat(d, a, b) | Op::CmpS(_, d, a, b) | Op::CharAt(d, a, b) => out.extend([d, a, b]),
+        Op::ToStr(d, s) => out.extend([d, s]),
         _ => {}
     }
 }
@@ -508,6 +656,8 @@ fn written_reg(op: &Op) -> Option<u16> {
         Op::ForStep { var, .. } => var,
         Op::Call { dst, .. } => dst,
         Op::GetElem(d, ..) | Op::GetElem2(d, ..) | Op::GetGlobal(d, _) => d,
+        Op::LoadStr(d, _) | Op::Concat(d, ..) | Op::ToStr(d, _) | Op::CmpS(_, d, ..) | Op::CharAt(d, ..) | Op::NewList(d) => d,
+        Op::Builtin { dst, .. } => dst,
         _ => return None,
     })
 }
@@ -555,6 +705,9 @@ impl Jit {
             sig.params.push(AbiParam::new(ptr));
             for _ in 0..n {
                 sig.params.push(AbiParam::new(types::I64));
+            }
+            if name == "gw_builtin" {
+                sig.params.push(AbiParam::new(ptr)); // the arguments
             }
             if out {
                 sig.params.push(AbiParam::new(ptr));
@@ -750,6 +903,7 @@ impl Jit {
     fn runs_op(&self, op: &Op) -> bool {
         match op {
             Op::Call { func, .. } => self.funcs.get(*func as usize).is_some_and(|x| x.is_some()),
+            Op::Builtin { id, .. } => callable_builtin(*id),
             op => plain_numeric(op) || loop_extra(op),
         }
     }
@@ -1859,6 +2013,93 @@ impl Gen<'_> {
                 let sc = self.konst(b, s as i64);
                 let st = self.helper(b, "gw_set_global", &[gc, bits, tag, sc])?;
                 self.guard(b, ip, st);
+                self.jump_next(b, ip);
+            }
+            Op::LoadStr(d, k) => {
+                let (dc, kc) = (self.konst(b, d as i64), self.konst(b, k as i64));
+                self.helper(b, "gw_load_str", &[dc, kc])?;
+                self.tag(b, d, TAG_NONE);
+                self.jump_next(b, ip);
+            }
+            Op::NewList(d) => {
+                let dc = self.konst(b, d as i64);
+                self.helper(b, "gw_new_list", &[dc])?;
+                self.tag(b, d, TAG_NONE);
+                self.jump_next(b, ip);
+            }
+            Op::Concat(d, x, y) | Op::CharAt(d, x, y) => {
+                let dc = self.konst(b, d as i64);
+                let xc = self.konst(b, x as i64);
+                let st = if matches!(op, Op::Concat(..)) {
+                    let yc = self.konst(b, y as i64);
+                    self.helper(b, "gw_concat", &[dc, xc, yc])?
+                } else {
+                    let iv = self.i(b, y);
+                    self.helper(b, "gw_char_at", &[dc, xc, iv])?
+                };
+                self.guard(b, ip, st);
+                self.tag(b, d, TAG_NONE);
+                self.jump_next(b, ip);
+            }
+            Op::ToStr(d, s) => {
+                let v = self.vars[s as usize];
+                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let (dc, sc) = (self.konst(b, d as i64), self.konst(b, s as i64));
+                self.helper(b, "gw_to_str", &[dc, bits, tag, sc])?;
+                self.tag(b, d, TAG_NONE);
+                self.jump_next(b, ip);
+            }
+            Op::Print(s) => {
+                let v = self.vars[s as usize];
+                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let sc = self.konst(b, s as i64);
+                self.helper(b, "gw_print", &[bits, tag, sc])?;
+                self.jump_next(b, ip);
+            }
+            Op::Builtin { id, first, argc, dst } => {
+                // the arguments' bits and tags on the stack
+                let ptr = types::I64;
+                let n = (argc as u32).max(1) * 16;
+                let ss = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, n, 3));
+                let args = b.ins().stack_addr(ptr, ss, 0);
+                for k in 0..argc {
+                    let v = self.vars[(first + k) as usize];
+                    let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                    b.ins().store(MemFlagsData::trusted(), bits, args, (k as i32) * 16);
+                    b.ins().store(MemFlagsData::trusted(), tag, args, (k as i32) * 16 + 8);
+                }
+                let (idc, fc, nc, dc) = (self.konst(b, id as i64), self.konst(b, first as i64), self.konst(b, argc as i64), self.konst(b, dst as i64));
+                let out = self.out.ok_or("not in a function")?;
+                let st = self.helper(b, "gw_builtin", &[idc, fc, nc, dc, args, out])?;
+                self.guard(b, ip, st);
+                let fun = crate::builtins::Builtin::from_id(id).is_function();
+                if fun {
+                    self.take_out(b, dst);
+                }
+                self.jump_next(b, ip);
+            }
+            Op::PrintLn => {
+                self.helper(b, "gw_println", &[])?;
+                self.jump_next(b, ip);
+            }
+            Op::CmpS(c, d, x, y) => {
+                let cc = self.konst(
+                    b,
+                    match c {
+                        Cmp::Eq => 0,
+                        Cmp::NotEq => 1,
+                        Cmp::Lt => 2,
+                        Cmp::LtEq => 3,
+                        Cmp::Gt => 4,
+                        Cmp::GtEq => 5,
+                    },
+                );
+                let (xc, yc) = (self.konst(b, x as i64), self.konst(b, y as i64));
+                let r = self.helper(b, "gw_cmp_str", &[cc, xc, yc])?;
+                let bad = b.ins().icmp_imm_s(IntCC::Equal, r, 2);
+                self.guard(b, ip, bad);
+                let v = b.ins().ireduce(types::I8, r);
+                self.set_b(b, d, v);
                 self.jump_next(b, ip);
             }
             other => return Err(format!("not compiled: {:?}", other)),

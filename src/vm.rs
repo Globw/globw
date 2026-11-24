@@ -831,6 +831,9 @@ impl<'m> Vm<'m> {
         // try to go on in compiled code after this instruction
         #[allow(unused_mut, unused_variables)]
         let mut jit_try = false;
+        // an error a built-in raised inside compiled code, reported at the next turn
+        #[allow(unused_mut)]
+        let mut jit_error: Option<String> = None;
         let mut debug_last: (u16, u32, usize) = (u16::MAX, 0, 0); // last (file, line, depth) debugged
         self.regs.resize(m.functions[0].n_regs as usize, Value::Null);
         // task 0 is the main program; its live state is in the locals above and in
@@ -971,7 +974,7 @@ impl<'m> Vm<'m> {
                     }
                 }
             }
-            let raised: Option<String> = loop {
+            let raised: Option<String> = if let Some(msg) = jit_error.take() { Some(msg) } else { loop {
                 match op {
                 Op::PushHandler(catch_ip, err) => self.handlers.push(Handler {
                     catch_ip: catch_ip as usize,
@@ -1609,7 +1612,7 @@ impl<'m> Vm<'m> {
                 }
                 }
                 break None;
-            };
+            } };
             if let Some(msg) = raised {
                 // a run-time error: jump to the nearest try's catch, or stop
                 match self.handlers.pop() {
@@ -1646,7 +1649,15 @@ impl<'m> Vm<'m> {
                         for &r in &body.used {
                             self.jit_slots[r as usize] = crate::jit::Slot::of(&self.regs[base + r as usize]);
                         }
-                        let mut cx = crate::jit::Ctx { regs: self.regs.as_mut_ptr().wrapping_add(base), globals: self.globals.as_mut_ptr() };
+                        let mut cx = crate::jit::Ctx {
+                            regs: self.regs.as_mut_ptr().wrapping_add(base),
+                            globals: self.globals.as_mut_ptr(),
+                            strings: m.strings.as_ptr(),
+                            // SAFETY: used only while the compiled body runs, inside this call
+                            out: unsafe { std::mem::transmute::<*mut (dyn Write + '_), *mut (dyn Write + 'static)>(output as *mut dyn Write) },
+                            env: &mut self.env,
+                            error: None,
+                        };
                         let budget = crate::jit::budget(self.frames.len(), MAX_CALL_DEPTH);
                         // SAFETY: the body reads and writes its slots, and through the
                         // helpers only this frame's registers and the globals
@@ -1663,6 +1674,10 @@ impl<'m> Vm<'m> {
                         }
                         ip = resume;
                         jit_try = true;
+                        if let Some(msg) = cx.error.take() {
+                            // the next turn fetches that instruction and reports this
+                            jit_error = Some(msg);
+                        }
                     } else if jit.compiled(func) {
                         jit_try = true;
                     }

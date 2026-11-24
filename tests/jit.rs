@@ -399,3 +399,33 @@ output(s)
     assert_ne!(code, 0);
     assert!(err.contains("no value"), "{}", err);
 }
+
+#[test]
+fn library_calls_text_and_output_in_compiled_code() {
+    let src = "variables:
+    i, n, bad as int
+    s, problem as string
+n = 0
+bad = 0
+for(i from 1 to 300)
+    s = \"n\" + to_text(i)
+    if(i mod 100 == 0)
+        output(s, \" \", uppercase(s), \" \", length(s), \" \", s[2])
+    end if
+    try
+        n = n + to_int(substring(s, 2, length(s) - 1)) + round(sqrt(i * 1.0))
+        if(i mod 150 == 0)
+            n = n + to_int(\"x\" + s)
+        end if
+    catch problem
+        bad = bad + 1
+        output(\"caught: \", problem)
+    end try
+end loop
+output(n, \" \", bad)
+";
+    let (code, out, _) = same("library", src);
+    assert_eq!(code, 0, "{}", out);
+    assert!(out.contains("caught: to_int: \"xn150\"") && out.ends_with(" 11
+"), "{}", out);
+}
