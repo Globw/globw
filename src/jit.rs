@@ -533,6 +533,12 @@ type ChunkFn = unsafe extern "C" fn(i64, i64, *const i64, *mut i64) -> i64;
 pub struct ParLoop {
     chunk: ChunkFn,
     accs: Vec<u16>,
+    /// compact arrays written (at the counter's position) and read
+    writes: Vec<u16>,
+    reads: Vec<u16>,
+    /// pieces start at multiples of this element (64: the "has a value" bits
+    /// of written int or float arrays are shared by 64 elements)
+    align: i64,
     /// fewer turns than this: not worth the threads
     min_trip: i64,
 }
@@ -558,11 +564,25 @@ const PAR_SLOT: usize = 5;
 /// sequential loop would have overflowed; anything a piece cannot do, or an
 /// overflow, gives 1 and the loop runs sequentially (with the interpreter's
 /// errors). 2: not worth it. 0: done, the accumulators' values in `out`.
-unsafe extern "C" fn gw_par(_ctx: *mut Ctx, info: i64, lo: i64, hi: i64, buf: *const i64, out: *mut i64) -> i64 {
+unsafe extern "C" fn gw_par(ctx: *mut Ctx, info: i64, lo: i64, hi: i64, buf: *const i64, out: *mut i64) -> i64 {
     use rayon::prelude::*;
     let p = &*(info as *const ParLoop);
     if hi == i64::MAX || hi < lo {
         return 2;
+    }
+    if !p.writes.is_empty() {
+        // writing: an error would leave later elements written, which only an
+        // ended program may do (no try around, no other task); and no array
+        // written may be one read
+        if !crate::vm::jit_errors_end_program((*ctx).vm) {
+            return 2;
+        }
+        let addr = |r: u16| *buf.add(r as usize * PAR_SLOT + 2);
+        for &w in &p.writes {
+            if p.reads.iter().any(|&r| addr(r) == addr(w)) {
+                return 2;
+            }
+        }
     }
     let trip = hi as i128 - lo as i128 + 1;
     let threads = rayon::current_num_threads() as i128;
@@ -578,11 +598,27 @@ unsafe extern "C" fn gw_par(_ctx: *mut Ctx, info: i64, lo: i64, hi: i64, buf: *c
     let na = p.accs.len();
     let bufu = buf as usize;
     let chunk = p.chunk;
-    let res: Vec<(i64, Vec<i64>)> = (0..pieces)
+    // piece boundaries (counter values), aligned: element = counter - 1
+    let mut bounds: Vec<i128> = Vec::with_capacity(pieces as usize + 1);
+    for k in 0..=pieces {
+        let mut b = lo as i128 + trip * k / pieces;
+        if k > 0 && k < pieces && p.align > 1 {
+            let al = p.align as i128;
+            b = ((b - 1 + al - 1).div_euclid(al)) * al + 1;
+            b = b.min(hi as i128 + 1);
+        }
+        if bounds.last().is_none_or(|&l| b > l) || k == 0 {
+            bounds.push(b);
+        }
+    }
+    if *bounds.last().unwrap() != hi as i128 + 1 {
+        bounds.push(hi as i128 + 1);
+    }
+    let res: Vec<(i64, Vec<i64>)> = (0..bounds.len() - 1)
         .into_par_iter()
         .map(|k| {
-            let a = lo as i128 + trip * k / pieces;
-            let b = lo as i128 + trip * (k + 1) / pieces - 1;
+            let a = bounds[k];
+            let b = bounds[k + 1] - 1;
             let mut o = vec![0i64; 3 * na];
             // SAFETY: the piece reads the buffer and arrays only, writes `o`
             let st = unsafe { chunk(a as i64, b as i64, bufu as *const i64, o.as_mut_ptr()) };
@@ -615,6 +651,9 @@ struct ParPlan {
     end: u16,
     step: u16,
     accs: Vec<u16>,
+    writes: Vec<u16>,
+    reads: Vec<u16>,
+    align: i64,
     /// (instruction, accumulator index, its operand holding the accumulator's value)
     affine: Vec<(usize, usize, u16)>,
     inputs: Vec<u16>,
@@ -761,13 +800,26 @@ fn par_plans(code: &[Op], runs: &[bool], live: &[Vec<u64>], masks: &[u8], spec: 
         let in_r = |t: usize| t > fi && t <= fs;
         let mut ok = fs > fi + 1;
         let mut nested = false;
+        let usable = |c: u16| spec.get(c as usize).is_some_and(|&k| k != SPEC_NONE) && !clob.get(c as usize).copied().unwrap_or(true);
+        let (mut writes, mut reads, mut align): (Vec<u16>, Vec<u16>, i64) = (Vec::new(), Vec::new(), 1);
         for ip in fi + 1..fs {
             if !runs[ip] {
                 ok = false;
                 break;
             }
             let good = match code[ip] {
-                Op::GetElem(_, c, _) => spec.get(c as usize).is_some_and(|&k| k != SPEC_NONE) && !clob.get(c as usize).copied().unwrap_or(true),
+                Op::GetElem(_, c, _) => {
+                    reads.push(c);
+                    usable(c)
+                }
+                // a write at the counter's own position: each turn its own element
+                Op::SetElem(c, i, _) => {
+                    writes.push(c);
+                    if spec.get(c as usize).is_some_and(|&k| k == 0 || k == 1) {
+                        align = 64;
+                    }
+                    usable(c) && i == var
+                }
                 Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) | Op::JumpUnlessIImm(_, _, _, t) => in_r(t as usize),
                 Op::ForInit { exit: x, .. } => {
                     nested = true;
@@ -825,7 +877,16 @@ fn par_plans(code: &[Op], runs: &[bool], live: &[Vec<u64>], masks: &[u8], spec: 
             if dbg { eprintln!("par {}: accumulators mixed", fi); }
             continue;
         }
-        if accs.is_empty() {
+        writes.sort_unstable();
+        writes.dedup();
+        reads.sort_unstable();
+        reads.dedup();
+        // a written array is not read in the loop (a turn would see another's writes)
+        if writes.iter().any(|w| reads.contains(w)) {
+            if dbg { eprintln!("par {}: reads what it writes", fi); }
+            continue;
+        }
+        if accs.is_empty() && writes.is_empty() {
             if dbg { eprintln!("par {}: no accumulator (written {:?}, masks {:?})", fi, written, written.iter().map(|&r| masks[r as usize]).collect::<Vec<_>>()); }
             continue;
         }
@@ -842,7 +903,7 @@ fn par_plans(code: &[Op], runs: &[bool], live: &[Vec<u64>], masks: &[u8], spec: 
         inputs.sort_unstable();
         inputs.dedup();
         inputs.retain(|&r| r != var && (accs.contains(&r) || !written.contains(&r)));
-        plans.push(ParPlan { fi, fs, exit, var, end, step, accs, affine, inputs, nested });
+        plans.push(ParPlan { fi, fs, exit, var, end, step, accs, writes, reads, align, affine, inputs, nested });
     }
     plans
 }
@@ -1660,11 +1721,18 @@ impl Jit {
         for p in par_plans(&f.code, runs, live, masks, spec, fresh, clob) {
             match self.build_chunk(f, &p, masks, consts, spec) {
                 Ok(chunk) => {
-                    let info = Box::new(ParLoop { chunk, accs: p.accs.clone(), min_trip: if p.nested { 16 } else { 200_000 } });
+                    let info = Box::new(ParLoop {
+                        chunk,
+                        accs: p.accs.clone(),
+                        writes: p.writes.clone(),
+                        reads: p.reads.clone(),
+                        align: p.align,
+                        min_trip: if p.nested { 16 } else { 200_000 },
+                    });
                     let addr = &*info as *const ParLoop as i64;
                     self.par.push(info);
                     if self.log {
-                        eprintln!("[jit] {}: loop {}..{} runs in parallel (sums into {:?})", f.name, p.fi, p.fs, p.accs);
+                        eprintln!("[jit] {}: loop {}..{} runs in parallel (sums into {:?}, writes {:?})", f.name, p.fi, p.fs, p.accs, p.writes);
                     }
                     hooks.insert(p.fi, ParHook { info: addr, accs: p.accs, inputs: p.inputs, var: p.var, end: p.end, step: p.step, exit: p.exit, n_regs: f.n_regs as usize });
                 }

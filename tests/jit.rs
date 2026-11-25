@@ -545,3 +545,88 @@ output(s)
         assert_ne!(code, 0, "{}: {}", name, err);
     }
 }
+
+#[test]
+fn parallel_writes_fill_compact_arrays() {
+    let src = "variables:
+    i, s as int
+    a as int[1000003]
+    r as float[1000003]
+    b as bool[1000003]
+for(i from 1 to 1000003)
+    a[i] = i * 3 - 7
+    r[i] = i / 4.0
+    b[i] = i mod 5 == 2
+end loop
+s = 0
+for(i from 1 to 1000003)
+    if(b[i])
+        s = s + a[i]
+    end if
+end loop
+output(s, \" \", r[1000003], \" \", a[64], \" \", a[65], \" \", i)
+";
+    let (code, out, _) = same_parallel("par_fill", src);
+    assert_eq!(code, 0, "{}", out);
+}
+
+#[test]
+fn parallel_writes_and_errors() {
+    // an error mid-loop: the interpreter's error, at the same line
+    let src = "variables:
+    i as int
+    a as int[1000000]
+for(i from 1 to 1000000)
+    a[i] = 1000 div (i - 654321)
+end loop
+output(a[1])
+";
+    let (code, _, err) = same_parallel("par_write_err", src);
+    assert_ne!(code, 0);
+    assert!(err.contains("division by zero"), "{}", err);
+    // inside try: the error is caught and the array seen afterwards, so the loop
+    // must run in order
+    let src = "variables:
+    i as int
+    a as int[1000000]
+    problem as string
+for(i from 1 to 1000000)
+    a[i] = 0
+end loop
+try
+    for(i from 1 to 1000000)
+        a[i] = 1000 div (i - 654321)
+    end loop
+catch problem
+    output(problem)
+end try
+output(a[654320], \" \", a[654322], \" \", a[999999])
+";
+    let (code, out, _) = same("par_write_try", src);
+    assert_eq!(code, 0, "{}", out);
+    assert!(out.trim_end().ends_with("-1000 0 0"), "{}", out);
+}
+
+#[test]
+fn parallel_writes_never_through_an_alias() {
+    // the same array as two parameters: writing one is reading the other
+    let src = "variables:
+    i as int
+    a as int[1000000]
+procedure shift(x as int[], y as int[])
+    variables:
+        k as int
+    for(k from 1 to 999999)
+        x[k] = y[k + 1] * 2
+    end loop
+end procedure
+for(i from 1 to 1000000)
+    a[i] = i
+end loop
+shift(a, a)
+output(a[1], \" \", a[500000], \" \", a[999999], \" \", a[1000000])
+";
+    let (code, out, _) = same("par_alias", src);
+    assert_eq!(code, 0, "{}", out);
+    assert!(out.starts_with("4 1000002 2000000 1000000"), "{}", out);
+}

@@ -569,6 +569,17 @@ struct Frame {
     dst: u16,
 }
 
+/// Would a run-time error end the program now (no try around, no other task)?
+/// Then a parallel loop may write ahead of a turn that fails.
+///
+/// # Safety
+/// `vm` is the running interpreter.
+#[cfg(feature = "jit")]
+pub(crate) unsafe fn jit_errors_end_program(vm: *mut u8) -> bool {
+    let vm = &*(vm as *const Vm<'static>);
+    vm.handlers.is_empty() && vm.tasks.len() <= 1
+}
+
 /// How many direct calls between compiled bodies may nest on the machine stack
 /// before the interpreter takes the next one (the frames are the interpreter's).
 #[cfg(feature = "jit")]

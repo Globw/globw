@@ -44,6 +44,11 @@ program without it is interpreted, as before: the JIT is for when speed matters.
   interpreter's error at the same line. Sums of decimals stay sequential (their
   last digits depend on the order). Mandelbrot 900 x 600: 0.10 -> 0.05 s; a
   200-million-step sum: 0.16 -> 0.065 s, twice as fast as Go.
+- Loops that fill compact arrays (`a[i] = ...`, at the counter's own position)
+  run on every core too, also together with sums. Only when it changes nothing
+  that can be seen: the loop does not read the arrays it writes, no array
+  written is one read (checked when it runs), and no `try` is around nor any
+  other task, so an error mid-loop ends the program exactly as before.
 - The JIT keeps registers in machine registers: per-register kinds, constants,
   compact arrays specialised on the kind seen, their views made once at entry,
   and exits that write back only what the interpreter reads.
