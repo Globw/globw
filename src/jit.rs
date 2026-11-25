@@ -524,7 +524,330 @@ pub fn callable_builtin(id: u16) -> bool {
     )
 }
 
-const HELPERS: [(&str, usize, bool); 21] = [
+/// `fn(lo, hi, buf, out) -> status`: one piece of a parallel loop, its counter
+/// from `lo` to `hi`; per accumulator it writes the sum, and the lowest and
+/// highest running sums, to `out`. Status 0: done; else something it cannot do.
+type ChunkFn = unsafe extern "C" fn(i64, i64, *const i64, *mut i64) -> i64;
+
+/// A loop compiled to run in pieces.
+pub struct ParLoop {
+    chunk: ChunkFn,
+    accs: Vec<u16>,
+    /// fewer turns than this: not worth the threads
+    min_trip: i64,
+}
+
+/// What a compiled body needs to run a loop in parallel.
+struct ParHook {
+    info: i64,
+    accs: Vec<u16>,
+    inputs: Vec<u16>,
+    var: u16,
+    end: u16,
+    step: u16,
+    exit: usize,
+    n_regs: usize,
+}
+
+/// Registers in the buffer of a parallel loop: bits, tag, and a compact
+/// array's address, length and "has a value" bits.
+const PAR_SLOT: usize = 5;
+
+/// Runs a reduction loop's turns `lo..=hi` in pieces on every core. The
+/// accumulators' sums are added in order, checking that no running sum of the
+/// sequential loop would have overflowed; anything a piece cannot do, or an
+/// overflow, gives 1 and the loop runs sequentially (with the interpreter's
+/// errors). 2: not worth it. 0: done, the accumulators' values in `out`.
+unsafe extern "C" fn gw_par(_ctx: *mut Ctx, info: i64, lo: i64, hi: i64, buf: *const i64, out: *mut i64) -> i64 {
+    use rayon::prelude::*;
+    let p = &*(info as *const ParLoop);
+    if hi == i64::MAX || hi < lo {
+        return 2;
+    }
+    let trip = hi as i128 - lo as i128 + 1;
+    let threads = rayon::current_num_threads() as i128;
+    if trip < p.min_trip as i128 || threads < 2 {
+        return 2;
+    }
+    for &a in &p.accs {
+        if *buf.add(a as usize * PAR_SLOT + 1) != TAG_INT {
+            return 2;
+        }
+    }
+    let pieces = (threads * 8).min(trip);
+    let na = p.accs.len();
+    let bufu = buf as usize;
+    let chunk = p.chunk;
+    let res: Vec<(i64, Vec<i64>)> = (0..pieces)
+        .into_par_iter()
+        .map(|k| {
+            let a = lo as i128 + trip * k / pieces;
+            let b = lo as i128 + trip * (k + 1) / pieces - 1;
+            let mut o = vec![0i64; 3 * na];
+            // SAFETY: the piece reads the buffer and arrays only, writes `o`
+            let st = unsafe { chunk(a as i64, b as i64, bufu as *const i64, o.as_mut_ptr()) };
+            (st, o)
+        })
+        .collect();
+    if res.iter().any(|(st, _)| *st != 0) {
+        return 1;
+    }
+    for (k, &a) in p.accs.iter().enumerate() {
+        let mut acc = *buf.add(a as usize * PAR_SLOT) as i128;
+        for (_, o) in &res {
+            let (sum, lo_run, hi_run) = (o[3 * k] as i128, o[3 * k + 1] as i128, o[3 * k + 2] as i128);
+            if acc + lo_run < i64::MIN as i128 || acc + hi_run > i64::MAX as i128 {
+                return 1;
+            }
+            acc += sum;
+        }
+        *out.add(k) = acc as i64;
+    }
+    0
+}
+
+/// A for loop that can run in pieces: from ForInit at `fi` to its ForStep at `fs`.
+struct ParPlan {
+    fi: usize,
+    fs: usize,
+    exit: usize,
+    var: u16,
+    end: u16,
+    step: u16,
+    accs: Vec<u16>,
+    /// (instruction, accumulator index, its operand holding the accumulator's value)
+    affine: Vec<(usize, usize, u16)>,
+    inputs: Vec<u16>,
+    nested: bool,
+}
+
+/// Follows accumulator `a` through the body of the loop (fi+1..fs): a value
+/// "derived" from it is `a` plus or minus a value that is not. Every instruction
+/// reading a possibly derived value must be such an add, subtract or move of a
+/// surely derived one, and every write to `a` must be. Gives the instructions
+/// (with their derived operand) and, per instruction, the possibly derived registers.
+#[allow(clippy::type_complexity)]
+fn affine_acc(code: &[Op], fi: usize, fs: usize, a: u16) -> Option<(Vec<(usize, u16)>, Vec<Vec<bool>>)> {
+    let lo = fi + 1;
+    let len = fs - lo;
+    let nr = 1 + code[lo..fs].iter().flat_map(|op| {
+        let mut l = Vec::new();
+        regs_of(op, &mut l);
+        l
+    }).chain([a]).max().unwrap_or(0) as usize;
+    // per instruction: (possibly derived, surely derived) on the way in; None: not reached yet
+    let mut state: Vec<Option<(Vec<bool>, Vec<bool>)>> = vec![None; len];
+    let mut head = vec![false; nr];
+    head[a as usize] = true;
+    state[0] = Some((head.clone(), head));
+    let mut ops: Vec<(usize, u16)> = Vec::new();
+    let mut changed = true;
+    let mut rounds = 0;
+    while changed {
+        changed = false;
+        rounds += 1;
+        if rounds > 64 {
+            return None;
+        }
+        ops.clear();
+        for ip in lo..fs {
+            let Some((may, must)) = state[ip - lo].clone() else { continue };
+            let op = code[ip];
+            let mut reads = Vec::new();
+            regs_of(&op, &mut reads);
+            let dest = written_reg(&op);
+            if let Some(d) = dest {
+                if let Some(p) = reads.iter().position(|&r| r == d) {
+                    reads.remove(p);
+                }
+            }
+            let touched = reads.iter().any(|&r| may[r as usize]);
+            let (mut may2, mut must2) = (may.clone(), must.clone());
+            if touched {
+                // an add, subtract or move of exactly one surely derived operand
+                let der = match op {
+                    Op::AddI(_, x, y) => {
+                        if must[x as usize] && !may[y as usize] {
+                            Some(x)
+                        } else if must[y as usize] && !may[x as usize] {
+                            Some(y)
+                        } else {
+                            None
+                        }
+                    }
+                    Op::SubI(_, x, y) if must[x as usize] && !may[y as usize] => Some(x),
+                    Op::AddIImm(_, x, _) | Op::SubIImm(_, x, _) | Op::Move(_, x) if must[x as usize] => Some(x),
+                    _ => None,
+                };
+                let der = der?;
+                let d = dest?;
+                may2[d as usize] = true;
+                must2[d as usize] = true;
+                ops.push((ip, der));
+            } else if let Some(d) = dest {
+                if d == a {
+                    return None; // the accumulator overwritten
+                }
+                may2[d as usize] = false;
+                must2[d as usize] = false;
+            } else if matches!(op, Op::Call { .. } | Op::Builtin { .. }) {
+                return None;
+            }
+            for t in successors(code, ip).into_iter().flatten() {
+                if t < lo || t >= fs {
+                    continue; // the end of the turn (fs) or out of the loop
+                }
+                let slot = &mut state[t - lo];
+                match slot {
+                    None => {
+                        *slot = Some((may2.clone(), must2.clone()));
+                        changed = true;
+                    }
+                    Some((m, u)) => {
+                        for r in 0..nr {
+                            let nm = m[r] || may2[r];
+                            let nu = u[r] && must2[r];
+                            if nm != m[r] || nu != u[r] {
+                                m[r] = nm;
+                                u[r] = nu;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // the accumulator surely derived at the end of the turn: every way into fs
+    for ip in lo..fs {
+        if successors(code, ip).into_iter().flatten().any(|t| t == fs) {
+            let (may, must) = state[ip - lo].clone()?;
+            // the state after ip
+            let op = code[ip];
+            let wrote_a = written_reg(&op) == Some(a);
+            let derived_after = if wrote_a { ops.iter().any(|&(i, _)| i == ip) } else { must[a as usize] };
+            if !derived_after {
+                return None;
+            }
+            let _ = may;
+        }
+    }
+    let may: Vec<Vec<bool>> = state.into_iter().map(|s| s.map(|(m, _)| m).unwrap_or_else(|| vec![false; nr])).collect();
+    Some((ops, may))
+}
+
+/// The for loops whose turns are independent but for integer sums: only numbers,
+/// compact-array reads and jumps inside the loop; every register written in it is
+/// an accumulator (only ever `a = a + x`) or used only within a turn.
+fn par_plans(code: &[Op], runs: &[bool], live: &[Vec<u64>], masks: &[u8], spec: &[i8], fresh: &[bool], clob: &[bool]) -> Vec<ParPlan> {
+    let is_live = |ip: usize, r: u16| live.get(ip).is_some_and(|l| l[r as usize / 64] >> (r % 64) & 1 == 1);
+    let mut plans: Vec<ParPlan> = Vec::new();
+    for fi in 0..code.len() {
+        let Op::ForInit { var, end, step, exit } = code[fi] else { continue };
+        let exit = exit as usize;
+        let dbg = std::env::var_os("GLOBW_JIT_PARDBG").is_some();
+        if exit == 0 || exit > code.len() || !runs[fi] || !fresh.get(fi).copied().unwrap_or(false) {
+            if dbg { eprintln!("par {}: entry/fresh", fi); }
+            continue;
+        }
+        let fs = exit - 1;
+        match code[fs] {
+            Op::ForStep { var: v2, end: e2, step: s2, body } if v2 == var && e2 == end && s2 == step && body as usize == fi + 1 => {}
+            _ => continue,
+        }
+        if plans.last().is_some_and(|p| fi < p.fs) {
+            continue; // inside a loop already run in parallel
+        }
+        let in_r = |t: usize| t > fi && t <= fs;
+        let mut ok = fs > fi + 1;
+        let mut nested = false;
+        for ip in fi + 1..fs {
+            if !runs[ip] {
+                ok = false;
+                break;
+            }
+            let good = match code[ip] {
+                Op::GetElem(_, c, _) => spec.get(c as usize).is_some_and(|&k| k != SPEC_NONE) && !clob.get(c as usize).copied().unwrap_or(true),
+                Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) | Op::JumpUnlessIImm(_, _, _, t) => in_r(t as usize),
+                Op::ForInit { exit: x, .. } => {
+                    nested = true;
+                    in_r(x as usize)
+                }
+                Op::ForStep { body, .. } => in_r(body as usize),
+                op => plain_numeric(&op),
+            };
+            if !good {
+                ok = false;
+                break;
+            }
+        }
+        if !ok {
+            if dbg { eprintln!("par {}: ops", fi); }
+            continue;
+        }
+        let mut written: Vec<u16> = (fi + 1..fs).filter_map(|ip| written_reg(&code[ip])).collect();
+        written.sort_unstable();
+        written.dedup();
+        if written.contains(&var) {
+            continue;
+        }
+        // accumulators: registers that only ever hold "the accumulator plus or
+        // minus something that does not depend on it", through temporaries
+        let mut accs = Vec::new();
+        let mut affine: Vec<(usize, usize, u16)> = Vec::new();
+        let mut may_all: Vec<Vec<Vec<bool>>> = Vec::new();
+        for &a in &written {
+            if masks.get(a as usize).map_or(true, |m| m & 7 != K_INT) || !is_live(fi + 1, a) {
+                continue;
+            }
+            if let Some((ops, may)) = affine_acc(code, fi, fs, a) {
+                accs.push(a);
+                let k = accs.len() - 1;
+                affine.extend(ops.into_iter().map(|(ip, der)| (ip, k, der)));
+                may_all.push(may);
+            }
+        }
+        // an operation affine for one accumulator may not mix in another one
+        let mut clash = false;
+        for &(ip, k, der) in &affine {
+            if affine.iter().any(|&(ip2, k2, _)| ip2 == ip && k2 != k) {
+                clash = true;
+            }
+            let mut l = Vec::new();
+            regs_of(&code[ip], &mut l);
+            for (k2, may) in may_all.iter().enumerate() {
+                if k2 != k && l.iter().any(|&r| r != der && may[ip - fi - 1].get(r as usize).copied().unwrap_or(false)) {
+                    clash = true;
+                }
+            }
+        }
+        if clash {
+            if dbg { eprintln!("par {}: accumulators mixed", fi); }
+            continue;
+        }
+        if accs.is_empty() {
+            if dbg { eprintln!("par {}: no accumulator (written {:?}, masks {:?})", fi, written, written.iter().map(|&r| masks[r as usize]).collect::<Vec<_>>()); }
+            continue;
+        }
+        // every other register written: used within a turn only, dead after the loop
+        if written.iter().any(|&r| !accs.contains(&r) && (is_live(fi + 1, r) || is_live(exit, r))) {
+            if dbg { eprintln!("par {}: carried", fi); }
+            continue;
+        }
+        let mut inputs = Vec::new();
+        for ip in fi + 1..fs {
+            regs_of(&code[ip], &mut inputs);
+        }
+        inputs.extend(&accs);
+        inputs.sort_unstable();
+        inputs.dedup();
+        inputs.retain(|&r| r != var && (accs.contains(&r) || !written.contains(&r)));
+        plans.push(ParPlan { fi, fs, exit, var, end, step, accs, affine, inputs, nested });
+    }
+    plans
+}
+
+const HELPERS: [(&str, usize, bool); 22] = [
     // name, number of i64 arguments after ctx, ends with an `out` pointer
     ("gw_get_elem", 3, true),
     ("gw_set_elem", 5, false),
@@ -547,6 +870,7 @@ const HELPERS: [(&str, usize, bool); 21] = [
     ("gw_new_list", 1, false),
     ("gw_builtin", 4, true),
     ("gw_call_body", 5, true),
+    ("gw_par", 3, true),
 ];
 
 fn helper_ptr(name: &str) -> *const u8 {
@@ -570,6 +894,7 @@ fn helper_ptr(name: &str) -> *const u8 {
         "gw_new_list" => gw_new_list as *const u8,
         "gw_builtin" => gw_builtin as *const u8,
         "gw_mat_view" => gw_mat_view as *const u8,
+        "gw_par" => gw_par as *const u8,
         _ => gw_move as *const u8,
     }
 }
@@ -599,6 +924,8 @@ pub struct Jit {
     runs: Vec<Vec<bool>>,
     /// per compiled function, per instruction: may the interpreter enter there
     enter: Vec<Vec<bool>>,
+    /// loops compiled to run in parallel (their address is in compiled code)
+    par: Vec<Box<ParLoop>>,
     /// per compiled function, per instruction: times compiled code stopped there
     stops: Vec<Vec<u16>>,
     next_name: u32,
@@ -710,6 +1037,16 @@ fn live_in(code: &[Op], runs: &[bool], n_regs: usize) -> Option<Vec<Vec<u64>>> {
     let mut kills: Vec<Option<u16>> = Vec::with_capacity(n);
     let mut list = Vec::new();
     for (ip, op) in code.iter().enumerate() {
+        // a return reads at most its value, wherever it runs
+        if let Op::Ret(_) | Op::RetNone = op {
+            let mut r = vec![0u64; words];
+            if let Op::Ret(x) = *op {
+                r[x as usize / 64] |= 1 << (x % 64);
+            }
+            reads.push(r);
+            kills.push(None);
+            continue;
+        }
         if !runs[ip] {
             reads.push(all.clone());
             kills.push(None);
@@ -806,6 +1143,19 @@ fn fresh_at(code: &[Op], runs: &[bool], bumps: &[bool]) -> Vec<bool> {
     stale.iter().map(|s| !s).collect()
 }
 
+/// The constants pass 0 found (as `consts` is filled right after).
+fn consts_after(l: &[(bool, i64, bool)]) -> Vec<Option<i64>> {
+    l.iter().map(|&(loaded, v, other)| if loaded && !other { Some(v) } else { None }).collect()
+}
+
+/// Helpers that change nothing but their destination register (and the output).
+fn local_helper(name: &str) -> bool {
+    matches!(
+        name,
+        "gw_load_str" | "gw_concat" | "gw_to_str" | "gw_cmp_str" | "gw_char_at" | "gw_print" | "gw_println" | "gw_new_list" | "gw_move" | "gw_get_global" | "gw_get_elem" | "gw_get_elem2" | "gw_length"
+    )
+}
+
 fn written_reg(op: &Op) -> Option<u16> {
     Some(match *op {
         Op::LoadInt(d, _) | Op::LoadReal(d, _) | Op::LoadBool(d, _) | Op::Move(d, _) => d,
@@ -888,7 +1238,7 @@ impl Jit {
             for _ in 0..n {
                 sig.params.push(AbiParam::new(types::I64));
             }
-            if name == "gw_builtin" || name == "gw_call_body" {
+            if name == "gw_builtin" || name == "gw_call_body" || name == "gw_par" {
                 sig.params.push(AbiParam::new(ptr)); // the arguments
             }
             if out {
@@ -941,6 +1291,7 @@ impl Jit {
             bodies: Vec::new(),
             runs: vec![Vec::new(); n],
             enter: vec![Vec::new(); n],
+            par: Vec::new(),
             stops: vec![Vec::new(); n],
             next_name: 0,
         })
@@ -1233,8 +1584,12 @@ impl Jit {
                 spec: &[],
                 cur: std::cell::Cell::new(0),
                 move_ips: None,
+                clob_ips: None,
+                clob: &[],
                 bumps: None,
                 fresh: &[],
+                par: &HashMap::new(),
+                heads: &HashMap::new(),
             };
             for (ip, op) in code.iter().enumerate() {
                 b.switch_to_block(blocks[ip]);
@@ -1291,6 +1646,238 @@ impl Jit {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Compiles the parallel loops of `f` (after the first pass, which gave the
+    /// kinds, constants and fresh views).
+    #[allow(clippy::too_many_arguments)]
+    fn build_par_loops(&mut self, f: &Function, runs: &[bool], live: &[Vec<u64>], masks: &[u8], consts: &[Option<i64>], spec: &[i8], fresh: &[bool], clob: &[bool]) -> HashMap<usize, ParHook> {
+        let mut hooks = HashMap::new();
+        if self.layout.is_none() || std::env::var_os("GLOBW_JIT_NO_PAR").is_some() {
+            return hooks;
+        }
+        if self.log {
+            eprintln!("[jit] {}: {} loops may run in parallel", f.name, par_plans(&f.code, runs, live, masks, spec, fresh, clob).len());
+        }
+        for p in par_plans(&f.code, runs, live, masks, spec, fresh, clob) {
+            match self.build_chunk(f, &p, masks, consts, spec) {
+                Ok(chunk) => {
+                    let info = Box::new(ParLoop { chunk, accs: p.accs.clone(), min_trip: if p.nested { 16 } else { 200_000 } });
+                    let addr = &*info as *const ParLoop as i64;
+                    self.par.push(info);
+                    if self.log {
+                        eprintln!("[jit] {}: loop {}..{} runs in parallel (sums into {:?})", f.name, p.fi, p.fs, p.accs);
+                    }
+                    hooks.insert(p.fi, ParHook { info: addr, accs: p.accs, inputs: p.inputs, var: p.var, end: p.end, step: p.step, exit: p.exit, n_regs: f.n_regs as usize });
+                }
+                Err(e) => {
+                    if self.log {
+                        eprintln!("[jit] {}: loop {} not parallel: {}", f.name, p.fi, e);
+                    }
+                }
+            }
+        }
+        hooks
+    }
+
+    fn build_chunk(&mut self, f: &Function, p: &ParPlan, masks: &[u8], consts: &[Option<i64>], spec: &[i8]) -> Result<ChunkFn, String> {
+        let ptr = self.module.isa().pointer_type();
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(ptr));
+        sig.params.push(AbiParam::new(ptr));
+        sig.returns.push(AbiParam::new(types::I64));
+        let name = self.fresh_name("par");
+        let id = self.module.declare_function(&name, Linkage::Local, &sig).map_err(|e| format!("{:?}", e))?;
+        self.module.clear_context(&mut self.ctx);
+        self.ctx.func.signature = sig;
+        self.ctx.func.name = UserFuncName::user(0, id.as_u32());
+        let code = &f.code[..];
+        let n_regs = f.n_regs as usize;
+        let fc = self.module.isa().frontend_config();
+        let empty_calls = HashMap::new();
+        let empty_helpers = HashMap::new();
+        let no_par = HashMap::new();
+        let all_fresh = vec![true; code.len()];
+        let no_clob = vec![false; n_regs];
+        {
+            let mut b = FunctionBuilder::new(&mut self.ctx.func, &mut self.fctx);
+            let vars: Vec<RegVars> = (0..n_regs)
+                .map(|r| {
+                    let mut v = declare_reg(&mut b);
+                    v.m = masks[r];
+                    v
+                })
+                .collect();
+            let views: Vec<ViewVars> = (0..n_regs)
+                .map(|_| ViewVars { ptr: b.declare_var(types::I64), len: b.declare_var(types::I64), cols: b.declare_var(types::I64), bits: b.declare_var(types::I64), ep: b.declare_var(types::I64) })
+                .collect();
+            let epoch = b.declare_var(types::I64);
+            let mins: Vec<Variable> = p.accs.iter().map(|_| b.declare_var(types::I64)).collect();
+            let maxs: Vec<Variable> = p.accs.iter().map(|_| b.declare_var(types::I64)).collect();
+            let entry = b.create_block();
+            b.append_block_params_for_function_params(entry);
+            b.switch_to_block(entry);
+            let prm = b.block_params(entry).to_vec();
+            let (lo, hi, buf, out) = (prm[0], prm[1], prm[2], prm[3]);
+            let zero = b.ins().iconst(types::I64, 0);
+            let zf = b.ins().f64const(0.0);
+            let zb = b.ins().iconst(types::I8, 0);
+            b.def_var(epoch, zero);
+            for (r, v) in vars.iter().enumerate() {
+                b.def_var(v.i, zero);
+                b.def_var(v.r, zf);
+                b.def_var(v.b, zb);
+                b.def_var(v.t, zero);
+                let vv = views[r];
+                for x in [vv.ptr, vv.len, vv.cols, vv.bits, vv.ep] {
+                    b.def_var(x, zero);
+                }
+            }
+            for &r in &p.inputs {
+                let base = (r as usize * PAR_SLOT * 8) as i32;
+                let bits = b.ins().load(types::I64, MemFlagsData::trusted(), buf, base);
+                let tag = b.ins().load(types::I64, MemFlagsData::trusted(), buf, base + 8);
+                set_from_bits(&mut b, vars[r as usize], bits, tag);
+                if let Some(&k) = spec.get(r as usize).filter(|&&k| k != SPEC_NONE) {
+                    let vv = views[r as usize];
+                    let pp = b.ins().load(types::I64, MemFlagsData::trusted(), buf, base + 16);
+                    let n = b.ins().load(types::I64, MemFlagsData::trusted(), buf, base + 24);
+                    let vb = b.ins().load(types::I64, MemFlagsData::trusted(), buf, base + 32);
+                    let kc = b.ins().iconst(types::I64, k as i64);
+                    b.def_var(vv.ptr, pp);
+                    b.def_var(vv.len, n);
+                    b.def_var(vv.bits, vb);
+                    b.def_var(vv.cols, kc);
+                }
+            }
+            // each piece sums from zero
+            for (k, &a) in p.accs.iter().enumerate() {
+                b.def_var(vars[a as usize].i, zero);
+                let t = b.ins().iconst(types::I64, TAG_INT);
+                b.def_var(vars[a as usize].t, t);
+                b.def_var(mins[k], zero);
+                b.def_var(maxs[k], zero);
+            }
+            b.def_var(vars[p.var as usize].i, lo);
+            let bail = b.create_block();
+            let done = b.create_block();
+            let lo_ip = p.fi + 1;
+            let blocks: Vec<Block> = (lo_ip..=p.fs).map(|_| b.create_block()).collect();
+            let budget = b.ins().iconst(types::I64, 0);
+            b.ins().jump(blocks[0], &[]);
+            let g = Gen {
+                vars: &vars,
+                blocks: &blocks,
+                lo: lo_ip,
+                hi: p.fs + 1,
+                leave: None,
+                exits: std::cell::RefCell::new(HashMap::new()),
+                bail,
+                budget,
+                callee_refs: &empty_calls,
+                helper_refs: &empty_helpers,
+                ctxv: None,
+                out: None,
+                views: &views,
+                epoch: Some(epoch),
+                layout: self.layout,
+                gives: &[],
+                seen: None,
+                moves: None,
+                lconst: None,
+                loading: std::cell::Cell::new(false),
+                consts,
+                spec,
+                cur: std::cell::Cell::new(0),
+                move_ips: None,
+                clob_ips: None,
+                clob: &no_clob,
+                bumps: None,
+                fresh: &all_fresh,
+                par: &no_par,
+                heads: &HashMap::new(),
+            };
+            for ip in lo_ip..p.fs {
+                b.switch_to_block(blocks[ip - lo_ip]);
+                g.cur.set(ip);
+                let aff = p.affine.iter().find(|&&(i, _, _)| i == ip).copied();
+                match (aff, code[ip]) {
+                    (Some((_, k, _)), Op::Move(..)) => {
+                        let _ = k;
+                        g.op(&mut b, ip, code[ip])?;
+                    }
+                    (Some((_, k, der)), op) => {
+                        let dv = g.i(&mut b, der);
+                        let (d, nv, of) = match op {
+                            Op::AddI(d, x, y) => {
+                                let other = g.i(&mut b, if x == der { y } else { x });
+                                let (v, o) = b.ins().sadd_overflow(dv, other);
+                                (d, v, o)
+                            }
+                            Op::AddIImm(d, _, n) => {
+                                let c = b.ins().iconst(types::I64, n);
+                                let (v, o) = b.ins().sadd_overflow(dv, c);
+                                (d, v, o)
+                            }
+                            Op::SubI(d, _, y) => {
+                                let other = g.i(&mut b, y);
+                                let (v, o) = b.ins().ssub_overflow(dv, other);
+                                (d, v, o)
+                            }
+                            Op::SubIImm(d, _, n) => {
+                                let c = b.ins().iconst(types::I64, n);
+                                let (v, o) = b.ins().ssub_overflow(dv, c);
+                                (d, v, o)
+                            }
+                            _ => return Err("internal: not affine".into()),
+                        };
+                        let cont = b.create_block();
+                        b.ins().brif(of, bail, &[], cont, &[]);
+                        b.switch_to_block(cont);
+                        g.set_i(&mut b, d, nv);
+                        let mn = b.use_var(mins[k]);
+                        let mx = b.use_var(maxs[k]);
+                        let mn2 = b.ins().smin(mn, nv);
+                        let mx2 = b.ins().smax(mx, nv);
+                        b.def_var(mins[k], mn2);
+                        b.def_var(maxs[k], mx2);
+                        let nb = g.block(&mut b, ip + 1);
+                        b.ins().jump(nb, &[]);
+                    }
+                    (None, op) => g.op(&mut b, ip, op)?,
+                }
+            }
+            // the loop's own step: next turn of this piece, or done
+            b.switch_to_block(blocks[p.fs - lo_ip]);
+            let v = b.use_var(vars[p.var as usize].i);
+            let nv = b.ins().iadd_imm_s(v, 1);
+            b.def_var(vars[p.var as usize].i, nv);
+            let again = b.ins().icmp(IntCC::SignedLessThanOrEqual, nv, hi);
+            b.ins().brif(again, blocks[0], &[], done, &[]);
+            b.switch_to_block(done);
+            for (k, &a) in p.accs.iter().enumerate() {
+                let s = b.use_var(vars[a as usize].i);
+                let mn = b.use_var(mins[k]);
+                let mx = b.use_var(maxs[k]);
+                b.ins().store(MemFlagsData::trusted(), s, out, (k * 24) as i32);
+                b.ins().store(MemFlagsData::trusted(), mn, out, (k * 24 + 8) as i32);
+                b.ins().store(MemFlagsData::trusted(), mx, out, (k * 24 + 16) as i32);
+            }
+            let z = b.ins().iconst(types::I64, 0);
+            b.ins().return_(&[z]);
+            b.switch_to_block(bail);
+            let one = b.ins().iconst(types::I64, 1);
+            b.ins().return_(&[one]);
+            b.seal_all_blocks();
+            b.finalize(fc);
+        }
+        self.module.define_function(id, &mut self.ctx).map_err(|e| format!("{:?}", e))?;
+        self.module.finalize_definitions().map_err(|e| format!("{:?}", e))?;
+        let fp = self.module.get_finalized_function(id);
+        // SAFETY: built with the ChunkFn signature
+        Ok(unsafe { std::mem::transmute::<*const u8, ChunkFn>(fp) })
+    }
+
     fn build_body(&mut self, f: &Function, runs: &[bool], enter: &[bool], used: &[u16], written: &[u16], ids: &[Option<FuncId>], gives: &[bool], spec: &[i8]) -> Result<FuncId, String> {
         let (start, end) = (0, f.code.len());
         let ptr = self.module.isa().pointer_type();
@@ -1312,6 +1899,9 @@ impl Jit {
         let mut consts: Vec<Option<i64>> = vec![None; n_regs];
         let bumps = std::cell::RefCell::new(vec![false; code.len()]);
         let move_ips = std::cell::RefCell::new(Vec::new());
+        let clob_ips = std::cell::RefCell::new(Vec::new());
+        let mut clob = vec![false; n_regs];
+        let mut par_hooks: HashMap<usize, ParHook> = HashMap::new();
         let mut fresh: Vec<bool> = Vec::new();
         let moves = std::cell::RefCell::new(Vec::new());
         let mut masks: Option<Vec<u8>> = None;
@@ -1401,7 +1991,7 @@ impl Jit {
             if pass == 1 && fresh.iter().any(|&f| f) {
                 let fref = *helper_refs.get("gw_seq_view").ok_or("no view helper")?;
                 for (r, &k) in spec.iter().enumerate() {
-                    if k == SPEC_NONE || used.binary_search(&(r as u16)).is_err() {
+                    if k == SPEC_NONE || clob[r] || used.binary_search(&(r as u16)).is_err() {
                         continue;
                     }
                     let rc = b.ins().iconst(types::I64, r as i64);
@@ -1430,10 +2020,23 @@ impl Jit {
             let leave = b.create_block();
             b.append_block_param(leave, types::I64);
             let bail = b.create_block(); // an unknown entry: back to the interpreter
+            let mut heads: HashMap<usize, (Block, Variable)> = HashMap::new();
+            for &fi in par_hooks.keys() {
+                let flag = b.declare_var(types::I8);
+                let z = b.ins().iconst(types::I8, 0);
+                b.def_var(flag, z);
+                heads.insert(fi + 1, (b.create_block(), flag));
+            }
             // enter at instruction `from`
             let calls: Vec<_> = (start..end)
                 .map(|ip| {
-                    let blk = if runs[ip] && enter[ip] { blocks[ip - start] } else { bail };
+                    let blk = if !(runs[ip] && enter[ip]) {
+                        bail
+                    } else if let Some(&(pe, _)) = heads.get(&ip) {
+                        pe
+                    } else {
+                        blocks[ip - start]
+                    };
                     b.func.dfg.block_call(blk, &[])
                 })
                 .collect();
@@ -1470,9 +2073,24 @@ impl Jit {
                 spec,
                 cur: std::cell::Cell::new(0),
                 move_ips: if pass == 0 { Some(&move_ips) } else { None },
+                clob_ips: if pass == 0 { Some(&clob_ips) } else { None },
+                clob: &clob,
                 bumps: if pass == 0 { Some(&bumps) } else { None },
                 fresh: &fresh,
+                par: &par_hooks,
+                heads: &heads,
             };
+            for (&head, &(pe, flag)) in heads.iter() {
+                b.switch_to_block(pe);
+                let tried = b.use_var(flag);
+                let attempt = b.create_block();
+                b.ins().brif(tried, blocks[head - start], &[], attempt, &[]);
+                b.switch_to_block(attempt);
+                let one = b.ins().iconst(types::I8, 1);
+                b.def_var(flag, one);
+                g.par_hook(&mut b, &par_hooks[&(head - 1)])?;
+                b.ins().jump(blocks[head - start], &[]);
+            }
             for ip in start..end {
                 b.switch_to_block(blocks[ip - start]);
                 g.cur.set(ip);
@@ -1547,10 +2165,20 @@ impl Jit {
             masks = Some(m);
             for &(ip, src) in move_ips.borrow().iter() {
                 if masks.as_ref().is_some_and(|m| m[src as usize] & K_NONE != 0) {
-                    bumps.borrow_mut()[ip] = true;
+                    if let Some(d) = written_reg(&code[ip]) {
+                        clob[d as usize] = true;
+                    }
+                }
+            }
+            for &ip in clob_ips.borrow().iter() {
+                if let Some(d) = written_reg(&code[ip]) {
+                    clob[d as usize] = true;
                 }
             }
             fresh = fresh_at(code, runs, &bumps.borrow());
+            if let (Some(l), Some(m)) = (live.as_ref(), masks.as_ref()) {
+                par_hooks = self.build_par_loops(f, runs, l, m, &consts_after(&lconst.borrow()), spec, &fresh, &clob);
+            }
             if self.log {
                 let b2 = bumps.borrow();
                 eprintln!("[jit] bumps at {:?}; stale at {:?}", (0..code.len()).filter(|&i| b2[i]).collect::<Vec<_>>(), (0..code.len()).filter(|&i| !fresh[i]).collect::<Vec<_>>());
@@ -1695,10 +2323,19 @@ struct Gen<'a> {
     cur: std::cell::Cell<usize>,
     /// the first pass: every move's instruction and source
     move_ips: Option<&'a std::cell::RefCell<Vec<(usize, u16)>>>,
+    /// the first pass: instructions whose helper writes their destination only
+    clob_ips: Option<&'a std::cell::RefCell<Vec<usize>>>,
+    /// per register: may a helper replace what it holds (its entry view untrusted)
+    clob: &'a [bool],
     /// the first pass: instructions that call a helper that may move containers
     bumps: Option<&'a std::cell::RefCell<Vec<bool>>>,
     /// the second pass: instructions where the entry views are surely valid
     fresh: &'a [bool],
+    /// for loops that may run in parallel, by their ForInit
+    par: &'a HashMap<usize, ParHook>,
+    /// their heads (first body instruction): the block that tries the parallel
+    /// run once, and the "tried" flag
+    heads: &'a HashMap<usize, (Block, Variable)>,
 }
 
 impl Gen<'_> {
@@ -1714,6 +2351,9 @@ impl Gen<'_> {
     }
     /// The block for instruction `ip`: inside the unit, or (a loop) a way out to it.
     fn block(&self, b: &mut FunctionBuilder, ip: usize) -> Block {
+        if let Some(&(pe, _)) = self.heads.get(&ip) {
+            return pe;
+        }
         if ip >= self.lo && ip < self.hi {
             return self.blocks[ip - self.lo];
         }
@@ -1812,10 +2452,18 @@ impl Gen<'_> {
         all.extend_from_slice(args);
         let call = b.ins().call(f, &all);
         let res = b.inst_results(call)[0];
-        if !name.ends_with("_view") {
-            // a move counts only if its source may hold a non-number (decided after pass 0)
-            if let (Some(bm), false) = (self.bumps, name == "gw_move") {
-                if let Some(x) = bm.borrow_mut().get_mut(self.cur.get()) {
+        if !name.ends_with("_view") && name != "gw_par" {
+            // a helper that writes only its destination makes only that register's
+            // view untrusted (a move: only if its source may hold a non-number,
+            // decided after pass 0); any other may move any container
+            if let Some(bm) = self.bumps {
+                if local_helper(name) {
+                    if name != "gw_move" {
+                        if let Some(cl) = self.clob_ips {
+                            cl.borrow_mut().push(self.cur.get());
+                        }
+                    }
+                } else if let Some(x) = bm.borrow_mut().get_mut(self.cur.get()) {
                     *x = true;
                 }
             }
@@ -1826,6 +2474,53 @@ impl Gen<'_> {
             }
         }
         Ok(res)
+    }
+
+    /// Before a loop that may run in parallel: its registers into a buffer, then
+    /// the helper; done there, the accumulators and counter take their final
+    /// values and control goes past the loop. Otherwise the loop runs here.
+    fn par_hook(&self, b: &mut FunctionBuilder, h: &ParHook) -> Result<(), String> {
+        let ptr = types::I64;
+        let size = (h.n_regs * PAR_SLOT * 8).max(8) as u32;
+        let ss = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size, 3));
+        let buf = b.ins().stack_addr(ptr, ss, 0);
+        for &r in &h.inputs {
+            let v = self.vars[r as usize];
+            let base = (r as usize * PAR_SLOT * 8) as i32;
+            let bits = if let Some(c) = self.consts.get(r as usize).copied().flatten() { b.ins().iconst(types::I64, c) } else { bits_of(b, v) };
+            let tag = b.use_var(v.t);
+            b.ins().store(MemFlagsData::trusted(), bits, buf, base);
+            b.ins().store(MemFlagsData::trusted(), tag, buf, base + 8);
+            if self.spec.get(r as usize).is_some_and(|&k| k != SPEC_NONE) {
+                let vv = self.views[r as usize];
+                let (p, n, vb) = (b.use_var(vv.ptr), b.use_var(vv.len), b.use_var(vv.bits));
+                b.ins().store(MemFlagsData::trusted(), p, buf, base + 16);
+                b.ins().store(MemFlagsData::trusted(), n, buf, base + 24);
+                b.ins().store(MemFlagsData::trusted(), vb, buf, base + 32);
+            }
+        }
+        let os = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, (h.accs.len().max(1) * 8) as u32, 3));
+        let out = b.ins().stack_addr(ptr, os, 0);
+        let (lo, hi, st) = (self.i(b, h.var), self.i(b, h.end), self.i(b, h.step));
+        let (attempt, took, normal) = (b.create_block(), b.create_block(), b.create_block());
+        let one = b.ins().icmp_imm_s(IntCC::Equal, st, 1);
+        b.ins().brif(one, attempt, &[], normal, &[]);
+        b.switch_to_block(attempt);
+        let info = b.ins().iconst(types::I64, h.info);
+        let r = self.helper(b, "gw_par", &[info, lo, hi, buf, out])?;
+        let ok = b.ins().icmp_imm_s(IntCC::Equal, r, 0);
+        b.ins().brif(ok, took, &[], normal, &[]);
+        b.switch_to_block(took);
+        for (k, &a) in h.accs.iter().enumerate() {
+            let x = b.ins().load(types::I64, MemFlagsData::trusted(), out, (k * 8) as i32);
+            self.set_i(b, a, x);
+        }
+        let past = b.ins().iadd_imm_s(hi, 1);
+        self.set_i(b, h.var, past);
+        let eb = self.block(b, h.exit);
+        b.ins().jump(eb, &[]);
+        b.switch_to_block(normal);
+        Ok(())
     }
 
     fn konst(&self, b: &mut FunctionBuilder, n: i64) -> V {
@@ -2086,7 +2781,7 @@ impl Gen<'_> {
                     let want = self.spec[c as usize] as i64;
                     let stop = self.stop(b, ip);
                     // the view made at entry is still valid here: no check, no call
-                    let fresh = self.fresh.get(ip).copied().unwrap_or(false);
+                    let fresh = self.fresh.get(ip).copied().unwrap_or(false) && !self.clob.get(c as usize).copied().unwrap_or(true);
                     let (p, n) = if fresh {
                         let vv = self.views[c as usize];
                         (b.use_var(vv.ptr), b.use_var(vv.len))
@@ -2414,6 +3109,10 @@ impl Gen<'_> {
                 b.ins().brif(v, n, &[], tb, &[]);
             }
             Op::ForInit { var, end, step, exit } => {
+                if let Some(&(_, flag)) = self.heads.get(&(ip + 1)) {
+                    let z = b.ins().iconst(types::I8, 0);
+                    b.def_var(flag, z);
+                }
                 let s = self.i(b, step);
                 let s0 = b.ins().icmp_imm_s(IntCC::Equal, s, 0);
                 self.guard(b, ip, s0);

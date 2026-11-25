@@ -46,7 +46,7 @@ ffi-full = ["native", "dep:libffi"]
 # The JIT (Cranelift): hot numeric functions and loops become machine code. On by
 # default for the desktop; the wasm playground and --no-default-features builds
 # use the interpreter only.
-jit = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native"]
+jit = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:rayon"]
 
 [dependencies]
 # portable everywhere (native and wasm)

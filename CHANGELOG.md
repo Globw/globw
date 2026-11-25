@@ -34,6 +34,19 @@ program without it is interpreted, as before: the JIT is for when speed matters.
   it would build them: when a callee stops, the interpreter goes on inside it,
   with the same backtrace. Only functions with a loop are compiled whole; a short
   one runs faster in the interpreter. Windows gives `gw` a 64 MB stack.
+- **Loops on every core, by themselves.** A `for` loop that adds up integers
+  (`total = total + ...`, `count = count + 1`, through any `+` and `-`) and
+  otherwise only computes, reads compact arrays and branches, runs in pieces on
+  all the cores, with no change to the program. The result is the sequential
+  one exactly: every piece tracks its lowest and highest running sums, so an
+  overflow the sequential loop would meet is found; any error (overflow, division
+  by zero, index out of range) runs the loop again sequentially and reports the
+  interpreter's error at the same line. Sums of decimals stay sequential (their
+  last digits depend on the order). Mandelbrot 900 x 600: 0.10 -> 0.05 s; a
+  200-million-step sum: 0.16 -> 0.065 s, twice as fast as Go.
+- The JIT keeps registers in machine registers: per-register kinds, constants,
+  compact arrays specialised on the kind seen, their views made once at entry,
+  and exits that write back only what the interpreter reads.
 - `gw --bytecode` prints a program's compiled instructions.
 
 **Faster start.** On Windows the graphics DLLs are loaded only when the GPU is

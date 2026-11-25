@@ -13,7 +13,9 @@ fn run(src: &str, name: &str, jit: bool) -> (i32, String, String) {
     std::fs::write(&path, src).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_gw"));
     cmd.arg(&path);
-    if !jit {
+    if jit {
+        cmd.env("GLOBW_JIT", "1");
+    } else {
         cmd.env("GLOBW_NO_JIT", "1");
     }
     let out = cmd.output().unwrap();
@@ -428,4 +430,118 @@ output(n, \" \", bad)
     assert_eq!(code, 0, "{}", out);
     assert!(out.contains("caught: to_int: \"xn150\"") && out.ends_with(" 11
 "), "{}", out);
+}
+
+/// Runs a program with the parallel loops checked: they must run in parallel
+/// (the JIT log says so) and give exactly the interpreter's output and errors.
+fn same_parallel(name: &str, src: &str) -> (i32, String, String) {
+    let r = same(name, src);
+    let dir = std::env::temp_dir().join("globw_jit_tests");
+    let out = Command::new(env!("CARGO_BIN_EXE_gw"))
+        .arg(dir.join(format!("{}.gw", name)))
+        .env("GLOBW_JIT", "1")
+        .env("GLOBW_JIT_LOG", "1")
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&out.stderr);
+    assert!(log.contains("runs in parallel"), "{}: no parallel loop\n{}", name, log);
+    r
+}
+
+#[test]
+fn parallel_sums_conditions_and_the_counter_after() {
+    let src = "variables:
+    i, s, c, n as int
+    flags as bool[2000000]
+n = 2000000
+for(i from 1 to n)
+    flags[i] = i mod 3 == 0
+end loop
+s = 0
+c = 7
+for(i from 1 to n)
+    s = s + i mod 11 - 5
+    if(flags[i])
+        c = c + 1
+    end if
+end loop
+output(s, \" \", c, \" \", i)
+";
+    let (code, out, _) = same_parallel("par_sums", src);
+    assert_eq!(code, 0, "{}", out);
+}
+
+#[test]
+fn parallel_nested_loops_with_floats() {
+    let src = "variables:
+    px, py, i, total as int
+    zr, zi, t, cr, ci as float
+total = 0
+for(py from 0 to 299)
+    for(px from 0 to 299)
+        cr = px * 3.5 / 300 - 2.5
+        ci = py * 2.0 / 300 - 1.0
+        zr = 0.0
+        zi = 0.0
+        i = 0
+        while(i < 100 and zr * zr + zi * zi <= 4.0)
+            t = zr * zr - zi * zi + cr
+            zi = 2.0 * zr * zi + ci
+            zr = t
+            i = i + 1
+        end loop
+        total = total + i
+    end loop
+end loop
+output(total)
+";
+    let (code, out, _) = same_parallel("par_nested", src);
+    assert_eq!(code, 0, "{}", out);
+}
+
+#[test]
+fn parallel_overflow_only_in_sequential_order() {
+    // the running sum overflows at turn 600000 although the total fits: the
+    // interpreter's error, at the same line
+    let src = "variables:
+    i, s as int
+s = 0
+for(i from 1 to 1000000)
+    if(i == 300000 or i == 600000)
+        s = s + 5000000000000000000
+    end if
+    if(i == 700000)
+        s = s - 9000000000000000000
+    end if
+end loop
+output(s)
+";
+    let (code, _, err) = same_parallel("par_overflow", src);
+    assert_ne!(code, 0);
+    assert!(err.contains("line 6") || err.contains(":6"), "{}", err);
+}
+
+#[test]
+fn parallel_errors_come_from_the_right_turn() {
+    for (name, body) in [
+        ("par_div0", "    s = s + 100 div (i - 777777)\n"),
+        ("par_index", "    s = s + a[i mod 1000 + 1 + i div 999999]\n"),
+    ] {
+        let src = format!(
+            "variables:
+    i, s as int
+    a as int[1000]
+for(i from 1 to 1000)
+    a[i] = i
+end loop
+s = 0
+for(i from 1 to 1000000)
+{}end loop
+output(s)
+",
+            body
+        );
+        let (code, _, err) = same_parallel(name, &src);
+        assert_ne!(code, 0, "{}: {}", name, err);
+    }
 }
