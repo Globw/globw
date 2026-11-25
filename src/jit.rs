@@ -369,9 +369,11 @@ unsafe extern "C" fn gw_seq_view(ctx: *mut Ctx, c: i64, out: *mut i64) -> i64 {
         }
         Value::Packed(p) => {
             let (data, n, kind, bits) = match &*p.as_ptr() {
-                Packed::Ints(v, b) => (v.as_ptr() as i64, v.len(), 0, if b.is_empty() { 0 } else { b.as_ptr() as i64 }),
-                Packed::Reals(v, b) => (v.as_ptr() as i64, v.len(), 1, if b.is_empty() { 0 } else { b.as_ptr() as i64 }),
-                Packed::Bools(v) => (v.as_ptr() as i64, v.len(), 2, 0),
+                // bits 0 when full: compiled code then skips them (they stay exact)
+                Packed::Ints(v, b, full) => (v.as_ptr() as i64, v.len(), 0, if *full { 0 } else { b.as_ptr() as i64 }),
+                Packed::Reals(v, b, full) => (v.as_ptr() as i64, v.len(), 1, if *full { 0 } else { b.as_ptr() as i64 }),
+                // bools: "bits" 0 when full, 1 when some element may have no value
+                Packed::Bools(v, full) => (v.as_ptr() as i64, v.len(), 2, !*full as i64),
             };
             *out = data;
             *out.add(1) = n as i64;
@@ -391,8 +393,9 @@ unsafe extern "C" fn gw_try_full(ctx: *mut Ctx, c: i64) -> i64 {
         if pk.try_full() {
             return 0;
         }
-        if let Packed::Ints(_, b) | Packed::Reals(_, b) = pk {
-            return b.as_ptr() as i64;
+        match pk {
+            Packed::Ints(_, b, _) | Packed::Reals(_, b, _) => return b.as_ptr() as i64,
+            Packed::Bools(..) => return 1,
         }
     }
     0
@@ -580,16 +583,53 @@ struct FastLoop {
     step: u16,
     /// compact arrays read or written at the counter's position
     conts: Vec<u16>,
+    /// those read: the copy is taken only when they are full (no value checks)
+    reads: Vec<u16>,
     /// the block that chooses the copy, and the copy's blocks (head..=fs)
     choose: Block,
     blocks: Vec<Block>,
+    /// registers only ever increased by constants >= 0 (at most `k` per turn,
+    /// no inner loops): the chooser proves they cannot overflow in the copy
+    bounded: Vec<(u16, i64)>,
+}
+
+/// Registers written in the body of loop fi..fs only as `a = a + k`, k >= 0,
+/// with no backward jump inside (each instruction runs at most once a turn):
+/// (register, the most it grows per turn).
+fn bounded_counters(code: &[Op], fi: usize, fs: usize) -> Vec<(u16, i64)> {
+    let body = fi + 1..fs;
+    let backward = code[body.clone()].iter().enumerate().any(|(k, op)| match *op {
+        Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) | Op::JumpUnlessIImm(_, _, _, t) => (t as usize) <= fi + 1 + k,
+        _ => false,
+    });
+    if backward {
+        return Vec::new();
+    }
+    let mut out: Vec<(u16, i64)> = Vec::new();
+    let mut bad: Vec<u16> = Vec::new();
+    for ip in body {
+        if let Op::AddIImm(d, x, k) = code[ip] {
+            if d == x && (0..=1 << 30).contains(&k) {
+                match out.iter_mut().find(|e| e.0 == d) {
+                    Some(e) => e.1 += k,
+                    None => out.push((d, k)),
+                }
+                continue;
+            }
+        }
+        if let Some(w) = written_reg(&code[ip]) {
+            bad.push(w);
+        }
+    }
+    out.retain(|e| !bad.contains(&e.0));
+    out
 }
 
 /// Innermost for loops whose counter indexes compact arrays: (ForInit, ForStep,
 /// var, end, step, those arrays). The counter and the end are not written in the
 /// body, and the arrays' views stay valid there (fresh, not replaced).
 #[allow(clippy::type_complexity)]
-fn fast_loops(code: &[Op], spec: &[i8], fresh: &[bool], clob: &[bool]) -> Vec<(usize, usize, u16, u16, u16, Vec<u16>)> {
+fn fast_loops(code: &[Op], spec: &[i8], fresh: &[bool], clob: &[bool]) -> Vec<(usize, usize, u16, u16, u16, Vec<u16>, Vec<u16>)> {
     let mut out = Vec::new();
     for fi in 0..code.len() {
         let Op::ForInit { var, end, step, exit } = code[fi] else { continue };
@@ -610,12 +650,16 @@ fn fast_loops(code: &[Op], spec: &[i8], fresh: &[bool], clob: &[bool]) -> Vec<(u
             continue;
         }
         let mut conts: Vec<u16> = Vec::new();
+        let mut reads: Vec<u16> = Vec::new();
         let mut bad = false;
         for ip in body.clone() {
             if let Op::GetElem(_, c, i) | Op::SetElem(c, i, _) = code[ip] {
                 if i == var && spec.get(c as usize).is_some_and(|&k| k != SPEC_NONE) {
                     if fresh.get(ip).copied().unwrap_or(false) && !clob.get(c as usize).copied().unwrap_or(true) {
                         conts.push(c);
+                        if matches!(code[ip], Op::GetElem(..)) {
+                            reads.push(c);
+                        }
                     } else {
                         bad = true;
                     }
@@ -630,7 +674,9 @@ fn fast_loops(code: &[Op], spec: &[i8], fresh: &[bool], clob: &[bool]) -> Vec<(u
         }
         conts.sort_unstable();
         conts.dedup();
-        out.push((fi, fs, var, end, step, conts));
+        reads.sort_unstable();
+        reads.dedup();
+        out.push((fi, fs, var, end, step, conts, reads));
     }
     out
 }
@@ -2279,12 +2325,13 @@ impl Jit {
             let mut heads: HashMap<usize, (Block, Variable)> = HashMap::new();
             let mut fastv: HashMap<usize, FastLoop> = HashMap::new();
             if pass == 1 && self.layout.is_some() && std::env::var_os("GLOBW_JIT_NO_VERSION").is_none() {
-                for (fi, fs, var, end, step, conts) in fast_loops(code, spec, &fresh, &clob) {
+                for (fi, fs, var, end, step, conts, reads) in fast_loops(code, spec, &fresh, &clob) {
                     if !runs[fi + 1..=fs].iter().all(|&r| r) {
                         continue;
                     }
                     let blocks: Vec<Block> = (fi + 1..=fs).map(|_| b.create_block()).collect();
-                    fastv.insert(fi + 1, FastLoop { fs, var, end, step, conts, choose: b.create_block(), blocks });
+                    let bounded = bounded_counters(code, fi, fs).into_iter().filter(|e| vars[e.0 as usize].ct && vars[e.0 as usize].m & 7 == K_INT).collect();
+                    fastv.insert(fi + 1, FastLoop { fs, var, end, step, conts, reads, choose: b.create_block(), blocks, bounded });
                 }
             }
             for &fi in par_hooks.keys() {
@@ -2374,11 +2421,29 @@ impl Jit {
                 let small = b.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, e, 1 << 32);
                 let v1 = b.ins().band(v1, small);
                 let mut ok = b.ins().band(s1, v1);
+                if !fl.bounded.is_empty() {
+                    // turns left (e - v + 1, at most 2^32 here) times k: below 2^62
+                    let left0 = b.ins().isub(e, v);
+                    let left = b.ins().iadd_imm_s(left0, 1);
+                    let zero = b.ins().iconst(types::I64, 0);
+                    let left = b.ins().smax(left, zero);
+                    let cap = b_two32(&mut b);
+                    let left = b.ins().smin(left, cap);
+                    for &(a, k) in &fl.bounded {
+                        let grow = b.ins().imul_imm_s(left, k);
+                        let av = g.i(&mut b, a);
+                        let (_, of) = b.ins().sadd_overflow(av, grow);
+                        let fits = b.ins().icmp_imm_s(IntCC::Equal, of, 0);
+                        ok = b.ins().band(ok, fits);
+                    }
+                }
                 for &c in &fl.conts {
-                    if matches!(spec.get(c as usize), Some(0) | Some(1)) {
-                        let cc = b.ins().iconst(types::I64, c as i64);
-                        let nb = g.helper(&mut b, "gw_try_full", &[cc])?;
-                        b.def_var(views[c as usize].bits, nb);
+                    let cc = b.ins().iconst(types::I64, c as i64);
+                    let nb = g.helper(&mut b, "gw_try_full", &[cc])?;
+                    b.def_var(views[c as usize].bits, nb);
+                    if fl.reads.contains(&c) {
+                        let full = b.ins().icmp_imm_s(IntCC::Equal, nb, 0);
+                        ok = b.ins().band(ok, full);
                     }
                     let n = b.use_var(views[c as usize].len);
                     let le = b.ins().icmp(IntCC::SignedLessThanOrEqual, e, n);
@@ -2554,6 +2619,10 @@ fn bits_of(b: &mut FunctionBuilder, v: RegVars) -> V {
     let is_bool = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_BOOL);
     let x = b.ins().select(is_bool, bb, i);
     b.ins().select(is_real, rb, x)
+}
+
+fn b_two32(b: &mut FunctionBuilder) -> V {
+    b.ins().iconst(types::I64, 1i64 << 32)
 }
 
 fn int_cc(c: Cmp) -> IntCC {
@@ -2753,9 +2822,44 @@ impl Gen<'_> {
         t
     }
 
+    /// `if(c) a = a + k end if` as compiled: JumpIfFalse(c, t) at `jip`, then
+    /// AddIImm(a, a, k), then (a Jump to) t. Done without a branch: a + (c ? k : 0).
+    /// The overflow check stays, stopping at the add when it fails.
+    fn if_add(&self, b: &mut FunctionBuilder, jip: usize, v: V) -> bool {
+        if self.leave.is_none() {
+            return false;
+        }
+        let Some(&Op::JumpIfFalse(_, t)) = self.code.get(jip) else { return false };
+        let Some(&Op::AddIImm(a, x, k)) = self.code.get(jip + 1) else { return false };
+        let t = t as usize;
+        let joins = t == jip + 2 || (t == jip + 3 && matches!(self.code.get(jip + 2), Some(&Op::Jump(t2)) if t2 as usize == t));
+        if a != x || !joins || jip + 1 >= self.hi {
+            return false;
+        }
+        let kc = b.ins().iconst(types::I64, k);
+        let z = b.ins().iconst(types::I64, 0);
+        let inc = b.ins().select(v, kc, z);
+        let av = self.i(b, a);
+        let bounded = self.in_fast.get().is_some_and(|h| self.fastv[&h].bounded.iter().any(|e| e.0 == a));
+        let nv = if bounded {
+            b.ins().iadd(av, inc)
+        } else {
+            let (nv, of) = b.ins().sadd_overflow(av, inc);
+            self.guard(b, jip + 1, of);
+            nv
+        };
+        self.set_i(b, a, nv);
+        let tb = self.block(b, t);
+        b.ins().jump(tb, &[]);
+        true
+    }
+
     /// After a comparison into `d` (value `v`): when the next instruction jumps
     /// on `d`, branch right here (compare and jump fused); else go on.
     fn cond_next(&self, b: &mut FunctionBuilder, ip: usize, d: u16, v: V) {
+        if matches!(self.code.get(ip + 1), Some(&Op::JumpIfFalse(c, _)) if c == d) && self.if_add(b, ip + 1, v) {
+            return;
+        }
         match self.code.get(ip + 1) {
             Some(&Op::JumpIfFalse(c, t)) if c == d && ip + 2 < self.hi => {
                 let (yes, no) = (self.thread(ip + 2, d, true), self.thread(t as usize, d, false));
@@ -3187,14 +3291,21 @@ impl Gen<'_> {
                         i == fl.var && fl.conts.contains(&c)
                     });
                     let k = if checked_already { b.ins().iadd_imm_s(iv, -1) } else { self.in_range(b, iv, n, stop) };
+                    // the chooser proved this array full: every element has a value
+                    let full_here = checked_already && self.in_fast.get().is_some_and(|h| self.fastv[&h].reads.contains(&c));
                     let get = matches!(op, Op::GetElem(..));
                     match (want, get) {
                         (2, true) => {
                             let a = b.ins().iadd(p, k);
                             let v = b.ins().load(types::I8, MemFlagsData::trusted(), a, 0);
-                            let unset = b.ins().icmp_imm_s(IntCC::Equal, v, crate::vm::UNSET_BOOL as i64);
-                            self.guard(b, ip, unset);
+                            if !full_here {
+                                let unset = b.ins().icmp_imm_s(IntCC::Equal, v, crate::vm::UNSET_BOOL as i64);
+                                self.guard(b, ip, unset);
+                            }
                             self.set_b(b, d, v);
+                            // a jump on it next: branch here
+                            self.cond_next(b, ip, d, v);
+                            return Ok(());
                         }
                         (2, false) => {
                             let v = self.vars[d as usize];
@@ -3206,9 +3317,11 @@ impl Gen<'_> {
                             b.ins().store(MemFlagsData::trusted(), x, a, 0);
                         }
                         (_, true) => {
-                            let has = self.has_bit(b, bits, k);
-                            let none = b.ins().icmp_imm_s(IntCC::Equal, has, 0);
-                            self.guard(b, ip, none);
+                            if !full_here {
+                                let has = self.has_bit(b, bits, k);
+                                let none = b.ins().icmp_imm_s(IntCC::Equal, has, 0);
+                                self.guard(b, ip, none);
+                            }
                             let off = b.ins().ishl_imm_s(k, 3);
                             let a = b.ins().iadd(p, off);
                             if want == 1 {
@@ -3386,7 +3499,11 @@ impl Gen<'_> {
                 self.checked(b, ip, d, a, c, which);
             }
             Op::AddIImm(d, x, n) | Op::SubIImm(d, x, n) | Op::MulIImm(d, x, n)
-                if n.unsigned_abs() <= 1 << 30 && self.in_fast.get().is_some_and(|h| self.fastv[&h].var == x) =>
+                if n.unsigned_abs() <= 1 << 30
+                    && self.in_fast.get().is_some_and(|h| {
+                        let fl = &self.fastv[&h];
+                        fl.var == x || (matches!(op, Op::AddIImm(..)) && d == x && fl.bounded.iter().any(|e| e.0 == d))
+                    }) =>
             {
                 // the chooser proved 1 <= counter <= 2^32: this cannot overflow
                 let a = self.i(b, x);
@@ -3492,6 +3609,9 @@ impl Gen<'_> {
             }
             Op::JumpIfFalse(c, t) => {
                 let v = self.bo(b, c);
+                if self.if_add(b, ip, v) {
+                    return Ok(());
+                }
                 let f = self.thread(t as usize, c, false);
                 let (n, tb) = (self.next(b, ip), self.block(b, f));
                 b.ins().brif(v, n, &[], tb, &[]);

@@ -41,53 +41,44 @@ pub enum Value {
 
 /// A compact array: one machine value per element, and for ints and floats one bit
 /// per element saying it has a value (reading one that has none is an error, as
-/// with any array); no bits at all (an empty vector) once every element has one.
-/// Bools keep 0 (false), 1 (true) or 2 (no value) in a byte.
+/// with any array). Bools keep 0 (false), 1 (true) or 2 (no value) in a byte.
+/// The last field, "full", says every element has a value: a hint compiled code
+/// uses to skip the checks. The bits and bytes themselves are always exact (never
+/// freed), so a view taken before stays valid.
 #[derive(Debug, Clone)]
 pub enum Packed {
-    Ints(Vec<i64>, Vec<u64>),
-    Reals(Vec<f64>, Vec<u64>),
-    Bools(Vec<u8>),
+    Ints(Vec<i64>, Vec<u64>, bool),
+    Reals(Vec<f64>, Vec<u64>, bool),
+    Bools(Vec<u8>, bool),
 }
 
 pub const UNSET_BOOL: u8 = 2;
-
-/// "Has a value" bits for `n` elements that all have one.
-fn full_bits(n: usize) -> Vec<u64> {
-    let mut b = vec![u64::MAX; n.div_ceil(64)];
-    if n % 64 != 0 {
-        if let Some(last) = b.last_mut() {
-            *last = (1u64 << (n % 64)) - 1;
-        }
-    }
-    b
-}
 
 impl Packed {
     pub fn new(n: usize, kind: u8) -> Packed {
         let bits = vec![0u64; n.div_ceil(64)];
         match kind {
-            0 => Packed::Ints(vec![0; n], bits),
-            1 => Packed::Reals(vec![0.0; n], bits),
-            _ => Packed::Bools(vec![UNSET_BOOL; n]),
+            0 => Packed::Ints(vec![0; n], bits, n == 0),
+            1 => Packed::Reals(vec![0.0; n], bits, n == 0),
+            _ => Packed::Bools(vec![UNSET_BOOL; n], n == 0),
         }
     }
 
     pub fn len(&self) -> usize {
         match self {
-            Packed::Ints(v, _) => v.len(),
-            Packed::Reals(v, _) => v.len(),
-            Packed::Bools(v) => v.len(),
+            Packed::Ints(v, ..) => v.len(),
+            Packed::Reals(v, ..) => v.len(),
+            Packed::Bools(v, _) => v.len(),
         }
     }
 
     /// Element `k` (0-based, in range); `Value::Null` when it has no value yet.
     pub fn get(&self, k: usize) -> Value {
-        let has = |bits: &Vec<u64>| bits.is_empty() || bits[k >> 6] >> (k & 63) & 1 == 1;
+        let has = |bits: &Vec<u64>| bits[k >> 6] >> (k & 63) & 1 == 1;
         match self {
-            Packed::Ints(v, b) if has(b) => Value::Int(v[k]),
-            Packed::Reals(v, b) if has(b) => Value::Real(v[k]),
-            Packed::Bools(v) if v[k] != UNSET_BOOL => Value::Bool(v[k] == 1),
+            Packed::Ints(v, b, _) if has(b) => Value::Int(v[k]),
+            Packed::Reals(v, b, _) if has(b) => Value::Real(v[k]),
+            Packed::Bools(v, _) if v[k] != UNSET_BOOL => Value::Bool(v[k] == 1),
             _ => Value::Null,
         }
     }
@@ -95,93 +86,80 @@ impl Packed {
     /// Stores `x` at `k` (0-based, in range). `Null` takes the value away; an int
     /// stored in a float array becomes a float.
     pub fn set(&mut self, k: usize, x: &Value) {
-        let mark = |b: &mut Vec<u64>| {
-            if !b.is_empty() {
+        match (self, x) {
+            (Packed::Ints(v, b, _), Value::Int(n)) => {
+                v[k] = *n;
                 b[k >> 6] |= 1 << (k & 63);
             }
-        };
-        match (self, x) {
-            (Packed::Ints(v, b), Value::Int(n)) => {
-                v[k] = *n;
-                mark(b);
-            }
-            (Packed::Reals(v, b), Value::Real(r)) => {
+            (Packed::Reals(v, b, _), Value::Real(r)) => {
                 v[k] = *r;
-                mark(b);
+                b[k >> 6] |= 1 << (k & 63);
             }
-            (Packed::Reals(v, b), Value::Int(n)) => {
+            (Packed::Reals(v, b, _), Value::Int(n)) => {
                 v[k] = *n as f64;
-                mark(b);
+                b[k >> 6] |= 1 << (k & 63);
             }
-            (Packed::Bools(v), Value::Bool(t)) => v[k] = *t as u8,
-            (Packed::Ints(v, b), _) => {
-                if b.is_empty() {
-                    *b = full_bits(v.len());
-                }
+            (Packed::Bools(v, _), Value::Bool(t)) => v[k] = *t as u8,
+            (Packed::Ints(_, b, full), _) | (Packed::Reals(_, b, full), _) => {
                 b[k >> 6] &= !(1 << (k & 63));
+                *full = false;
             }
-            (Packed::Reals(v, b), _) => {
-                if b.is_empty() {
-                    *b = full_bits(v.len());
-                }
-                b[k >> 6] &= !(1 << (k & 63));
+            (Packed::Bools(v, full), _) => {
+                v[k] = UNSET_BOOL;
+                *full = false;
             }
-            (Packed::Bools(v), _) => v[k] = UNSET_BOOL,
         }
     }
 
     pub fn push(&mut self, x: &Value) {
         let k = self.len();
-        let number = matches!(x, Value::Int(_) | Value::Real(_));
         match self {
-            Packed::Ints(v, b) => {
+            Packed::Ints(v, b, full) => {
                 v.push(0);
-                if b.is_empty() && !number {
-                    *b = full_bits(k);
-                }
-                if !b.is_empty() && b.len() * 64 <= k {
+                if b.len() * 64 <= k {
                     b.push(0);
                 }
+                *full = false;
             }
-            Packed::Reals(v, b) => {
+            Packed::Reals(v, b, full) => {
                 v.push(0.0);
-                if b.is_empty() && !number {
-                    *b = full_bits(k);
-                }
-                if !b.is_empty() && b.len() * 64 <= k {
+                if b.len() * 64 <= k {
                     b.push(0);
                 }
+                *full = false;
             }
-            Packed::Bools(v) => v.push(UNSET_BOOL),
+            Packed::Bools(v, full) => {
+                v.push(UNSET_BOOL);
+                *full = false;
+            }
         }
         self.set(k, x);
     }
 
-    /// Drops the "has a value" bits when every element has one (cheap when not:
-    /// it stops at the first gap, looking at both ends first). True when full.
+    /// Notes whether every element has a value (cheap when not: both ends first,
+    /// then it stops at the first gap). True when full.
     pub fn try_full(&mut self) -> bool {
-        let (n, b) = match self {
-            Packed::Ints(v, b) => (v.len(), b),
-            Packed::Reals(v, b) => (v.len(), b),
-            Packed::Bools(_) => return false,
-        };
-        if b.is_empty() {
-            return true;
+        match self {
+            Packed::Ints(v, b, full) => {
+                if !*full {
+                    *full = bits_all_set(b, v.len());
+                }
+                *full
+            }
+            Packed::Reals(v, b, full) => {
+                if !*full {
+                    *full = bits_all_set(b, v.len());
+                }
+                *full
+            }
+            Packed::Bools(v, full) => {
+                if !*full {
+                    let n = v.len();
+                    *full = n == 0 || (v[0] != UNSET_BOOL && v[n - 1] != UNSET_BOOL && !v.contains(&UNSET_BOOL));
+                }
+                *full
+            }
         }
-        let words = n / 64;
-        let tail = n % 64;
-        let whole = |w: &u64| *w == u64::MAX;
-        if words > 0 && (!whole(&b[0]) || !whole(&b[words - 1])) {
-            return false;
-        }
-        if tail > 0 && b[words] != (1u64 << tail) - 1 {
-            return false;
-        }
-        if !b[..words].iter().all(whole) {
-            return false;
-        }
-        *b = Vec::new();
-        true
     }
 
     /// The elements as values (`Null` where there is none), for code that works on
@@ -199,6 +177,19 @@ impl Packed {
             }
         }
     }
+}
+
+/// Are the first `n` "has a value" bits all set?
+fn bits_all_set(b: &[u64], n: usize) -> bool {
+    let words = n / 64;
+    let tail = n % 64;
+    if words > 0 && (b[0] != u64::MAX || b[words - 1] != u64::MAX) {
+        return false;
+    }
+    if tail > 0 && b[words] & ((1u64 << tail) - 1) != (1u64 << tail) - 1 {
+        return false;
+    }
+    b[..words].iter().all(|&w| w == u64::MAX)
 }
 
 /// An object: its class id and the values of its fields, in slot order.
@@ -792,8 +783,6 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
     // on with `import jit` (or GLOBW_JIT=1); GLOBW_NO_JIT=1 keeps it off
     #[cfg(feature = "jit")]
     if (module.jit || std::env::var_os("GLOBW_JIT").is_some()) && std::env::var_os("GLOBW_NO_JIT").is_none() {
-        // the worker threads for parallel loops start now, while the program runs
-        std::thread::spawn(|| rayon::current_num_threads());
         vm.jit = crate::jit::Jit::new(module, gw_call_body as *const u8).map(Box::new);
     }
     let result = vm.execute::<false>(input, output);

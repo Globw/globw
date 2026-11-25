@@ -712,3 +712,34 @@ output(s)
         assert_ne!(code, 0, "{}: {}", name, err);
     }
 }
+
+#[test]
+fn bounded_counters_near_the_limit() {
+    let src = "variables:
+    i, k, hits as int
+    big as bool[100000]
+for(i from 1 to 100000)
+    big[i] = i mod 3 == 0
+end loop
+hits = 0
+for(k from 1 to 5)
+    for(i from 1 to 100000)
+        if(big[i])
+            hits = hits + 2
+        end if
+    end loop
+end loop
+output(hits)
+hits = 9223372036854775000
+for(i from 1 to 100000)
+    if(big[i])
+        hits = hits + 1
+    end if
+end loop
+output(hits)
+";
+    let (code, out, err) = same("bounded_counters", src);
+    assert_ne!(code, 0, "{}", out);
+    assert!(out.starts_with("333330"), "{}", out);
+    assert!(err.contains("integer limits"), "{}", err);
+}

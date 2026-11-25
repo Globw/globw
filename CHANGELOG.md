@@ -53,9 +53,14 @@ program without it is interpreted, as before: the JIT is for when speed matters.
   second copy without bounds checks, chosen once at the loop head when every
   turn left stays inside the arrays (step 1, counter from 1, end within the
   length): array writes 10-25% faster on one core.
-- A compact int or float array whose elements all have a value drops its "has a
-  value" bits (it is seen when a compiled loop starts); reads and writes then
-  skip them. Taking a value away (rare) brings the bits back.
+- A compact array whose elements all have a value is marked full (seen when a
+  compiled loop starts); compiled code then skips the "has a value" checks. The
+  bits stay exact, so every view of the array stays valid.
+- Check-free loop copies are taken only when the arrays they read are full,
+  and have no exits at all: no bounds checks, no value checks, no overflow
+  checks a counter cannot reach.
+- `if(c) a = a + k end if` runs without a branch; a comparison or a bool read
+  followed by a jump on it branches at once; and / or chains are threaded.
 - The JIT keeps registers in machine registers: per-register kinds, constants,
   compact arrays specialised on the kind seen, their views made once at entry,
   and exits that write back only what the interpreter reads.
