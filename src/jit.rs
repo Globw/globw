@@ -2371,6 +2371,8 @@ impl Jit {
                 let st = g.i(&mut b, fl.step);
                 let s1 = b.ins().icmp_imm_s(IntCC::Equal, st, 1);
                 let v1 = b.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, v, 1);
+                let small = b.ins().icmp_imm_s(IntCC::SignedLessThanOrEqual, e, 1 << 32);
+                let v1 = b.ins().band(v1, small);
                 let mut ok = b.ins().band(s1, v1);
                 for &c in &fl.conts {
                     if matches!(spec.get(c as usize), Some(0) | Some(1)) {
@@ -3383,6 +3385,19 @@ impl Gen<'_> {
                 };
                 self.checked(b, ip, d, a, c, which);
             }
+            Op::AddIImm(d, x, n) | Op::SubIImm(d, x, n) | Op::MulIImm(d, x, n)
+                if n.unsigned_abs() <= 1 << 30 && self.in_fast.get().is_some_and(|h| self.fastv[&h].var == x) =>
+            {
+                // the chooser proved 1 <= counter <= 2^32: this cannot overflow
+                let a = self.i(b, x);
+                let v = match op {
+                    Op::AddIImm(..) => b.ins().iadd_imm_s(a, n),
+                    Op::SubIImm(..) => b.ins().iadd_imm_s(a, -n),
+                    _ => b.ins().imul_imm_s(a, n),
+                };
+                self.set_i(b, d, v);
+                self.jump_next(b, ip);
+            }
             Op::AddIImm(d, x, n) | Op::SubIImm(d, x, n) | Op::MulIImm(d, x, n) => {
                 let a = self.i(b, x);
                 let c = self.konst(b, n);
@@ -3517,6 +3532,16 @@ impl Gen<'_> {
                 let skip = b.ins().bor(a1, a2);
                 let (n, tb) = (self.next(b, ip), self.block(b, exit as usize));
                 b.ins().brif(skip, tb, &[], n, &[]);
+            }
+            Op::ForStep { var, end, step: _, body } if self.in_fast.get().is_some_and(|h| self.fastv[&h].fs == ip) => {
+                // step 1 and end <= 2^32 (the chooser): the counter cannot overflow
+                let v = self.i(b, var);
+                let nv = b.ins().iadd_imm_s(v, 1);
+                self.set_i(b, var, nv);
+                let e = self.i(b, end);
+                let again = b.ins().icmp(IntCC::SignedLessThanOrEqual, nv, e);
+                let (bb, n) = (self.block(b, body as usize), self.next(b, ip));
+                b.ins().brif(again, bb, &[], n, &[]);
             }
             Op::ForStep { var, end, step, body } => {
                 let (v, s) = (self.i(b, var), self.i(b, step));
