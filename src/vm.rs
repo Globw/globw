@@ -642,7 +642,7 @@ unsafe extern "C" fn gw_call_body(
     slots.clear();
     slots.resize(n_regs, Slot::default());
     for &r in &*used {
-        slots[r as usize] = Slot::of(&vm.regs[new_base + r as usize]);
+        slots[r as usize] = Slot::entry(&vm.regs[new_base + r as usize]);
     }
     let mut cx = crate::jit::Ctx {
         regs: vm.regs.as_mut_ptr().add(new_base),
@@ -1826,7 +1826,7 @@ impl<'m> Vm<'m> {
                         self.jit_slots.clear();
                         self.jit_slots.resize(n, crate::jit::Slot::default());
                         for &r in unsafe { &*used } {
-                            self.jit_slots[r as usize] = crate::jit::Slot::of(&self.regs[base + r as usize]);
+                            self.jit_slots[r as usize] = crate::jit::Slot::entry(&self.regs[base + r as usize]);
                         }
                         let vm_ptr = self as *mut Vm as *mut u8;
                         let mut cx = crate::jit::Ctx {

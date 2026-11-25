@@ -39,6 +39,8 @@ pub const TAG_NONE: i64 = 0;
 pub const TAG_INT: i64 = 1;
 pub const TAG_REAL: i64 = 2;
 pub const TAG_BOOL: i64 = 3;
+/// Only in the registers handed to compiled code: no value yet (Value::Null).
+pub const TAG_NULL: i64 = 4;
 /// returned as the tag of a function's result when its compiled code gives up
 pub const TAG_BAIL: i64 = 255;
 
@@ -74,6 +76,16 @@ impl Slot {
             Value::Real(r) => Slot { bits: r.to_bits() as i64, tag: TAG_REAL },
             Value::Bool(b) => Slot { bits: *b as i64, tag: TAG_BOOL },
             _ => Slot { bits: 0, tag: TAG_NONE },
+        }
+    }
+
+    /// As `of`, but "no value yet" has its own tag: compiled code may then hold
+    /// a register of one kind with a constant tag (the language never reads a
+    /// variable before giving it a value).
+    pub fn entry(v: &Value) -> Slot {
+        match v {
+            Value::Null => Slot { bits: 0, tag: TAG_NULL },
+            v => Slot::of(v),
         }
     }
 
@@ -1255,6 +1267,21 @@ struct RegVars {
     t: Variable,
     /// what the register may hold: K_INT | K_REAL | K_BOOL | K_NONE
     m: u8,
+    /// one kind of number only: its tag is a constant, not a variable
+    ct: bool,
+}
+
+/// The register's tag: a constant for a register of one kind.
+fn tag_of(b: &mut FunctionBuilder, v: RegVars) -> V {
+    if v.ct {
+        let t = match v.m & 7 {
+            K_INT => TAG_INT,
+            K_REAL => TAG_REAL,
+            _ => TAG_BOOL,
+        };
+        return b.ins().iconst(types::I64, t);
+    }
+    b.use_var(v.t)
 }
 
 const K_INT: u8 = 1;
@@ -1999,6 +2026,7 @@ impl Jit {
                     let mut v = declare_reg(&mut b);
                     if let Some(m) = &masks {
                         v.m = m[r];
+                        v.ct = live.is_some() && v.m & K_NONE == 0 && (v.m & 7).count_ones() == 1;
                     }
                     v
                 })
@@ -2025,11 +2053,13 @@ impl Jit {
                         kinds_ok = b.ins().band(kinds_ok, x);
                     }
                     if v.m != K_ALL {
-                        // tags 0 (none), 1 int, 2 real, 3 bool: bit `tag` of the allowed set
-                        let allowed = b.ins().iconst(types::I64, (1 | ((v.m & 7) << 1)) as i64);
+                        // tags 0 (not a number), 1 int, 2 real, 3 bool, 4 no value yet:
+                        // bit `tag` of the allowed set (a constant tag: its kind, or no value)
+                        let set = if v.ct { ((v.m & 7) << 1) | 16 } else { 1 | ((v.m & 7) << 1) | 16 };
+                        let allowed = b.ins().iconst(types::I64, set as i64);
                         let sh = b.ins().ushr(allowed, tag);
                         let bit = b.ins().band_imm_s(sh, 1);
-                        let small = b.ins().icmp_imm_s(IntCC::UnsignedLessThan, tag, 4);
+                        let small = b.ins().icmp_imm_s(IntCC::UnsignedLessThan, tag, 5);
                         let okk = b.ins().uextend(types::I64, small);
                         let this = b.ins().band(bit, okk);
                         kinds_ok = b.ins().band(kinds_ok, this);
@@ -2182,7 +2212,7 @@ impl Jit {
                             if l[r as usize / 64] >> (r % 64) & 1 == 1 {
                                 let v = vars[r as usize];
                                 let bits = bits_of(&mut b, v);
-                                let tag = b.use_var(v.t);
+                                let tag = tag_of(&mut b, v);
                                 b.ins().store(MemFlagsData::trusted(), bits, slots, (r as usize * 16) as i32);
                                 b.ins().store(MemFlagsData::trusted(), tag, slots, (r as usize * 16 + 8) as i32);
                             }
@@ -2199,7 +2229,7 @@ impl Jit {
             for &r in written {
                 let v = vars[r as usize];
                 let bits = bits_of(&mut b, v);
-                let tag = b.use_var(v.t);
+                let tag = tag_of(&mut b, v);
                 b.ins().store(MemFlagsData::trusted(), bits, slots, (r as usize * 16) as i32);
                 b.ins().store(MemFlagsData::trusted(), tag, slots, (r as usize * 16 + 8) as i32);
             }
@@ -2211,7 +2241,8 @@ impl Jit {
         }
         if pass == 0 {
             // what moves carry, until nothing changes; never written here: anything
-            let mut m = seen.borrow().clone();
+            // never written here: anything (also what it is moved into)
+            let mut m: Vec<u8> = seen.borrow().iter().map(|&x| if x == 0 { K_ALL } else { x }).collect();
             loop {
                 let mut changed = false;
                 for &(d, s2) in moves.borrow().iter() {
@@ -2271,7 +2302,7 @@ impl Jit {
 }
 
 fn declare_reg(b: &mut FunctionBuilder) -> RegVars {
-    RegVars { i: b.declare_var(types::I64), r: b.declare_var(types::F64), b: b.declare_var(types::I8), t: b.declare_var(types::I64), m: K_ALL }
+    RegVars { i: b.declare_var(types::I64), r: b.declare_var(types::F64), b: b.declare_var(types::I8), t: b.declare_var(types::I64), m: K_ALL, ct: false }
 }
 
 /// Sets a register's variables (those of the kinds it may hold) from raw bits and a tag.
@@ -2306,7 +2337,7 @@ fn bits_of(b: &mut FunctionBuilder, v: RegVars) -> V {
         }
         _ => {}
     }
-    let tag = b.use_var(v.t);
+    let tag = tag_of(b, v);
     let i = b.use_var(v.i);
     let r = b.use_var(v.r);
     let rb = b.ins().bitcast(types::I64, MemFlagsData::new(), r);
@@ -2556,7 +2587,7 @@ impl Gen<'_> {
             let v = self.vars[r as usize];
             let base = (r as usize * PAR_SLOT * 8) as i32;
             let bits = if let Some(c) = self.consts.get(r as usize).copied().flatten() { b.ins().iconst(types::I64, c) } else { bits_of(b, v) };
-            let tag = b.use_var(v.t);
+            let tag = tag_of(b, v);
             b.ins().store(MemFlagsData::trusted(), bits, buf, base);
             b.ins().store(MemFlagsData::trusted(), tag, buf, base + 8);
             if self.spec.get(r as usize).is_some_and(|&k| k != SPEC_NONE) {
@@ -2685,7 +2716,7 @@ impl Gen<'_> {
         b.ins().brif(plain.unwrap(), ok, &[], slow, &[]);
         b.switch_to_block(ok);
         let v = self.vars[s as usize];
-        let tag = b.use_var(v.t);
+        let tag = tag_of(b, v);
         let (wi, nr, wr, nb, wb) = (b.create_block(), b.create_block(), b.create_block(), b.create_block(), b.create_block());
         let is_i = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_INT);
         b.ins().brif(is_i, wi, &[], nr, &[]);
@@ -2765,7 +2796,7 @@ impl Gen<'_> {
     /// Writes register `s` into element `k` of a compact array of `kind`.
     fn write_packed(&self, b: &mut FunctionBuilder, ip: usize, s: u16, p: V, bits: V, kind: V, k: V, slow: Block) {
         let v = self.vars[s as usize];
-        let tag = b.use_var(v.t);
+        let tag = tag_of(b, v);
         let (ints, not_int, reals, bools) = (b.create_block(), b.create_block(), b.create_block(), b.create_block());
         let is0 = b.ins().icmp_imm_s(IntCC::Equal, kind, 0);
         b.ins().brif(is0, ints, &[], not_int, &[]);
@@ -2826,8 +2857,16 @@ impl Gen<'_> {
         let sh = b.ins().band_imm_s(k, 63);
         let one = b.ins().iconst(types::I64, 1);
         let m = b.ins().ishl(one, sh);
+        // written only when not set yet: refilling an array stores nothing here,
+        // and 64 neighbours do not wait on each other through memory
+        let has = b.ins().band(word, m);
+        let (set, done) = (b.create_block(), b.create_block());
+        b.ins().brif(has, done, &[], set, &[]);
+        b.switch_to_block(set);
         let nw = b.ins().bor(word, m);
         b.ins().store(MemFlagsData::trusted(), nw, a, 0);
+        b.ins().jump(done, &[]);
+        b.switch_to_block(done);
     }
 
     /// Index `i` (1-based) in range 1..=n: its 0-based value, or a jump to `slow`.
@@ -2875,7 +2914,7 @@ impl Gen<'_> {
                         }
                         (2, false) => {
                             let v = self.vars[d as usize];
-                            let t = b.use_var(v.t);
+                            let t = tag_of(b, v);
                             let bad = b.ins().icmp_imm_s(IntCC::NotEqual, t, TAG_BOOL);
                             self.guard(b, ip, bad);
                             let x = b.use_var(v.b);
@@ -2898,7 +2937,7 @@ impl Gen<'_> {
                         }
                         (_, false) => {
                             let v = self.vars[d as usize];
-                            let t = b.use_var(v.t);
+                            let t = tag_of(b, v);
                             let off = b.ins().ishl_imm_s(k, 3);
                             let a = b.ins().iadd(p, off);
                             if want == 1 {
@@ -3020,12 +3059,12 @@ impl Gen<'_> {
                 if self.leave.is_some() && vs.m & K_NONE == 0 {
                     // compiled code never puts a non-number there: if one came from
                     // the interpreter, it moves it
-                    let t = b.use_var(vs.t);
+                    let t = tag_of(b, vs);
                     let none = b.ins().icmp_imm_s(IntCC::Equal, t, TAG_NONE);
                     self.guard(b, ip, none);
                 } else if self.leave.is_some() {
                     // a value that is not a number moves in the interpreter's registers
-                    let t = b.use_var(vs.t);
+                    let t = tag_of(b, vs);
                     let none = b.ins().icmp_imm_s(IntCC::Equal, t, TAG_NONE);
                     let (other, num, join) = (b.create_block(), b.create_block(), b.create_block());
                     b.ins().brif(none, other, &[], num, &[]);
@@ -3224,7 +3263,7 @@ impl Gen<'_> {
                 let args = b.ins().stack_addr(types::I64, ss, 0);
                 for k in 0..argc {
                     let v = self.vars[(first + k) as usize];
-                    let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                    let (bits, tag) = (bits_of(b, v), tag_of(b, v));
                     b.ins().store(MemFlagsData::trusted(), bits, args, (k as i32) * 16);
                     b.ins().store(MemFlagsData::trusted(), tag, args, (k as i32) * 16 + 8);
                 }
@@ -3255,7 +3294,7 @@ impl Gen<'_> {
                 for k in 0..argc {
                     let v = self.vars[(first + k) as usize];
                     let bits = bits_of(b, v);
-                    let tag = b.use_var(v.t);
+                    let tag = tag_of(b, v);
                     let none = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_NONE);
                     any_none = Some(match any_none {
                         None => none,
@@ -3281,7 +3320,7 @@ impl Gen<'_> {
             Op::Ret(s) if self.leave.is_none() => {
                 let v = self.vars[s as usize];
                 let bits = bits_of(b, v);
-                let tag = b.use_var(v.t);
+                let tag = tag_of(b, v);
                 b.ins().return_(&[bits, tag]);
             }
             Op::RetNone if self.leave.is_none() => {
@@ -3309,7 +3348,7 @@ impl Gen<'_> {
                 let cc = self.konst(b, c as i64);
                 let iv = self.i(b, i);
                 let v = self.vars[s as usize];
-                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let (bits, tag) = (bits_of(b, v), tag_of(b, v));
                 let sc = self.konst(b, s as i64);
                 let st = self.helper(b, "gw_set_elem", &[cc, iv, bits, tag, sc])?;
                 self.guard(b, ip, st);
@@ -3319,7 +3358,7 @@ impl Gen<'_> {
                 let cc = self.konst(b, c as i64);
                 let (iv, jv) = (self.i(b, i), self.i(b, j));
                 let v = self.vars[s as usize];
-                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let (bits, tag) = (bits_of(b, v), tag_of(b, v));
                 let sc = self.konst(b, s as i64);
                 let st = self.helper(b, "gw_set_elem2", &[cc, iv, jv, bits, tag, sc])?;
                 self.guard(b, ip, st);
@@ -3336,7 +3375,7 @@ impl Gen<'_> {
             Op::Append(l, s) => {
                 let lc = self.konst(b, l as i64);
                 let v = self.vars[s as usize];
-                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let (bits, tag) = (bits_of(b, v), tag_of(b, v));
                 let sc = self.konst(b, s as i64);
                 let st = self.helper(b, "gw_append", &[lc, bits, tag, sc])?;
                 self.guard(b, ip, st);
@@ -3353,7 +3392,7 @@ impl Gen<'_> {
             Op::SetGlobal(g, s) => {
                 let gc = self.konst(b, g as i64);
                 let v = self.vars[s as usize];
-                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let (bits, tag) = (bits_of(b, v), tag_of(b, v));
                 let sc = self.konst(b, s as i64);
                 let st = self.helper(b, "gw_set_global", &[gc, bits, tag, sc])?;
                 self.guard(b, ip, st);
@@ -3387,7 +3426,7 @@ impl Gen<'_> {
             }
             Op::ToStr(d, s) => {
                 let v = self.vars[s as usize];
-                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let (bits, tag) = (bits_of(b, v), tag_of(b, v));
                 let (dc, sc) = (self.konst(b, d as i64), self.konst(b, s as i64));
                 self.helper(b, "gw_to_str", &[dc, bits, tag, sc])?;
                 self.tag(b, d, TAG_NONE);
@@ -3395,7 +3434,7 @@ impl Gen<'_> {
             }
             Op::Print(s) => {
                 let v = self.vars[s as usize];
-                let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                let (bits, tag) = (bits_of(b, v), tag_of(b, v));
                 let sc = self.konst(b, s as i64);
                 self.helper(b, "gw_print", &[bits, tag, sc])?;
                 self.jump_next(b, ip);
@@ -3408,7 +3447,7 @@ impl Gen<'_> {
                 let args = b.ins().stack_addr(ptr, ss, 0);
                 for k in 0..argc {
                     let v = self.vars[(first + k) as usize];
-                    let (bits, tag) = (bits_of(b, v), b.use_var(v.t));
+                    let (bits, tag) = (bits_of(b, v), tag_of(b, v));
                     b.ins().store(MemFlagsData::trusted(), bits, args, (k as i32) * 16);
                     b.ins().store(MemFlagsData::trusted(), tag, args, (k as i32) * 16 + 8);
                 }
