@@ -664,3 +664,51 @@ output(s)
     assert_ne!(code, 0, "{}", out);
     assert!(err.contains("no value") || err.contains("value yet"), "{}", err);
 }
+
+#[test]
+fn remainders_kept_as_counters() {
+    let src = "variables:
+    i, k, s, t as int
+s = 0
+for(k from 1 to 3)
+    for(i from -20 to 3000)
+        s = s + i mod 7 + (i * 13) mod 5
+    end loop
+    for(i from 0 to 300000)
+        s = s + i mod 7 + (i * 7919) mod 1000 - (i * 3) mod 1
+        if(i mod 3 == 0)
+            s = s + i mod 11
+        end if
+    end loop
+    t = 0
+    for(i from 5 to 99999)
+        t = t + (i * 2147483647) mod 1000
+    end loop
+    s = s + t
+end loop
+output(s)
+";
+    let (code, out, _) = same("remainders", src);
+    assert_eq!(code, 0, "{}", out);
+}
+
+#[test]
+fn monotone_sums_still_find_overflow() {
+    for (name, start, body) in [
+        ("mono_big", "0", "    s = s + 4000000000000000\n"),
+        ("mono_edge", "9223372036854775000", "    s = s + i mod 7\n"),
+    ] {
+        let src = format!(
+            "variables:
+    i, s as int
+s = {}
+for(i from 1 to 1000000)
+{}end loop
+output(s)
+",
+            start, body
+        );
+        let (code, _, err) = same_parallel(name, &src);
+        assert_ne!(code, 0, "{}: {}", name, err);
+    }
+}

@@ -792,6 +792,8 @@ pub fn run(module: &Module, input: &mut dyn BufRead, output: &mut dyn Write) -> 
     // on with `import jit` (or GLOBW_JIT=1); GLOBW_NO_JIT=1 keeps it off
     #[cfg(feature = "jit")]
     if (module.jit || std::env::var_os("GLOBW_JIT").is_some()) && std::env::var_os("GLOBW_NO_JIT").is_none() {
+        // the worker threads for parallel loops start now, while the program runs
+        std::thread::spawn(|| rayon::current_num_threads());
         vm.jit = crate::jit::Jit::new(module, gw_call_body as *const u8).map(Box::new);
     }
     let result = vm.execute::<false>(input, output);

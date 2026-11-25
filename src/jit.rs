@@ -568,6 +568,8 @@ pub struct ParLoop {
     align: i64,
     /// fewer turns than this: not worth the threads
     min_trip: i64,
+    /// the pieces assume a counter that is never negative
+    counter_nonneg: bool,
 }
 
 /// An innermost for loop with a second, check-free copy of its body.
@@ -657,7 +659,7 @@ const PAR_SLOT: usize = 5;
 unsafe extern "C" fn gw_par(ctx: *mut Ctx, info: i64, lo: i64, hi: i64, buf: *const i64, out: *mut i64) -> i64 {
     use rayon::prelude::*;
     let p = &*(info as *const ParLoop);
-    if hi == i64::MAX || hi < lo {
+    if hi == i64::MAX || hi < lo || (p.counter_nonneg && lo < 0) {
         return 2;
     }
     if !p.writes.is_empty() {
@@ -704,6 +706,7 @@ unsafe extern "C" fn gw_par(ctx: *mut Ctx, info: i64, lo: i64, hi: i64, buf: *co
     if *bounds.last().unwrap() != hi as i128 + 1 {
         bounds.push(hi as i128 + 1);
     }
+    let t0 = std::time::Instant::now();
     let res: Vec<(i64, Vec<i64>)> = (0..bounds.len() - 1)
         .into_par_iter()
         .map(|k| {
@@ -715,6 +718,9 @@ unsafe extern "C" fn gw_par(ctx: *mut Ctx, info: i64, lo: i64, hi: i64, buf: *co
             (st, o)
         })
         .collect();
+    if std::env::var_os("GLOBW_JIT_TIME").is_some() {
+        eprintln!("[jit time] parallel loop {}..={}: {:.2} ms in {} pieces", lo, hi, t0.elapsed().as_secs_f64() * 1000.0, bounds.len() - 1);
+    }
     if res.iter().any(|(st, _)| *st != 0) {
         return 1;
     }
@@ -746,8 +752,37 @@ struct ParPlan {
     align: i64,
     /// (instruction, accumulator index, its operand holding the accumulator's value)
     affine: Vec<(usize, usize, u16)>,
+    /// per accumulator: only ever `a = a + x` with x surely >= 0 (given a counter
+    /// that is not negative): its running values only grow, no min/max to keep
+    monotone: Vec<bool>,
     inputs: Vec<u16>,
     nested: bool,
+}
+
+/// Is register `y`, read at instruction `ip`, surely >= 0 when the counter is?
+/// It was just set, in the same straight run of code, by a remainder of the
+/// counter (or of a non-negative multiple of it) or by a constant >= 0.
+fn surely_nonneg(code: &[Op], fi: usize, ip: usize, y: u16, var: u16, targets: &[usize]) -> bool {
+    let mut k = ip;
+    while k > fi + 1 {
+        if targets.contains(&k) {
+            return false;
+        }
+        k -= 1;
+        if written_reg(&code[k]) == Some(y) {
+            return match code[k] {
+                Op::LoadInt(_, n) => n >= 0,
+                Op::ModIImm(_, x, c) if c > 0 => {
+                    x == var || (k > fi + 1 && !targets.contains(&k) && matches!(code[k - 1], Op::MulIImm(t, v, a) if t == x && v == var && a >= 0))
+                }
+                _ => false,
+            };
+        }
+        if matches!(code[k], Op::Jump(_) | Op::JumpIfFalse(..) | Op::JumpIfTrue(..) | Op::JumpUnlessI(..) | Op::JumpUnlessIImm(..) | Op::ForInit { .. } | Op::ForStep { .. }) {
+            return false;
+        }
+    }
+    false
 }
 
 /// Follows accumulator `a` through the body of the loop (fi+1..fs): a value
@@ -993,7 +1028,28 @@ fn par_plans(code: &[Op], runs: &[bool], live: &[Vec<u64>], masks: &[u8], spec: 
         inputs.sort_unstable();
         inputs.dedup();
         inputs.retain(|&r| r != var && (accs.contains(&r) || !written.contains(&r)));
-        plans.push(ParPlan { fi, fs, exit, var, end, step, accs, writes, reads, align, affine, inputs, nested });
+        let targets: Vec<usize> = (fi + 1..fs)
+            .filter_map(|ip| match code[ip] {
+                Op::Jump(t) | Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) | Op::JumpUnlessIImm(_, _, _, t) => Some(t as usize),
+                Op::ForInit { exit, .. } => Some(exit as usize),
+                Op::ForStep { body, .. } => Some(body as usize),
+                _ => None,
+            })
+            .collect();
+        let monotone: Vec<bool> = (0..accs.len())
+            .map(|k| {
+                let a = accs[k];
+                affine.iter().filter(|x| x.1 == k).all(|&(ip, _, _)| match code[ip] {
+                    Op::AddIImm(d, x, n) => d == a && x == a && n >= 0,
+                    Op::AddI(d, x, y) => d == a && {
+                        let other = if x == a { y } else { x };
+                        surely_nonneg(code, fi, ip, other, var, &targets)
+                    },
+                    _ => false,
+                })
+            })
+            .collect();
+        plans.push(ParPlan { fi, fs, exit, var, end, step, accs, writes, reads, align, affine, monotone, inputs, nested });
     }
     plans
 }
@@ -1559,7 +1615,11 @@ impl Jit {
         if self.heat[f] < HOT_EDGES {
             return;
         }
+        let t0 = std::time::Instant::now();
         let code = self.compile_body(m, f, regs);
+        if std::env::var_os("GLOBW_JIT_TIME").is_some() {
+            eprintln!("[jit time] compiled {} in {:.2} ms", m.functions[f].name, t0.elapsed().as_secs_f64() * 1000.0);
+        }
         if self.log {
             eprintln!("[jit] {} ({}) {}", m.functions[f].name, f, if code.is_some() { "compiled" } else { "not compilable" });
         }
@@ -1837,6 +1897,7 @@ impl Jit {
                         reads: p.reads.clone(),
                         align: p.align,
                         min_trip: if p.nested { 16 } else { 200_000 },
+                        counter_nonneg: p.monotone.iter().any(|&m| m),
                     });
                     let addr = &*info as *const ParLoop as i64;
                     self.par.push(info);
@@ -1866,6 +1927,7 @@ impl Jit {
         let name = self.fresh_name("par");
         let id = self.module.declare_function(&name, Linkage::Local, &sig).map_err(|e| format!("{:?}", e))?;
         self.module.clear_context(&mut self.ctx);
+        self.ctx.set_disasm(std::env::var_os("GLOBW_JIT_ASM").is_some());
         self.ctx.func.signature = sig;
         self.ctx.func.name = UserFuncName::user(0, id.as_u32());
         let code = &f.code[..];
@@ -2014,6 +2076,11 @@ impl Jit {
                         b.ins().brif(of, bail, &[], cont, &[]);
                         b.switch_to_block(cont);
                         g.set_i(&mut b, d, nv);
+                        if p.monotone[k] {
+                            let nb = g.block(&mut b, ip + 1);
+                            b.ins().jump(nb, &[]);
+                            continue;
+                        }
                         let mn = b.use_var(mins[k]);
                         let mx = b.use_var(maxs[k]);
                         let mn2 = b.ins().smin(mn, nv);
@@ -2036,8 +2103,7 @@ impl Jit {
             b.switch_to_block(done);
             for (k, &a) in p.accs.iter().enumerate() {
                 let s = b.use_var(vars[a as usize].i);
-                let mn = b.use_var(mins[k]);
-                let mx = b.use_var(maxs[k]);
+                let (mn, mx) = if p.monotone[k] { (b.ins().iconst(types::I64, 0), s) } else { (b.use_var(mins[k]), b.use_var(maxs[k])) };
                 b.ins().store(MemFlagsData::trusted(), s, out, (k * 24) as i32);
                 b.ins().store(MemFlagsData::trusted(), mn, out, (k * 24 + 8) as i32);
                 b.ins().store(MemFlagsData::trusted(), mx, out, (k * 24 + 16) as i32);
@@ -2051,6 +2117,12 @@ impl Jit {
             b.finalize(fc);
         }
         self.module.define_function(id, &mut self.ctx).map_err(|e| format!("{:?}", e))?;
+        if std::env::var_os("GLOBW_JIT_ASM").is_some() {
+            if let Some(v) = self.ctx.compiled_code().and_then(|c| c.vcode.as_ref()) {
+                eprintln!("[jit asm] piece of {}
+{}", f.name, v);
+            }
+        }
         self.module.finalize_definitions().map_err(|e| format!("{:?}", e))?;
         let fp = self.module.get_finalized_function(id);
         // SAFETY: built with the ChunkFn signature
