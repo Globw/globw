@@ -1044,7 +1044,7 @@ impl<'m> Vm<'m> {
                 #[cfg(feature = "jit")]
                 if !WATCH && ($t) <= ($at) {
                     if let Some(jit) = self.jit.as_mut() {
-                        jit.heat(m, func, 1);
+                        jit.heat(m, func, 1, &self.regs[base..]);
                         jit_try = true;
                     }
                 }
@@ -1582,7 +1582,7 @@ impl<'m> Vm<'m> {
                     #[cfg(feature = "jit")]
                     if !WATCH {
                         if let Some(jit) = self.jit.as_mut() {
-                            jit.heat(m, func, 25);
+                            jit.heat(m, func, 25, &self.regs[base..]);
                             jit_try = true;
                         }
                     }

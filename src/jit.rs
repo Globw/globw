@@ -687,6 +687,125 @@ fn regs_of(op: &Op, out: &mut Vec<u16>) {
     }
 }
 
+/// Per instruction, the registers read from there on before being written (a
+/// bit set), or None when that cannot be told: a handler may jump anywhere, or
+/// the function is too big. Instructions compiled code does not run count as
+/// reading every register.
+fn live_in(code: &[Op], runs: &[bool], n_regs: usize) -> Option<Vec<Vec<u64>>> {
+    let n = code.len();
+    let words = n_regs.div_ceil(64).max(1);
+    if code.iter().any(|op| matches!(op, Op::PushHandler(..))) || n * words > 1 << 22 {
+        return None;
+    }
+    let all: Vec<u64> = {
+        let mut v = vec![u64::MAX; words];
+        let extra = words * 64 - n_regs;
+        if extra > 0 {
+            v[words - 1] >>= extra;
+        }
+        v
+    };
+    // per instruction: what it reads and the one register it surely writes
+    let mut reads: Vec<Vec<u64>> = Vec::with_capacity(n);
+    let mut kills: Vec<Option<u16>> = Vec::with_capacity(n);
+    let mut list = Vec::new();
+    for (ip, op) in code.iter().enumerate() {
+        if !runs[ip] {
+            reads.push(all.clone());
+            kills.push(None);
+            continue;
+        }
+        list.clear();
+        regs_of(op, &mut list);
+        // calls and built-ins may leave their destination alone; a for step reads its counter
+        let kill = match op {
+            Op::Call { .. } | Op::Builtin { .. } | Op::ForStep { .. } => None,
+            op => written_reg(op),
+        };
+        if let Some(d) = kill {
+            if let Some(p) = list.iter().position(|&r| r == d) {
+                list.remove(p);
+            }
+        }
+        let mut r = vec![0u64; words];
+        for &x in &list {
+            r[x as usize / 64] |= 1 << (x % 64);
+        }
+        reads.push(r);
+        kills.push(kill);
+    }
+    let succ = |ip: usize| successors(code, ip);
+    let mut live = vec![vec![0u64; words]; n];
+    let mut changed = true;
+    let mut out = vec![0u64; words];
+    while changed {
+        changed = false;
+        for ip in (0..n).rev() {
+            out.iter_mut().for_each(|w| *w = 0);
+            for t in succ(ip).into_iter().flatten() {
+                if t < n {
+                    for (o, l) in out.iter_mut().zip(&live[t]) {
+                        *o |= *l;
+                    }
+                }
+            }
+            if let Some(d) = kills[ip] {
+                out[d as usize / 64] &= !(1 << (d % 64));
+            }
+            for (o, r) in out.iter_mut().zip(&reads[ip]) {
+                *o |= *r;
+            }
+            if out != live[ip] {
+                live[ip].copy_from_slice(&out);
+                changed = true;
+            }
+        }
+    }
+    Some(live)
+}
+
+/// Where control may go after instruction `ip`.
+fn successors(code: &[Op], ip: usize) -> [Option<usize>; 2] {
+    let n = code.len();
+    let next = if ip + 1 < n { Some(ip + 1) } else { None };
+    match code[ip] {
+        Op::Jump(t) => [Some(t as usize), None],
+        Op::JumpIfFalse(_, t) | Op::JumpIfTrue(_, t) | Op::JumpUnlessI(_, _, _, t) | Op::JumpUnlessIImm(_, _, _, t) => [next, Some(t as usize)],
+        Op::ForInit { exit, .. } => [next, Some(exit as usize)],
+        Op::ForStep { body, .. } => [Some(body as usize), next],
+        Op::Ret(_) | Op::RetNone => [None, None],
+        _ => [next, None],
+    }
+}
+
+/// Per instruction: are the views made at entry surely still valid there, that
+/// is, no helper that may move a container ran since compiled code was entered?
+/// `bumps[ip]`: instruction ip calls such a helper.
+fn fresh_at(code: &[Op], runs: &[bool], bumps: &[bool]) -> Vec<bool> {
+    let n = code.len();
+    // optimistic start, then lowered: a successor of a stale point is stale
+    let mut stale = vec![false; n];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for ip in 0..n {
+            if !runs[ip] {
+                continue; // compiled code leaves there; it comes back through an entry
+            }
+            let out_stale = stale[ip] || bumps[ip];
+            if out_stale {
+                for t in successors(code, ip).into_iter().flatten() {
+                    if !stale[t] {
+                        stale[t] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    stale.iter().map(|s| !s).collect()
+}
+
 fn written_reg(op: &Op) -> Option<u16> {
     Some(match *op {
         Op::LoadInt(d, _) | Op::LoadReal(d, _) | Op::LoadBool(d, _) | Op::Move(d, _) => d,
@@ -723,6 +842,27 @@ struct RegVars {
     r: Variable,
     b: Variable,
     t: Variable,
+    /// what the register may hold: K_INT | K_REAL | K_BOOL | K_NONE
+    m: u8,
+}
+
+const K_INT: u8 = 1;
+const K_REAL: u8 = 2;
+const K_BOOL: u8 = 4;
+const K_NONE: u8 = 8;
+const K_ALL: u8 = 15;
+
+/// No compact array seen in that register.
+const SPEC_NONE: i8 = 99;
+
+/// The kind bit of a tag.
+fn kind_of_tag(t: i64) -> u8 {
+    match t {
+        TAG_INT => K_INT,
+        TAG_REAL => K_REAL,
+        TAG_BOOL => K_BOOL,
+        _ => K_NONE,
+    }
 }
 
 type V = cranelift_codegen::ir::Value;
@@ -892,7 +1032,7 @@ impl Jit {
 
     /// Function `f` was called (`weight` 25) or one of its loops turned (1): once
     /// hot enough, its whole body is compiled.
-    pub fn heat(&mut self, m: &Module, f: usize, weight: u32) {
+    pub fn heat(&mut self, m: &Module, f: usize, weight: u32, regs: &[Value]) {
         if self.state[f] != 0 {
             return;
         }
@@ -900,7 +1040,7 @@ impl Jit {
         if self.heat[f] < HOT_EDGES {
             return;
         }
-        let code = self.compile_body(m, f);
+        let code = self.compile_body(m, f, regs);
         if self.log {
             eprintln!("[jit] {} ({}) {}", m.functions[f].name, f, if code.is_some() { "compiled" } else { "not compilable" });
         }
@@ -956,7 +1096,7 @@ impl Jit {
         }
     }
 
-    fn compile_body(&mut self, m: &Module, f: usize) -> Option<BodyCode> {
+    fn compile_body(&mut self, m: &Module, f: usize, regs: &[Value]) -> Option<BodyCode> {
         let func = &m.functions[f];
         // without a loop a body does too little per call to pay for entering
         // compiled code: the interpreter runs it faster
@@ -977,6 +1117,17 @@ impl Jit {
             return None;
         }
         let enter = entries(&func.code, &runs);
+        // the kind of each compact array the frame holds now: code is made for it
+        let spec: Vec<i8> = (0..func.n_regs as usize)
+            .map(|r| match regs.get(r) {
+                Some(Value::Packed(p)) => match &*p.borrow() {
+                    crate::vm::Packed::Ints(..) => 0,
+                    crate::vm::Packed::Reals(..) => 1,
+                    crate::vm::Packed::Bools(..) => 2,
+                },
+                _ => SPEC_NONE,
+            })
+            .collect();
         let mut used = Vec::new();
         let mut written = Vec::new();
         for (op, &r) in func.code.iter().zip(&runs) {
@@ -992,7 +1143,7 @@ impl Jit {
         written.sort_unstable();
         written.dedup();
         let ids: Vec<Option<FuncId>> = self.funcs.iter().map(|x| x.map(|(id, _)| id)).collect();
-        let id = match self.build_body(func, &runs, &enter, &used, &written, &ids, &gives) {
+        let id = match self.build_body(func, &runs, &enter, &used, &written, &ids, &gives, &spec) {
             Ok(id) => id,
             Err(e) => {
                 if self.log {
@@ -1074,6 +1225,16 @@ impl Jit {
                 epoch: None,
                 layout: None,
                 gives: &[],
+                seen: None,
+                moves: None,
+                lconst: None,
+                loading: std::cell::Cell::new(false),
+                consts: &[],
+                spec: &[],
+                cur: std::cell::Cell::new(0),
+                move_ips: None,
+                bumps: None,
+                fresh: &[],
             };
             for (ip, op) in code.iter().enumerate() {
                 b.switch_to_block(blocks[ip]);
@@ -1129,7 +1290,8 @@ impl Jit {
         Ok(id)
     }
 
-    fn build_body(&mut self, f: &Function, runs: &[bool], enter: &[bool], used: &[u16], written: &[u16], ids: &[Option<FuncId>], gives: &[bool]) -> Result<FuncId, String> {
+    #[allow(clippy::too_many_arguments)]
+    fn build_body(&mut self, f: &Function, runs: &[bool], enter: &[bool], used: &[u16], written: &[u16], ids: &[Option<FuncId>], gives: &[bool], spec: &[i8]) -> Result<FuncId, String> {
         let (start, end) = (0, f.code.len());
         let ptr = self.module.isa().pointer_type();
         let mut sig = self.module.make_signature();
@@ -1140,14 +1302,27 @@ impl Jit {
         sig.returns.push(AbiParam::new(types::I64));
         let name = self.fresh_name("body");
         let id = self.module.declare_function(&name, Linkage::Local, &sig).map_err(|e| format!("{:?}", e))?;
-        self.module.clear_context(&mut self.ctx);
-        self.ctx.set_disasm(std::env::var_os("GLOBW_JIT_ASM").is_some());
-        self.ctx.func.signature = sig;
-        self.ctx.func.name = UserFuncName::user(0, id.as_u32());
         let code = &f.code[..];
+        let fc = self.module.isa().frontend_config();
+        let n_regs = f.n_regs as usize;
+        // pass 0 records the kinds each register is given; pass 1 builds with them
+        let seen = std::cell::RefCell::new(vec![0u8; n_regs]);
+        // per register: written only by LoadInt of one value (Some), else None
+        let lconst = std::cell::RefCell::new(vec![(false, 0i64, false); n_regs]); // (loaded, value, other write)
+        let mut consts: Vec<Option<i64>> = vec![None; n_regs];
+        let bumps = std::cell::RefCell::new(vec![false; code.len()]);
+        let move_ips = std::cell::RefCell::new(Vec::new());
+        let mut fresh: Vec<bool> = Vec::new();
+        let moves = std::cell::RefCell::new(Vec::new());
+        let mut masks: Option<Vec<u8>> = None;
+        let live = live_in(code, runs, n_regs);
+        for pass in 0..2 {
+        self.module.clear_context(&mut self.ctx);
+        self.ctx.set_disasm(pass == 1 && std::env::var_os("GLOBW_JIT_ASM").is_some());
+        self.ctx.func.signature = sig.clone();
+        self.ctx.func.name = UserFuncName::user(0, id.as_u32());
         let mut callee_refs = HashMap::new();
         let mut helper_refs = HashMap::new();
-        let fc = self.module.isa().frontend_config();
         {
             let mut b = FunctionBuilder::new(&mut self.ctx.func, &mut self.fctx);
             for (i, fid) in ids.iter().enumerate() {
@@ -1161,14 +1336,22 @@ impl Jit {
                 helper_refs.insert(*name, self.module.declare_func_in_func(*id, b.func));
             }
             let out_slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 32, 3));
-            let n_regs = f.n_regs as usize;
-            let vars: Vec<RegVars> = (0..n_regs).map(|_| declare_reg(&mut b)).collect();
+            let vars: Vec<RegVars> = (0..n_regs)
+                .map(|r| {
+                    let mut v = declare_reg(&mut b);
+                    if let Some(m) = &masks {
+                        v.m = m[r];
+                    }
+                    v
+                })
+                .collect();
             let entry = b.create_block();
             b.append_block_params_for_function_params(entry);
             b.switch_to_block(entry);
             let p = b.block_params(entry).to_vec();
             let (slots, budget, ctxv, from) = (p[0], p[1], p[2], p[3]);
             let zero = b.ins().iconst(types::I64, 0);
+            let mut kinds_ok = b.ins().iconst(types::I64, 1);
             let zf = b.ins().f64const(0.0);
             let zb = b.ins().iconst(types::I8, 0);
             for (r, v) in vars.iter().enumerate() {
@@ -1176,6 +1359,23 @@ impl Jit {
                     let bits = b.ins().load(types::I64, MemFlagsData::trusted(), slots, (r * 16) as i32);
                     let tag = b.ins().load(types::I64, MemFlagsData::trusted(), slots, (r * 16 + 8) as i32);
                     set_from_bits(&mut b, *v, bits, tag);
+                    if let Some(c) = consts.get(r).copied().flatten() {
+                        let same = b.ins().icmp_imm_s(IntCC::Equal, bits, c);
+                        let is_int = b.ins().icmp_imm_s(IntCC::Equal, tag, TAG_INT);
+                        let both = b.ins().band(same, is_int);
+                        let x = b.ins().uextend(types::I64, both);
+                        kinds_ok = b.ins().band(kinds_ok, x);
+                    }
+                    if v.m != K_ALL {
+                        // tags 0 (none), 1 int, 2 real, 3 bool: bit `tag` of the allowed set
+                        let allowed = b.ins().iconst(types::I64, (1 | ((v.m & 7) << 1)) as i64);
+                        let sh = b.ins().ushr(allowed, tag);
+                        let bit = b.ins().band_imm_s(sh, 1);
+                        let small = b.ins().icmp_imm_s(IntCC::UnsignedLessThan, tag, 4);
+                        let okk = b.ins().uextend(types::I64, small);
+                        let this = b.ins().band(bit, okk);
+                        kinds_ok = b.ins().band(kinds_ok, this);
+                    }
                 } else {
                     b.def_var(v.i, zero);
                     b.def_var(v.r, zf);
@@ -1198,6 +1398,33 @@ impl Jit {
                 b.def_var(v.bits, zero);
                 b.def_var(v.ep, minus1);
             }
+            if pass == 1 && fresh.iter().any(|&f| f) {
+                let fref = *helper_refs.get("gw_seq_view").ok_or("no view helper")?;
+                for (r, &k) in spec.iter().enumerate() {
+                    if k == SPEC_NONE || used.binary_search(&(r as u16)).is_err() {
+                        continue;
+                    }
+                    let rc = b.ins().iconst(types::I64, r as i64);
+                    let call = b.ins().call(fref, &[ctxv, rc, out]);
+                    let st = b.inst_results(call)[0];
+                    let p = b.ins().load(types::I64, MemFlagsData::trusted(), out, 0);
+                    let n = b.ins().load(types::I64, MemFlagsData::trusted(), out, 8);
+                    let kind = b.ins().load(types::I64, MemFlagsData::trusted(), out, 16);
+                    let bits = b.ins().load(types::I64, MemFlagsData::trusted(), out, 24);
+                    let vv = views[r];
+                    b.def_var(vv.ptr, p);
+                    b.def_var(vv.len, n);
+                    b.def_var(vv.cols, kind);
+                    b.def_var(vv.bits, bits);
+                    b.def_var(vv.ep, zero);
+                    // a container of the kind seen, or no fast code from here
+                    let okv = b.ins().icmp_imm_s(IntCC::Equal, st, 0);
+                    let okk = b.ins().icmp_imm_s(IntCC::Equal, kind, k as i64);
+                    let both = b.ins().band(okv, okk);
+                    let x = b.ins().uextend(types::I64, both);
+                    kinds_ok = b.ins().band(kinds_ok, x);
+                }
+            }
             let blocks: Vec<Block> = (start..end).map(|_| b.create_block()).collect();
             // the one way out: write the registers back, return where to go on
             let leave = b.create_block();
@@ -1212,6 +1439,10 @@ impl Jit {
                 .collect();
             let default = b.func.dfg.block_call(bail, &[]);
             let jt = b.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
+            // a register holding a kind this code does not expect: the interpreter goes on
+            let dispatch = b.create_block();
+            b.ins().brif(kinds_ok, dispatch, &[], bail, &[]);
+            b.switch_to_block(dispatch);
             let from32 = b.ins().ireduce(types::I32, from);
             b.ins().br_table(from32, jt);
             let g = Gen {
@@ -1231,9 +1462,20 @@ impl Jit {
                 epoch: Some(epoch),
                 layout: self.layout,
                 gives,
+                seen: if pass == 0 { Some(&seen) } else { None },
+                moves: if pass == 0 { Some(&moves) } else { None },
+                lconst: if pass == 0 { Some(&lconst) } else { None },
+                loading: std::cell::Cell::new(false),
+                consts: &consts,
+                spec,
+                cur: std::cell::Cell::new(0),
+                move_ips: if pass == 0 { Some(&move_ips) } else { None },
+                bumps: if pass == 0 { Some(&bumps) } else { None },
+                fresh: &fresh,
             };
             for ip in start..end {
                 b.switch_to_block(blocks[ip - start]);
+                g.cur.set(ip);
                 if runs[ip] {
                     g.op(&mut b, ip, code[ip])?;
                 } else {
@@ -1242,12 +1484,29 @@ impl Jit {
                     b.ins().jump(out_to, &[]);
                 }
             }
-            // exit blocks: each passes its instruction to `leave`
+            // exit blocks: each writes back the registers the interpreter reads from
+            // there on (all written ones when that is not known) and returns
             let exits: Vec<(usize, Block)> = g.exits.borrow().iter().map(|(k, v)| (*k, *v)).collect();
             for (ip, blk) in exits {
                 b.switch_to_block(blk);
                 let c = b.ins().iconst(types::I64, ip as i64);
-                b.ins().jump(leave, &[c.into()]);
+                match live.as_ref().and_then(|l| l.get(ip)) {
+                    Some(l) => {
+                        for &r in written {
+                            if l[r as usize / 64] >> (r % 64) & 1 == 1 {
+                                let v = vars[r as usize];
+                                let bits = bits_of(&mut b, v);
+                                let tag = b.use_var(v.t);
+                                b.ins().store(MemFlagsData::trusted(), bits, slots, (r as usize * 16) as i32);
+                                b.ins().store(MemFlagsData::trusted(), tag, slots, (r as usize * 16 + 8) as i32);
+                            }
+                        }
+                        b.ins().return_(&[c]);
+                    }
+                    None => {
+                        b.ins().jump(leave, &[c.into()]);
+                    }
+                }
             }
             b.switch_to_block(leave);
             let resume = b.block_params(leave)[0];
@@ -1264,12 +1523,50 @@ impl Jit {
             b.seal_all_blocks();
             b.finalize(fc);
         }
+        if pass == 0 {
+            // what moves carry, until nothing changes; never written here: anything
+            let mut m = seen.borrow().clone();
+            loop {
+                let mut changed = false;
+                for &(d, s2) in moves.borrow().iter() {
+                    let x = m[d as usize] | m[s2 as usize];
+                    if x != m[d as usize] {
+                        m[d as usize] = x;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            for x in m.iter_mut() {
+                if *x == 0 {
+                    *x = K_ALL;
+                }
+            }
+            masks = Some(m);
+            for &(ip, src) in move_ips.borrow().iter() {
+                if masks.as_ref().is_some_and(|m| m[src as usize] & K_NONE != 0) {
+                    bumps.borrow_mut()[ip] = true;
+                }
+            }
+            fresh = fresh_at(code, runs, &bumps.borrow());
+            if self.log {
+                let b2 = bumps.borrow();
+                eprintln!("[jit] bumps at {:?}; stale at {:?}", (0..code.len()).filter(|&i| b2[i]).collect::<Vec<_>>(), (0..code.len()).filter(|&i| !fresh[i]).collect::<Vec<_>>());
+            }
+            for (r, &(loaded, v, other)) in lconst.borrow().iter().enumerate() {
+                if loaded && !other {
+                    consts[r] = Some(v);
+                }
+            }
+        }
+        }
         self.module.define_function(id, &mut self.ctx).map_err(|e| format!("{:?}", e))?;
         if std::env::var_os("GLOBW_JIT_ASM").is_some() {
             if let Some(c) = self.ctx.compiled_code() {
                 if let Some(v) = &c.vcode {
-                    eprintln!("[jit asm] {}
-{}", f.name, v);
+                    eprintln!("[jit asm] {}\n{}", f.name, v);
                 }
             }
         }
@@ -1278,21 +1575,41 @@ impl Jit {
 }
 
 fn declare_reg(b: &mut FunctionBuilder) -> RegVars {
-    RegVars { i: b.declare_var(types::I64), r: b.declare_var(types::F64), b: b.declare_var(types::I8), t: b.declare_var(types::I64) }
+    RegVars { i: b.declare_var(types::I64), r: b.declare_var(types::F64), b: b.declare_var(types::I8), t: b.declare_var(types::I64), m: K_ALL }
 }
 
-/// Sets all of a register's variables from raw bits and a tag.
+/// Sets a register's variables (those of the kinds it may hold) from raw bits and a tag.
 fn set_from_bits(b: &mut FunctionBuilder, v: RegVars, bits: V, tag: V) {
-    b.def_var(v.i, bits);
-    let r = b.ins().bitcast(types::F64, MemFlagsData::new(), bits);
-    b.def_var(v.r, r);
-    let bo = b.ins().ireduce(types::I8, bits);
-    b.def_var(v.b, bo);
+    if v.m & K_INT != 0 {
+        b.def_var(v.i, bits);
+    }
+    if v.m & K_REAL != 0 {
+        let r = b.ins().bitcast(types::F64, MemFlagsData::new(), bits);
+        b.def_var(v.r, r);
+    }
+    if v.m & K_BOOL != 0 {
+        let bo = b.ins().ireduce(types::I8, bits);
+        b.def_var(v.b, bo);
+    }
     b.def_var(v.t, tag);
 }
 
 /// The register's current value as raw bits, chosen by its tag.
 fn bits_of(b: &mut FunctionBuilder, v: RegVars) -> V {
+    // a register of one kind: no choice to make
+    match v.m & 7 {
+        0 => return b.ins().iconst(types::I64, 0),
+        K_INT => return b.use_var(v.i),
+        K_REAL => {
+            let r = b.use_var(v.r);
+            return b.ins().bitcast(types::I64, MemFlagsData::new(), r);
+        }
+        K_BOOL => {
+            let bo = b.use_var(v.b);
+            return b.ins().uextend(types::I64, bo);
+        }
+        _ => {}
+    }
     let tag = b.use_var(v.t);
     let i = b.use_var(v.i);
     let r = b.use_var(v.r);
@@ -1364,9 +1681,37 @@ struct Gen<'a> {
     layout: Option<Layout>,
     /// per function: does it give back a value
     gives: &'a [bool],
+    /// the first pass: per register, the kinds written; and the moves
+    seen: Option<&'a std::cell::RefCell<Vec<u8>>>,
+    moves: Option<&'a std::cell::RefCell<Vec<(u16, u16)>>>,
+    /// the first pass: LoadInt constants per register
+    lconst: Option<&'a std::cell::RefCell<Vec<(bool, i64, bool)>>>,
+    loading: std::cell::Cell<bool>,
+    /// registers that always hold one int (the second pass)
+    consts: &'a [Option<i64>],
+    /// per register: the kind of compact array seen there (SPEC_NONE: none)
+    spec: &'a [i8],
+    /// the instruction being compiled
+    cur: std::cell::Cell<usize>,
+    /// the first pass: every move's instruction and source
+    move_ips: Option<&'a std::cell::RefCell<Vec<(usize, u16)>>>,
+    /// the first pass: instructions that call a helper that may move containers
+    bumps: Option<&'a std::cell::RefCell<Vec<bool>>>,
+    /// the second pass: instructions where the entry views are surely valid
+    fresh: &'a [bool],
 }
 
 impl Gen<'_> {
+    fn saw(&self, r: u16, k: u8) {
+        if let Some(s) = self.seen {
+            s.borrow_mut()[r as usize] |= k;
+        }
+        if let Some(l) = self.lconst {
+            if !self.loading.get() {
+                l.borrow_mut()[r as usize].2 = true;
+            }
+        }
+    }
     /// The block for instruction `ip`: inside the unit, or (a loop) a way out to it.
     fn block(&self, b: &mut FunctionBuilder, ip: usize) -> Block {
         if ip >= self.lo && ip < self.hi {
@@ -1393,6 +1738,9 @@ impl Gen<'_> {
     }
 
     fn i(&self, b: &mut FunctionBuilder, r: u16) -> V {
+        if let Some(c) = self.consts.get(r as usize).copied().flatten() {
+            return b.ins().iconst(types::I64, c);
+        }
         b.use_var(self.vars[r as usize].i)
     }
     fn r(&self, b: &mut FunctionBuilder, r: u16) -> V {
@@ -1402,6 +1750,7 @@ impl Gen<'_> {
         b.use_var(self.vars[r as usize].b)
     }
     fn tag(&self, b: &mut FunctionBuilder, r: u16, t: i64) {
+        self.saw(r, kind_of_tag(t));
         let c = b.ins().iconst(types::I64, t);
         b.def_var(self.vars[r as usize].t, c);
     }
@@ -1464,6 +1813,12 @@ impl Gen<'_> {
         let call = b.ins().call(f, &all);
         let res = b.inst_results(call)[0];
         if !name.ends_with("_view") {
+            // a move counts only if its source may hold a non-number (decided after pass 0)
+            if let (Some(bm), false) = (self.bumps, name == "gw_move") {
+                if let Some(x) = bm.borrow_mut().get_mut(self.cur.get()) {
+                    *x = true;
+                }
+            }
             if let Some(e) = self.epoch {
                 let x = b.use_var(e);
                 let x1 = b.ins().iadd_imm_s(x, 1);
@@ -1483,6 +1838,7 @@ impl Gen<'_> {
         let out = self.out.expect("a loop");
         let bits = b.ins().load(types::I64, MemFlagsData::trusted(), out, 0);
         let tag = b.ins().load(types::I64, MemFlagsData::trusted(), out, 8);
+        self.saw(d, K_ALL);
         set_from_bits(b, self.vars[d as usize], bits, tag);
     }
 
@@ -1725,6 +2081,93 @@ impl Gen<'_> {
         // elements read and written in place, the helpers only for the rest
         if let (Some(lay), true) = (self.layout, self.epoch.is_some()) {
             match op {
+                Op::GetElem(d, c, i) | Op::SetElem(c, i, d) if self.spec.get(c as usize).is_some_and(|&k| k != SPEC_NONE) => {
+                    // made for the kind seen: anything else goes back to the interpreter
+                    let want = self.spec[c as usize] as i64;
+                    let stop = self.stop(b, ip);
+                    // the view made at entry is still valid here: no check, no call
+                    let fresh = self.fresh.get(ip).copied().unwrap_or(false);
+                    let (p, n) = if fresh {
+                        let vv = self.views[c as usize];
+                        (b.use_var(vv.ptr), b.use_var(vv.len))
+                    } else {
+                        let (p, n, kind) = self.view(b, c, false, stop)?;
+                        let same = b.ins().icmp_imm_s(IntCC::Equal, kind, want);
+                        let go = b.create_block();
+                        b.ins().brif(same, go, &[], stop, &[]);
+                        b.switch_to_block(go);
+                        (p, n)
+                    };
+                    let bits = b.use_var(self.views[c as usize].bits);
+                    let iv = self.i(b, i);
+                    let k = self.in_range(b, iv, n, stop);
+                    let get = matches!(op, Op::GetElem(..));
+                    match (want, get) {
+                        (2, true) => {
+                            let a = b.ins().iadd(p, k);
+                            let v = b.ins().load(types::I8, MemFlagsData::trusted(), a, 0);
+                            let unset = b.ins().icmp_imm_s(IntCC::Equal, v, crate::vm::UNSET_BOOL as i64);
+                            self.guard(b, ip, unset);
+                            self.set_b(b, d, v);
+                        }
+                        (2, false) => {
+                            let v = self.vars[d as usize];
+                            let t = b.use_var(v.t);
+                            let bad = b.ins().icmp_imm_s(IntCC::NotEqual, t, TAG_BOOL);
+                            self.guard(b, ip, bad);
+                            let x = b.use_var(v.b);
+                            let a = b.ins().iadd(p, k);
+                            b.ins().store(MemFlagsData::trusted(), x, a, 0);
+                        }
+                        (_, true) => {
+                            let has = self.has_bit(b, bits, k);
+                            let none = b.ins().icmp_imm_s(IntCC::Equal, has, 0);
+                            self.guard(b, ip, none);
+                            let off = b.ins().ishl_imm_s(k, 3);
+                            let a = b.ins().iadd(p, off);
+                            if want == 1 {
+                                let v = b.ins().load(types::F64, MemFlagsData::trusted(), a, 0);
+                                self.set_r(b, d, v);
+                            } else {
+                                let v = b.ins().load(types::I64, MemFlagsData::trusted(), a, 0);
+                                self.set_i(b, d, v);
+                            }
+                        }
+                        (_, false) => {
+                            let v = self.vars[d as usize];
+                            let t = b.use_var(v.t);
+                            let off = b.ins().ishl_imm_s(k, 3);
+                            let a = b.ins().iadd(p, off);
+                            if want == 1 {
+                                // a float, or an int made a float
+                                let (fr, nr, fi, done) = (b.create_block(), b.create_block(), b.create_block(), b.create_block());
+                                let is_r = b.ins().icmp_imm_s(IntCC::Equal, t, TAG_REAL);
+                                b.ins().brif(is_r, fr, &[], nr, &[]);
+                                b.switch_to_block(nr);
+                                let is_i = b.ins().icmp_imm_s(IntCC::Equal, t, TAG_INT);
+                                b.ins().brif(is_i, fi, &[], stop, &[]);
+                                b.switch_to_block(fr);
+                                let x = b.use_var(v.r);
+                                b.ins().store(MemFlagsData::trusted(), x, a, 0);
+                                b.ins().jump(done, &[]);
+                                b.switch_to_block(fi);
+                                let n2 = b.use_var(v.i);
+                                let x = b.ins().fcvt_from_sint(types::F64, n2);
+                                b.ins().store(MemFlagsData::trusted(), x, a, 0);
+                                b.ins().jump(done, &[]);
+                                b.switch_to_block(done);
+                            } else {
+                                let bad = b.ins().icmp_imm_s(IntCC::NotEqual, t, TAG_INT);
+                                self.guard(b, ip, bad);
+                                let x = self.i(b, d);
+                                b.ins().store(MemFlagsData::trusted(), x, a, 0);
+                            }
+                            self.set_bit(b, bits, k);
+                        }
+                    }
+                    self.jump_next(b, ip);
+                    return Ok(());
+                }
                 Op::GetElem(d, c, i) | Op::SetElem(c, i, d) => {
                     let slow = b.create_block();
                     let (p, n, kind) = self.view(b, c, false, slow)?;
@@ -1785,7 +2228,18 @@ impl Gen<'_> {
         match op {
             Op::LoadInt(d, n) => {
                 let v = b.ins().iconst(types::I64, n);
+                if let Some(l) = self.lconst {
+                    let mut l = l.borrow_mut();
+                    let e = &mut l[d as usize];
+                    if e.0 && e.1 != n {
+                        e.2 = true;
+                    }
+                    e.0 = true;
+                    e.1 = n;
+                }
+                self.loading.set(true);
                 self.set_i(b, d, v);
+                self.loading.set(false);
                 self.jump_next(b, ip);
             }
             Op::LoadReal(d, x) => {
@@ -1800,7 +2254,13 @@ impl Gen<'_> {
             }
             Op::Move(d, s) => {
                 let (vd, vs) = (self.vars[d as usize], self.vars[s as usize]);
-                if self.leave.is_some() {
+                if self.leave.is_some() && vs.m & K_NONE == 0 {
+                    // compiled code never puts a non-number there: if one came from
+                    // the interpreter, it moves it
+                    let t = b.use_var(vs.t);
+                    let none = b.ins().icmp_imm_s(IntCC::Equal, t, TAG_NONE);
+                    self.guard(b, ip, none);
+                } else if self.leave.is_some() {
                     // a value that is not a number moves in the interpreter's registers
                     let t = b.use_var(vs.t);
                     let none = b.ins().icmp_imm_s(IntCC::Equal, t, TAG_NONE);
@@ -1814,9 +2274,19 @@ impl Gen<'_> {
                     b.ins().jump(join, &[]);
                     b.switch_to_block(join);
                 }
-                for (to, from) in [(vd.i, vs.i), (vd.r, vs.r), (vd.b, vs.b), (vd.t, vs.t)] {
-                    let x = b.use_var(from);
-                    b.def_var(to, x);
+                if let Some(mv) = self.moves {
+                    mv.borrow_mut().push((d, s));
+                }
+                if let Some(mi) = self.move_ips {
+                    mi.borrow_mut().push((ip, s));
+                }
+                self.saw(d, 0);
+                // only the kinds both may hold: the tag says which one is live
+                for (to, from, k) in [(vd.i, vs.i, K_INT), (vd.r, vs.r, K_REAL), (vd.b, vs.b, K_BOOL), (vd.t, vs.t, K_ALL)] {
+                    if vd.m & vs.m & k != 0 {
+                        let x = b.use_var(from);
+                        b.def_var(to, x);
+                    }
                 }
                 self.jump_next(b, ip);
             }
@@ -2037,6 +2507,7 @@ impl Gen<'_> {
                 let res = b.inst_results(call).to_vec();
                 let gave_up = b.ins().icmp_imm_s(IntCC::Equal, res[1], TAG_BAIL);
                 self.guard(b, ip, gave_up);
+                self.saw(dst, K_ALL);
                 set_from_bits(b, self.vars[dst as usize], res[0], res[1]);
                 self.jump_next(b, ip);
             }
