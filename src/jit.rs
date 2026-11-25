@@ -1788,6 +1788,7 @@ impl Jit {
             let blocks: Vec<Block> = (0..code.len()).map(|_| b.create_block()).collect();
             b.ins().jump(blocks[0], &[]);
             let g = Gen {
+                code,
                 vars: &vars,
                 blocks: &blocks,
                 lo: 0,
@@ -2005,6 +2006,7 @@ impl Jit {
             let budget = b.ins().iconst(types::I64, 0);
             b.ins().jump(blocks[0], &[]);
             let g = Gen {
+                code,
                 vars: &vars,
                 blocks: &blocks,
                 lo: lo_ip,
@@ -2315,6 +2317,7 @@ impl Jit {
             let from32 = b.ins().ireduce(types::I32, from);
             b.ins().br_table(from32, jt);
             let g = Gen {
+                code,
                 vars: &vars,
                 blocks: &blocks,
                 lo: start,
@@ -2588,6 +2591,8 @@ fn float_cc(c: Cmp) -> FloatCC {
 
 /// Translates the instructions of one unit (a function or a loop).
 struct Gen<'a> {
+    /// the function's instructions (for peepholes that look ahead)
+    code: &'a [Op],
     vars: &'a [RegVars],
     blocks: &'a [Block],
     /// the unit covers instructions lo..hi
@@ -2728,6 +2733,40 @@ impl Gen<'_> {
         let stop = self.stop(b, ip);
         b.ins().brif(bad, stop, &[], ok, &[]);
         b.switch_to_block(ok);
+    }
+
+    /// Where a jump on boolean register `d` holding `val` really leads: through
+    /// further jumps on the same register (the `and` / `or` of a condition).
+    fn thread(&self, mut t: usize, d: u16, val: bool) -> usize {
+        for _ in 0..8 {
+            if t < self.lo || t >= self.hi || self.heads.contains_key(&t) || self.fastv.contains_key(&t) {
+                break;
+            }
+            match self.code.get(t) {
+                Some(&Op::JumpIfFalse(c, t2)) if c == d => t = if val { t + 1 } else { t2 as usize },
+                Some(&Op::JumpIfTrue(c, t2)) if c == d => t = if val { t2 as usize } else { t + 1 },
+                _ => break,
+            }
+        }
+        t
+    }
+
+    /// After a comparison into `d` (value `v`): when the next instruction jumps
+    /// on `d`, branch right here (compare and jump fused); else go on.
+    fn cond_next(&self, b: &mut FunctionBuilder, ip: usize, d: u16, v: V) {
+        match self.code.get(ip + 1) {
+            Some(&Op::JumpIfFalse(c, t)) if c == d && ip + 2 < self.hi => {
+                let (yes, no) = (self.thread(ip + 2, d, true), self.thread(t as usize, d, false));
+                let (yb, nb) = (self.block(b, yes), self.block(b, no));
+                b.ins().brif(v, yb, &[], nb, &[]);
+            }
+            Some(&Op::JumpIfTrue(c, t)) if c == d && ip + 2 < self.hi => {
+                let (yes, no) = (self.thread(t as usize, d, true), self.thread(ip + 2, d, false));
+                let (yb, nb) = (self.block(b, yes), self.block(b, no));
+                b.ins().brif(v, yb, &[], nb, &[]);
+            }
+            _ => self.jump_next(b, ip),
+        }
     }
 
     fn jump_next(&self, b: &mut FunctionBuilder, ip: usize) {
@@ -3412,25 +3451,25 @@ impl Gen<'_> {
                 let (a, e) = (self.i(b, x), self.i(b, y));
                 let v = b.ins().icmp(int_cc(c), a, e);
                 self.set_b(b, d, v);
-                self.jump_next(b, ip);
+                self.cond_next(b, ip, d, v);
             }
             Op::CmpIImm(c, d, x, n) => {
                 let a = self.i(b, x);
                 let v = b.ins().icmp_imm_s(int_cc(c), a, n);
                 self.set_b(b, d, v);
-                self.jump_next(b, ip);
+                self.cond_next(b, ip, d, v);
             }
             Op::CmpR(c, d, x, y) => {
                 let (a, e) = (self.r(b, x), self.r(b, y));
                 let v = b.ins().fcmp(float_cc(c), a, e);
                 self.set_b(b, d, v);
-                self.jump_next(b, ip);
+                self.cond_next(b, ip, d, v);
             }
             Op::CmpB(c, d, x, y) => {
                 let (a, e) = (self.bo(b, x), self.bo(b, y));
                 let v = b.ins().icmp(bool_cc(c), a, e);
                 self.set_b(b, d, v);
-                self.jump_next(b, ip);
+                self.cond_next(b, ip, d, v);
             }
             Op::Jump(t) => {
                 let blk = self.block(b, t as usize);
@@ -3438,12 +3477,14 @@ impl Gen<'_> {
             }
             Op::JumpIfFalse(c, t) => {
                 let v = self.bo(b, c);
-                let (n, tb) = (self.next(b, ip), self.block(b, t as usize));
+                let f = self.thread(t as usize, c, false);
+                let (n, tb) = (self.next(b, ip), self.block(b, f));
                 b.ins().brif(v, n, &[], tb, &[]);
             }
             Op::JumpIfTrue(c, t) => {
                 let v = self.bo(b, c);
-                let (n, tb) = (self.next(b, ip), self.block(b, t as usize));
+                let tt = self.thread(t as usize, c, true);
+                let (n, tb) = (self.next(b, ip), self.block(b, tt));
                 b.ins().brif(v, tb, &[], n, &[]);
             }
             Op::JumpUnlessI(c, x, y, t) => {
