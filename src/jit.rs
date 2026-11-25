@@ -555,6 +555,69 @@ pub struct ParLoop {
     min_trip: i64,
 }
 
+/// An innermost for loop with a second, check-free copy of its body.
+struct FastLoop {
+    fs: usize,
+    var: u16,
+    end: u16,
+    step: u16,
+    /// compact arrays read or written at the counter's position
+    conts: Vec<u16>,
+    /// the block that chooses the copy, and the copy's blocks (head..=fs)
+    choose: Block,
+    blocks: Vec<Block>,
+}
+
+/// Innermost for loops whose counter indexes compact arrays: (ForInit, ForStep,
+/// var, end, step, those arrays). The counter and the end are not written in the
+/// body, and the arrays' views stay valid there (fresh, not replaced).
+#[allow(clippy::type_complexity)]
+fn fast_loops(code: &[Op], spec: &[i8], fresh: &[bool], clob: &[bool]) -> Vec<(usize, usize, u16, u16, u16, Vec<u16>)> {
+    let mut out = Vec::new();
+    for fi in 0..code.len() {
+        let Op::ForInit { var, end, step, exit } = code[fi] else { continue };
+        let exit = exit as usize;
+        if exit == 0 || exit > code.len() {
+            continue;
+        }
+        let fs = exit - 1;
+        match code[fs] {
+            Op::ForStep { var: v2, end: e2, step: s2, body } if v2 == var && e2 == end && s2 == step && body as usize == fi + 1 => {}
+            _ => continue,
+        }
+        let body = fi + 1..fs;
+        if code[body.clone()].iter().any(|op| matches!(op, Op::ForInit { .. })) {
+            continue; // innermost loops only
+        }
+        if code[body.clone()].iter().any(|op| written_reg(op).is_some_and(|w| w == var || w == end || w == step)) {
+            continue;
+        }
+        let mut conts: Vec<u16> = Vec::new();
+        let mut bad = false;
+        for ip in body.clone() {
+            if let Op::GetElem(_, c, i) | Op::SetElem(c, i, _) = code[ip] {
+                if i == var && spec.get(c as usize).is_some_and(|&k| k != SPEC_NONE) {
+                    if fresh.get(ip).copied().unwrap_or(false) && !clob.get(c as usize).copied().unwrap_or(true) {
+                        conts.push(c);
+                    } else {
+                        bad = true;
+                    }
+                }
+            }
+        }
+        if bad || conts.is_empty() {
+            continue;
+        }
+        if code[body.clone()].iter().any(|op| written_reg(op).is_some_and(|w| conts.contains(&w))) {
+            continue;
+        }
+        conts.sort_unstable();
+        conts.dedup();
+        out.push((fi, fs, var, end, step, conts));
+    }
+    out
+}
+
 /// What a compiled body needs to run a loop in parallel.
 struct ParHook {
     info: i64,
@@ -1678,6 +1741,8 @@ impl Jit {
                 fresh: &[],
                 par: &HashMap::new(),
                 heads: &HashMap::new(),
+                fastv: &HashMap::new(),
+                in_fast: std::cell::Cell::new(None),
             };
             for (ip, op) in code.iter().enumerate() {
                 b.switch_to_block(blocks[ip]);
@@ -1891,6 +1956,8 @@ impl Jit {
                 fresh: &all_fresh,
                 par: &no_par,
                 heads: &HashMap::new(),
+                fastv: &HashMap::new(),
+                in_fast: std::cell::Cell::new(None),
             };
             for ip in lo_ip..p.fs {
                 b.switch_to_block(blocks[ip - lo_ip]);
@@ -2119,6 +2186,16 @@ impl Jit {
             b.append_block_param(leave, types::I64);
             let bail = b.create_block(); // an unknown entry: back to the interpreter
             let mut heads: HashMap<usize, (Block, Variable)> = HashMap::new();
+            let mut fastv: HashMap<usize, FastLoop> = HashMap::new();
+            if pass == 1 && self.layout.is_some() && std::env::var_os("GLOBW_JIT_NO_VERSION").is_none() {
+                for (fi, fs, var, end, step, conts) in fast_loops(code, spec, &fresh, &clob) {
+                    if !runs[fi + 1..=fs].iter().all(|&r| r) {
+                        continue;
+                    }
+                    let blocks: Vec<Block> = (fi + 1..=fs).map(|_| b.create_block()).collect();
+                    fastv.insert(fi + 1, FastLoop { fs, var, end, step, conts, choose: b.create_block(), blocks });
+                }
+            }
             for &fi in par_hooks.keys() {
                 let flag = b.declare_var(types::I8);
                 let z = b.ins().iconst(types::I8, 0);
@@ -2132,6 +2209,8 @@ impl Jit {
                         bail
                     } else if let Some(&(pe, _)) = heads.get(&ip) {
                         pe
+                    } else if let Some(fl) = fastv.get(&ip) {
+                        fl.choose
                     } else {
                         blocks[ip - start]
                     };
@@ -2177,6 +2256,8 @@ impl Jit {
                 fresh: &fresh,
                 par: &par_hooks,
                 heads: &heads,
+                fastv: &fastv,
+                in_fast: std::cell::Cell::new(None),
             };
             for (&head, &(pe, flag)) in heads.iter() {
                 b.switch_to_block(pe);
@@ -2187,7 +2268,34 @@ impl Jit {
                 let one = b.ins().iconst(types::I8, 1);
                 b.def_var(flag, one);
                 g.par_hook(&mut b, &par_hooks[&(head - 1)])?;
-                b.ins().jump(blocks[head - start], &[]);
+                let to = fastv.get(&head).map_or(blocks[head - start], |fl| fl.choose);
+                b.ins().jump(to, &[]);
+            }
+            // choosers: the check-free copy when every turn left stays in bounds
+            for (&head, fl) in fastv.iter() {
+                b.switch_to_block(fl.choose);
+                let v = g.i(&mut b, fl.var);
+                let e = g.i(&mut b, fl.end);
+                let st = g.i(&mut b, fl.step);
+                let s1 = b.ins().icmp_imm_s(IntCC::Equal, st, 1);
+                let v1 = b.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, v, 1);
+                let mut ok = b.ins().band(s1, v1);
+                for &c in &fl.conts {
+                    let n = b.use_var(views[c as usize].len);
+                    let le = b.ins().icmp(IntCC::SignedLessThanOrEqual, e, n);
+                    ok = b.ins().band(ok, le);
+                }
+                b.ins().brif(ok, fl.blocks[0], &[], blocks[head - start], &[]);
+            }
+            // the check-free copies
+            for (&head, fl) in fastv.iter() {
+                g.in_fast.set(Some(head));
+                for ip in head..=fl.fs {
+                    b.switch_to_block(fl.blocks[ip - head]);
+                    g.cur.set(ip);
+                    g.op(&mut b, ip, code[ip])?;
+                }
+                g.in_fast.set(None);
             }
             for ip in start..end {
                 b.switch_to_block(blocks[ip - start]);
@@ -2435,6 +2543,10 @@ struct Gen<'a> {
     /// their heads (first body instruction): the block that tries the parallel
     /// run once, and the "tried" flag
     heads: &'a HashMap<usize, (Block, Variable)>,
+    /// loops with a check-free copy, by head
+    fastv: &'a HashMap<usize, FastLoop>,
+    /// generating that copy (its head)
+    in_fast: std::cell::Cell<Option<usize>>,
 }
 
 impl Gen<'_> {
@@ -2450,8 +2562,17 @@ impl Gen<'_> {
     }
     /// The block for instruction `ip`: inside the unit, or (a loop) a way out to it.
     fn block(&self, b: &mut FunctionBuilder, ip: usize) -> Block {
+        if let Some(h) = self.in_fast.get() {
+            let fl = &self.fastv[&h];
+            if ip >= h && ip <= fl.fs {
+                return fl.blocks[ip - h];
+            }
+        }
         if let Some(&(pe, _)) = self.heads.get(&ip) {
             return pe;
+        }
+        if let Some(fl) = self.fastv.get(&ip) {
+            return fl.choose;
         }
         if ip >= self.lo && ip < self.hi {
             return self.blocks[ip - self.lo];
@@ -2902,7 +3023,12 @@ impl Gen<'_> {
                     };
                     let bits = b.use_var(self.views[c as usize].bits);
                     let iv = self.i(b, i);
-                    let k = self.in_range(b, iv, n, stop);
+                    // in the check-free copy the chooser proved 1 <= counter <= length
+                    let checked_already = self.in_fast.get().is_some_and(|h| {
+                        let fl = &self.fastv[&h];
+                        i == fl.var && fl.conts.contains(&c)
+                    });
+                    let k = if checked_already { b.ins().iadd_imm_s(iv, -1) } else { self.in_range(b, iv, n, stop) };
                     let get = matches!(op, Op::GetElem(..));
                     match (want, get) {
                         (2, true) => {

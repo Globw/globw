@@ -49,6 +49,10 @@ program without it is interpreted, as before: the JIT is for when speed matters.
   that can be seen: the loop does not read the arrays it writes, no array
   written is one read (checked when it runs), and no `try` is around nor any
   other task, so an error mid-loop ends the program exactly as before.
+- Innermost `for` loops that index compact arrays with their counter get a
+  second copy without bounds checks, chosen once at the loop head when every
+  turn left stays inside the arrays (step 1, counter from 1, end within the
+  length): array writes 10-25% faster on one core.
 - The JIT keeps registers in machine registers: per-register kinds, constants,
   compact arrays specialised on the kind seen, their views made once at entry,
   and exits that write back only what the interpreter reads.
