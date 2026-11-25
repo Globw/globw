@@ -630,3 +630,37 @@ output(a[1], \" \", a[500000], \" \", a[999999], \" \", a[1000000])
     assert_eq!(code, 0, "{}", out);
     assert!(out.starts_with("4 1000002 2000000 1000000"), "{}", out);
 }
+
+#[test]
+fn full_compact_arrays_and_gaps() {
+    let src = "variables:
+    i, k, s as int
+    a as int[300000]
+    r as float[300000]
+    g as int[300000]
+for(i from 1 to 300000)
+    a[i] = 300000 - i
+    r[i] = i * 0.5
+end loop
+s = 0
+for(k from 1 to 3)
+    for(i from 1 to 300000)
+        s = s + a[i] + round(r[i])
+        a[i] = a[i] + 1
+    end loop
+end loop
+sort(a)
+output(s, \" \", a[1], \" \", a[300000])
+for(i from 1 to 299999)
+    g[i] = i
+end loop
+s = 0
+for(i from 1 to 300000)
+    s = s + g[i]
+end loop
+output(s)
+";
+    let (code, out, err) = same("full_arrays", src);
+    assert_ne!(code, 0, "{}", out);
+    assert!(err.contains("no value") || err.contains("value yet"), "{}", err);
+}

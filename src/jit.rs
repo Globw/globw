@@ -369,8 +369,8 @@ unsafe extern "C" fn gw_seq_view(ctx: *mut Ctx, c: i64, out: *mut i64) -> i64 {
         }
         Value::Packed(p) => {
             let (data, n, kind, bits) = match &*p.as_ptr() {
-                Packed::Ints(v, b) => (v.as_ptr() as i64, v.len(), 0, b.as_ptr() as i64),
-                Packed::Reals(v, b) => (v.as_ptr() as i64, v.len(), 1, b.as_ptr() as i64),
+                Packed::Ints(v, b) => (v.as_ptr() as i64, v.len(), 0, if b.is_empty() { 0 } else { b.as_ptr() as i64 }),
+                Packed::Reals(v, b) => (v.as_ptr() as i64, v.len(), 1, if b.is_empty() { 0 } else { b.as_ptr() as i64 }),
                 Packed::Bools(v) => (v.as_ptr() as i64, v.len(), 2, 0),
             };
             *out = data;
@@ -381,6 +381,21 @@ unsafe extern "C" fn gw_seq_view(ctx: *mut Ctx, c: i64, out: *mut i64) -> i64 {
         }
         _ => 1,
     }
+}
+
+/// Compact array in register `c`: drop its "has a value" bits if every element
+/// has one. Returns the bits' address, 0 when there are none (full) or no such array.
+unsafe extern "C" fn gw_try_full(ctx: *mut Ctx, c: i64) -> i64 {
+    if let Value::Packed(p) = &*(*ctx).regs.add(c as usize) {
+        let pk = &mut *p.as_ptr();
+        if pk.try_full() {
+            return 0;
+        }
+        if let Packed::Ints(_, b) | Packed::Reals(_, b) = pk {
+            return b.as_ptr() as i64;
+        }
+    }
+    0
 }
 
 /// A matrix's cells: address of the first, rows, columns.
@@ -983,7 +998,7 @@ fn par_plans(code: &[Op], runs: &[bool], live: &[Vec<u64>], masks: &[u8], spec: 
     plans
 }
 
-const HELPERS: [(&str, usize, bool); 22] = [
+const HELPERS: [(&str, usize, bool); 23] = [
     // name, number of i64 arguments after ctx, ends with an `out` pointer
     ("gw_get_elem", 3, true),
     ("gw_set_elem", 5, false),
@@ -1007,6 +1022,7 @@ const HELPERS: [(&str, usize, bool); 22] = [
     ("gw_builtin", 4, true),
     ("gw_call_body", 5, true),
     ("gw_par", 3, true),
+    ("gw_try_full", 1, false),
 ];
 
 fn helper_ptr(name: &str) -> *const u8 {
@@ -1031,6 +1047,7 @@ fn helper_ptr(name: &str) -> *const u8 {
         "gw_builtin" => gw_builtin as *const u8,
         "gw_mat_view" => gw_mat_view as *const u8,
         "gw_par" => gw_par as *const u8,
+        "gw_try_full" => gw_try_full as *const u8,
         _ => gw_move as *const u8,
     }
 }
@@ -2281,6 +2298,11 @@ impl Jit {
                 let v1 = b.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, v, 1);
                 let mut ok = b.ins().band(s1, v1);
                 for &c in &fl.conts {
+                    if matches!(spec.get(c as usize), Some(0) | Some(1)) {
+                        let cc = b.ins().iconst(types::I64, c as i64);
+                        let nb = g.helper(&mut b, "gw_try_full", &[cc])?;
+                        b.def_var(views[c as usize].bits, nb);
+                    }
                     let n = b.use_var(views[c as usize].len);
                     let le = b.ins().icmp(IntCC::SignedLessThanOrEqual, e, n);
                     ok = b.ins().band(ok, le);
@@ -2672,7 +2694,7 @@ impl Gen<'_> {
         all.extend_from_slice(args);
         let call = b.ins().call(f, &all);
         let res = b.inst_results(call)[0];
-        if !name.ends_with("_view") && name != "gw_par" {
+        if !name.ends_with("_view") && name != "gw_par" && name != "gw_try_full" {
             // a helper that writes only its destination makes only that register's
             // view untrusted (a move: only if its source may hold a non-number,
             // decided after pass 0); any other may move any container
@@ -2905,6 +2927,19 @@ impl Gen<'_> {
 
     /// The "has a value" bit of element `k`.
     fn has_bit(&self, b: &mut FunctionBuilder, bits: V, k: V) -> V {
+        // no bits: a full array
+        let (look, done) = (b.create_block(), b.create_block());
+        b.append_block_param(done, types::I64);
+        let one = b.ins().iconst(types::I64, 1);
+        b.ins().brif(bits, look, &[], done, &[one.into()]);
+        b.switch_to_block(look);
+        let x = self.has_bit_word(b, bits, k);
+        b.ins().jump(done, &[x.into()]);
+        b.switch_to_block(done);
+        b.block_params(done)[0]
+    }
+
+    fn has_bit_word(&self, b: &mut FunctionBuilder, bits: V, k: V) -> V {
         let w = b.ins().ushr_imm_s(k, 6);
         let off = b.ins().ishl_imm_s(w, 3);
         let a = b.ins().iadd(bits, off);
@@ -2971,6 +3006,16 @@ impl Gen<'_> {
     }
 
     fn set_bit(&self, b: &mut FunctionBuilder, bits: V, k: V) {
+        // no bits: a full array, nothing to mark
+        let (look, after) = (b.create_block(), b.create_block());
+        b.ins().brif(bits, look, &[], after, &[]);
+        b.switch_to_block(look);
+        self.set_bit_word(b, bits, k);
+        b.ins().jump(after, &[]);
+        b.switch_to_block(after);
+    }
+
+    fn set_bit_word(&self, b: &mut FunctionBuilder, bits: V, k: V) {
         let w = b.ins().ushr_imm_s(k, 6);
         let off = b.ins().ishl_imm_s(w, 3);
         let a = b.ins().iadd(bits, off);

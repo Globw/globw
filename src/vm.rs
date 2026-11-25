@@ -41,7 +41,8 @@ pub enum Value {
 
 /// A compact array: one machine value per element, and for ints and floats one bit
 /// per element saying it has a value (reading one that has none is an error, as
-/// with any array). Bools keep 0 (false), 1 (true) or 2 (no value) in a byte.
+/// with any array); no bits at all (an empty vector) once every element has one.
+/// Bools keep 0 (false), 1 (true) or 2 (no value) in a byte.
 #[derive(Debug, Clone)]
 pub enum Packed {
     Ints(Vec<i64>, Vec<u64>),
@@ -50,6 +51,17 @@ pub enum Packed {
 }
 
 pub const UNSET_BOOL: u8 = 2;
+
+/// "Has a value" bits for `n` elements that all have one.
+fn full_bits(n: usize) -> Vec<u64> {
+    let mut b = vec![u64::MAX; n.div_ceil(64)];
+    if n % 64 != 0 {
+        if let Some(last) = b.last_mut() {
+            *last = (1u64 << (n % 64)) - 1;
+        }
+    }
+    b
+}
 
 impl Packed {
     pub fn new(n: usize, kind: u8) -> Packed {
@@ -71,7 +83,7 @@ impl Packed {
 
     /// Element `k` (0-based, in range); `Value::Null` when it has no value yet.
     pub fn get(&self, k: usize) -> Value {
-        let has = |bits: &Vec<u64>| bits[k >> 6] >> (k & 63) & 1 == 1;
+        let has = |bits: &Vec<u64>| bits.is_empty() || bits[k >> 6] >> (k & 63) & 1 == 1;
         match self {
             Packed::Ints(v, b) if has(b) => Value::Int(v[k]),
             Packed::Reals(v, b) if has(b) => Value::Real(v[k]),
@@ -83,43 +95,93 @@ impl Packed {
     /// Stores `x` at `k` (0-based, in range). `Null` takes the value away; an int
     /// stored in a float array becomes a float.
     pub fn set(&mut self, k: usize, x: &Value) {
+        let mark = |b: &mut Vec<u64>| {
+            if !b.is_empty() {
+                b[k >> 6] |= 1 << (k & 63);
+            }
+        };
         match (self, x) {
             (Packed::Ints(v, b), Value::Int(n)) => {
                 v[k] = *n;
-                b[k >> 6] |= 1 << (k & 63);
+                mark(b);
             }
             (Packed::Reals(v, b), Value::Real(r)) => {
                 v[k] = *r;
-                b[k >> 6] |= 1 << (k & 63);
+                mark(b);
             }
             (Packed::Reals(v, b), Value::Int(n)) => {
                 v[k] = *n as f64;
-                b[k >> 6] |= 1 << (k & 63);
+                mark(b);
             }
             (Packed::Bools(v), Value::Bool(t)) => v[k] = *t as u8,
-            (Packed::Ints(_, b), _) | (Packed::Reals(_, b), _) => b[k >> 6] &= !(1 << (k & 63)),
+            (Packed::Ints(v, b), _) => {
+                if b.is_empty() {
+                    *b = full_bits(v.len());
+                }
+                b[k >> 6] &= !(1 << (k & 63));
+            }
+            (Packed::Reals(v, b), _) => {
+                if b.is_empty() {
+                    *b = full_bits(v.len());
+                }
+                b[k >> 6] &= !(1 << (k & 63));
+            }
             (Packed::Bools(v), _) => v[k] = UNSET_BOOL,
         }
     }
 
     pub fn push(&mut self, x: &Value) {
         let k = self.len();
+        let number = matches!(x, Value::Int(_) | Value::Real(_));
         match self {
             Packed::Ints(v, b) => {
                 v.push(0);
-                if b.len() * 64 <= k {
+                if b.is_empty() && !number {
+                    *b = full_bits(k);
+                }
+                if !b.is_empty() && b.len() * 64 <= k {
                     b.push(0);
                 }
             }
             Packed::Reals(v, b) => {
                 v.push(0.0);
-                if b.len() * 64 <= k {
+                if b.is_empty() && !number {
+                    *b = full_bits(k);
+                }
+                if !b.is_empty() && b.len() * 64 <= k {
                     b.push(0);
                 }
             }
             Packed::Bools(v) => v.push(UNSET_BOOL),
         }
         self.set(k, x);
+    }
+
+    /// Drops the "has a value" bits when every element has one (cheap when not:
+    /// it stops at the first gap, looking at both ends first). True when full.
+    pub fn try_full(&mut self) -> bool {
+        let (n, b) = match self {
+            Packed::Ints(v, b) => (v.len(), b),
+            Packed::Reals(v, b) => (v.len(), b),
+            Packed::Bools(_) => return false,
+        };
+        if b.is_empty() {
+            return true;
+        }
+        let words = n / 64;
+        let tail = n % 64;
+        let whole = |w: &u64| *w == u64::MAX;
+        if words > 0 && (!whole(&b[0]) || !whole(&b[words - 1])) {
+            return false;
+        }
+        if tail > 0 && b[words] != (1u64 << tail) - 1 {
+            return false;
+        }
+        if !b[..words].iter().all(whole) {
+            return false;
+        }
+        *b = Vec::new();
+        true
     }
 
     /// The elements as values (`Null` where there is none), for code that works on
