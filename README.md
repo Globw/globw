@@ -55,9 +55,11 @@ gw hello.gw
   GUI, 2D games and physics, audio/DSP, dataframes, autodiff, symbolic math,
   HTTP + a web server, an SQLite database, concurrency, a hosted/local AI
   client, and 1000+ unit conversions.
-- **Fast** — a register bytecode VM; the benchmark suite (recursive Fibonacci,
-  the sieve of Eratosthenes, a 100M-iteration sum loop) targets at least 5× the
-  speed of CPython. See [`bench/`](bench).
+- **Fast, and faster when you ask** — a register bytecode VM, and `import jit`
+  for the programs that need speed: hot code becomes machine code, plain loops
+  run on every core by themselves, with the same results and errors. On par with
+  Go, 10-850× CPython. Every number, the machine and how to reproduce it:
+  [`bench/README.md`](bench/README.md).
 - **A real package manager** — [`gwget`](#packages-with-gwget) installs and
   publishes community libraries.
 - **Cross-platform** — Windows, macOS and Linux.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.7 — unreleased
+## 0.1.7 — 2026-11-27
 
 **A JIT.** `import jit` and the program's hot code becomes machine code
 (Cranelift), with the same results and the same errors as the interpreter. A
@@ -42,8 +42,10 @@ program without it is interpreted, as before: the JIT is for when speed matters.
   overflow the sequential loop would meet is found; any error (overflow, division
   by zero, index out of range) runs the loop again sequentially and reports the
   interpreter's error at the same line. Sums of decimals stay sequential (their
-  last digits depend on the order). Mandelbrot 900 x 600: 0.10 -> 0.05 s; a
-  200-million-step sum: 0.16 -> 0.065 s, twice as fast as Go.
+  last digits depend on the order). Mandelbrot 900 x 600: 0.10 -> 0.055 s; a
+  200-million-step sum: 0.16 -> 0.060 s. Measured fairly (`bench/README.md`),
+  Globw with its JIT is on par with Go: a few percent to a third slower on one
+  core, and on every core even with Go parallelised by hand, ahead on the sum.
 - Loops that fill compact arrays (`a[i] = ...`, at the counter's own position)
   run on every core too, also together with sums. Only when it changes nothing
   that can be seen: the loop does not read the arrays it writes, no array

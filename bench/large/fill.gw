@@ -1,0 +1,17 @@
+variables:
+    i, k, hits as int
+    v as float[10000000]
+    big as bool[10000000]
+hits = 0
+for(k from 1 to 100)
+    for(i from 1 to 10000000)
+        v[i] = (i mod 1000) * 0.001 + k
+        big[i] = (i * 7919) mod 1000 > 500
+    end loop
+    for(i from 1 to 10000000)
+        if(big[i])
+            hits = hits + 1
+        end if
+    end loop
+end loop
+output(hits, " ", v[12345])

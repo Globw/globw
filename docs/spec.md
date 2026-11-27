@@ -412,6 +412,13 @@ end loop
 
 **Speed.** `import jit` compiles the program's hot code to machine code while it runs: functions called often and loops that turn many times. Results and errors are exactly those of the interpreter; only the time changes (a recursive Fibonacci about 7 times faster). Import it in programs that compute a lot; a short program gains nothing from it.
 
+With the JIT, plain `for` loops also run **on every core by themselves**, when that cannot change anything a program sees:
+
+- a loop that adds integers into a variable (`total = total + ...`, `count = count + 1`) and otherwise only computes, reads arrays and branches. The result is exactly the sequential one: an overflow the loop would meet in order is found, and any error makes the loop run again in order and report the same error at the same line. Sums of `float` stay in order, since their last digits depend on it;
+- a loop that fills arrays at its own position (`a[i] = ...`), when it does not read the arrays it writes and no `try` is around it.
+
+Nothing to write for it: no threads, no locks. See `bench/README.md` in the repository for the measurements and the machine.
+
 ```
 import jit
 function fib(n as int) as int
