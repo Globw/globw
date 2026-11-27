@@ -55,13 +55,14 @@ pub enum Packed {
 pub const UNSET_BOOL: u8 = 2;
 
 impl Packed {
-    pub fn new(n: usize, kind: u8) -> Packed {
-        let bits = vec![0u64; n.div_ceil(64)];
-        match kind {
-            0 => Packed::Ints(vec![0; n], bits, n == 0),
-            1 => Packed::Reals(vec![0.0; n], bits, n == 0),
-            _ => Packed::Bools(vec![UNSET_BOOL; n], n == 0),
-        }
+    /// A compact array of `n` elements with no value yet; None when the memory
+    /// runs out.
+    pub fn new(n: usize, kind: u8) -> Option<Packed> {
+        Some(match kind {
+            0 => Packed::Ints(zeros(n)?, zeros(n.div_ceil(64))?, n == 0),
+            1 => Packed::Reals(zeros(n)?, zeros(n.div_ceil(64))?, n == 0),
+            _ => Packed::Bools(filled(n, UNSET_BOOL)?, n == 0),
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -361,7 +362,7 @@ fn matrix(v: &Value) -> &Rc<RefCell<Matrix>> {
 /// `n` values with no value yet. When "no value" is all zero bytes in memory
 /// (checked once), the memory comes zeroed from the system, which is much faster
 /// for a large array than writing every element.
-fn null_values(n: usize) -> Vec<Value> {
+fn null_values(n: usize) -> Option<Vec<Value>> {
     static ZERO_IS_NULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let zero = *ZERO_IS_NULL.get_or_init(|| {
         let null = Value::Null;
@@ -371,18 +372,137 @@ fn null_values(n: usize) -> Vec<Value> {
         first_zero && matches!(unsafe { zeroed.assume_init_ref() }, Value::Null)
     });
     if !zero || n == 0 {
-        return vec![Value::Null; n];
+        return filled(n, Value::Null);
     }
-    let Ok(layout) = std::alloc::Layout::array::<Value>(n) else { return vec![Value::Null; n] };
+    let layout = std::alloc::Layout::array::<Value>(n).ok()?;
     // SAFETY: zeroed memory from the global allocator with Vec's own layout; every
     // element reads as Value::Null (checked above), which owns nothing
     unsafe {
         let p = std::alloc::alloc_zeroed(layout) as *mut Value;
         if p.is_null() {
-            std::alloc::handle_alloc_error(layout);
+            return None;
         }
-        Vec::from_raw_parts(p, n, n)
+        Some(Vec::from_raw_parts(p, n, n))
     }
+}
+
+/// `n` copies of `x`, or None when the memory runs out.
+fn filled<T: Clone>(n: usize, x: T) -> Option<Vec<T>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(n).ok()?;
+    v.resize(n, x);
+    Some(v)
+}
+
+/// `n` zeros (memory the system hands out already zeroed, touched only when
+/// used), or None when the memory runs out.
+fn zeros<T: Copy + Default>(n: usize) -> Option<Vec<T>> {
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    let layout = std::alloc::Layout::array::<T>(n).ok()?;
+    // SAFETY: T is i64, f64 or u64 here, for which all-zero bits are 0 / 0.0
+    unsafe {
+        let p = std::alloc::alloc_zeroed(layout) as *mut T;
+        if p.is_null() {
+            return None;
+        }
+        Some(Vec::from_raw_parts(p, n, n))
+    }
+}
+
+/// `b = a` for arrays and matrices: the elements of `src` copied into `dst`, which
+/// keeps its identity (a parameter's array is the caller's). Sizes must match.
+fn copy_into(dst: &Value, src: &Value) -> Result<(), String> {
+    let mismatch = |a: usize, b: usize| format!("cannot copy an array of {} elements into one of {}", a, b);
+    match (dst, src) {
+        (Value::Packed(d), Value::Packed(s)) => {
+            if Rc::ptr_eq(d, s) {
+                return Ok(());
+            }
+            let (s, mut d) = (s.borrow(), d.borrow_mut());
+            if s.len() != d.len() {
+                return Err(mismatch(s.len(), d.len()));
+            }
+            match (&mut *d, &*s) {
+                (Packed::Ints(dv, db, df), Packed::Ints(sv, sb, sf)) => {
+                    dv.copy_from_slice(sv);
+                    db.copy_from_slice(sb);
+                    *df = *sf;
+                }
+                (Packed::Reals(dv, db, df), Packed::Reals(sv, sb, sf)) => {
+                    dv.copy_from_slice(sv);
+                    db.copy_from_slice(sb);
+                    *df = *sf;
+                }
+                (Packed::Reals(dv, db, df), Packed::Ints(sv, sb, sf)) => {
+                    for (x, y) in dv.iter_mut().zip(sv) {
+                        *x = *y as f64;
+                    }
+                    db.copy_from_slice(sb);
+                    *df = *sf;
+                }
+                (Packed::Bools(dv, df), Packed::Bools(sv, sf)) => {
+                    dv.copy_from_slice(sv);
+                    *df = *sf;
+                }
+                (d, s) => {
+                    for k in 0..s.len() {
+                        d.set(k, &s.get(k));
+                    }
+                }
+            }
+            Ok(())
+        }
+        (Value::Seq(d), Value::Seq(s)) => {
+            if Rc::ptr_eq(d, s) {
+                return Ok(());
+            }
+            let (s, mut d) = (s.borrow(), d.borrow_mut());
+            if s.len() != d.len() {
+                return Err(mismatch(s.len(), d.len()));
+            }
+            d.clone_from_slice(&s);
+            Ok(())
+        }
+        (Value::Matrix(d), Value::Matrix(s)) => {
+            if Rc::ptr_eq(d, s) {
+                return Ok(());
+            }
+            let (s, mut d) = (s.borrow(), d.borrow_mut());
+            if s.rows != d.rows || s.cols != d.cols {
+                return Err(format!("cannot copy a {}x{} matrix into a {}x{} one", s.rows, s.cols, d.rows, d.cols));
+            }
+            d.data.clone_from_slice(&s.data);
+            Ok(())
+        }
+        (Value::Packed(d), Value::Seq(s)) => {
+            let (s, mut d) = (s.borrow(), d.borrow_mut());
+            if s.len() != d.len() {
+                return Err(mismatch(s.len(), d.len()));
+            }
+            for (k, x) in s.iter().enumerate() {
+                d.set(k, x);
+            }
+            Ok(())
+        }
+        (Value::Seq(d), Value::Packed(s)) => {
+            let (s, mut d) = (s.borrow(), d.borrow_mut());
+            if s.len() != d.len() {
+                return Err(mismatch(s.len(), d.len()));
+            }
+            for (k, x) in d.iter_mut().enumerate() {
+                *x = s.get(k);
+            }
+            Ok(())
+        }
+        _ => Err("only an array can be copied into an array".to_string()),
+    }
+}
+
+/// The error for an array the memory cannot hold.
+fn no_memory(n: usize) -> String {
+    format!("not enough memory for an array of {} elements", n)
 }
 
 fn position(i: i64, len: usize) -> Result<usize, String> {
@@ -1047,6 +1167,8 @@ impl<'m> Vm<'m> {
 
     /// Runs the program. `WATCH` builds the copy of the loop that profiles,
     /// traces or debugs; the plain copy (`false`) has none of those checks.
+    // without the JIT, the hints it reads (jit_try) are set and never read
+    #[cfg_attr(not(feature = "jit"), allow(unused_assignments))]
     fn execute<const WATCH: bool>(&mut self, input: &mut dyn BufRead, output: &mut dyn Write) -> Result<(), Error> {
         let m = self.module;
         let mut func = 0usize;
@@ -1105,6 +1227,7 @@ impl<'m> Vm<'m> {
         // function hotter; once compiled, the body runs from here.
         macro_rules! back_edge {
             ($t:expr, $at:expr) => {
+                let _ = ($t, $at);
                 #[cfg(feature = "jit")]
                 if !WATCH && ($t) <= ($at) {
                     if let Some(jit) = self.jit.as_mut() {
@@ -1394,11 +1517,22 @@ impl<'m> Vm<'m> {
                     let v = reg!(s).clone();
                     self.globals[g as usize] = v;
                 }
-                Op::NewArray(d, n) => reg!(d) = Value::Seq(Rc::new(RefCell::new(null_values(n as usize)))),
-                Op::NewPacked(d, n, kind) => reg!(d) = Value::Packed(Rc::new(RefCell::new(Packed::new(n as usize, kind)))),
+                Op::NewArray(d, n) => match null_values(n as usize) {
+                    Some(v) => reg!(d) = Value::Seq(Rc::new(RefCell::new(v))),
+                    None => fail!(no_memory(n as usize)),
+                },
+                Op::NewPacked(d, n, kind) => match Packed::new(n as usize, kind) {
+                    Some(p) => reg!(d) = Value::Packed(Rc::new(RefCell::new(p))),
+                    None => fail!(no_memory(n as usize)),
+                },
+                Op::CopyInto(d, s) => {
+                    if let Err(msg) = copy_into(&self.regs[base + d as usize], &self.regs[base + s as usize]) {
+                        fail!(msg);
+                    }
+                }
                 Op::NewMatrix(d, r, c) => {
                     let (rows, cols) = (r as usize, c as usize);
-                    let data = null_values(rows * cols);
+                    let Some(data) = null_values(rows * cols) else { fail!(no_memory(rows * cols)) };
                     reg!(d) = Value::Matrix(Rc::new(RefCell::new(Matrix { rows, cols, data })));
                 }
                 Op::NewList(d) => reg!(d) = Value::Seq(Rc::new(RefCell::new(Vec::new()))),
@@ -1603,6 +1737,7 @@ impl<'m> Vm<'m> {
                     base = new_base;
                 }
                 Op::Call { func: f, first, argc, dst } => {
+                    #[allow(unused_mut)]
                     let mut done = false;
                     // a compiled function: run its machine code; if it gives up, the
                     // call goes on in the interpreter below

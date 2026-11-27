@@ -38,6 +38,7 @@ mod seq_par {
             self.iter()
         }
     }
+    #[allow(dead_code)]
     pub trait IntoParIter {
         type Iter: Iterator;
         fn into_par_iter(self) -> Self::Iter;
@@ -50,6 +51,7 @@ mod seq_par {
     }
 }
 #[cfg(not(feature = "native"))]
+#[allow(unused_imports)]
 use seq_par::{IntoParIter, ParIter};
 
 // ---------------------------------------------------------------- types
@@ -4327,6 +4329,7 @@ fn reduce_dot(a: &[f64], b: &[f64]) -> f64 {
 // the output reuse a dead input buffer (element-wise: out[i] = f(.., out[i], ..)
 // is safe because each element only reads its own position).
 #[inline]
+#[cfg_attr(not(feature = "native"), allow(dead_code))]
 fn run_program_inplace(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize, self_leaf: usize, self_val: f64) -> f64 {
     let mut st = [0f64; 32];
     let mut sp = 0usize;
@@ -4370,6 +4373,7 @@ fn run_program_inplace(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i:
 }
 
 #[inline]
+#[cfg_attr(not(feature = "native"), allow(dead_code))]
 fn run_program_simd_inplace(program: &[Micro], leaves: &[&[f64]], scalars: &[f64], i: usize, self_leaf: usize, self_blk: f64x4) -> f64x4 {
     let mut st = [f64x4::ZERO; 32];
     let mut sp = 0usize;
@@ -4419,6 +4423,7 @@ fn run_program_simd_inplace(program: &[Micro], leaves: &[&[f64]], scalars: &[f64
 
 // Fills `dst` in place with the fused kernel, where `dst` IS leaf `self_leaf`
 // (read from dst itself, before overwriting). Other leaves read at `base + local`.
+#[cfg_attr(not(feature = "native"), allow(dead_code))]
 fn fill_fused_inplace(dst: &mut [f64], base: usize, program: &[Micro], leaves: &[&[f64]], scalars: &[f64], self_leaf: usize) {
     let len = dst.len();
     let full = len / 4;
@@ -4603,7 +4608,9 @@ fn grid_eval(program: &Value, rest: &[Value]) -> Result<Value, String> {
         // No zero-fill: every element is written below. Rayon only pays off on big
         // arrays; below the threshold a sequential SIMD pass avoids its overhead
         // (this is where small per-op work, e.g. a neural net's layers, lives).
+        #[cfg_attr(not(feature = "native"), allow(dead_code))]
         const FUSE_CHUNK: usize = 1 << 14; // multiple of 4
+        #[cfg_attr(not(feature = "native"), allow(dead_code))]
         const FUSE_PAR_MIN: usize = 1 << 16;
         let mut data: Vec<f64> = Vec::with_capacity(n);
         // SAFETY: fill_fused_range writes every element of each chunk, covering 0..n.
@@ -6402,8 +6409,10 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         }
         FrameFree => {
             FRAMES.with(|r| {
-                if let Some(slot) = usize::try_from(int(&args[0])).ok().and_then(|i| r.borrow_mut().get_mut(i).map(|s| *s = None)) {
-                    slot;
+                if let Ok(i) = usize::try_from(int(&args[0])) {
+                    if let Some(s) = r.borrow_mut().get_mut(i) {
+                        *s = None;
+                    }
                 }
             });
             Value::Null

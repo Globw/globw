@@ -743,3 +743,36 @@ output(hits)
     assert!(out.starts_with("333330"), "{}", out);
     assert!(err.contains("integer limits"), "{}", err);
 }
+
+#[test]
+fn whole_arrays_are_copied() {
+    let src = "variables:
+    a, b as int[300000]
+    m, n as float[200, 200]
+    i, j, s as int
+procedure put(x as int[], y as int[])
+    x = y
+end procedure
+for(i from 1 to 300000)
+    a[i] = i
+end loop
+b = a
+b[1] = 99
+for(i from 1 to 200)
+    for(j from 1 to 200)
+        m[i, j] = i * 0.5 + j
+    end loop
+end loop
+n = m
+m[200, 200] = 0.0
+s = 0
+for(i from 1 to 300000)
+    s = s + b[i]
+end loop
+put(a, b)
+output(a[1], \" \", s, \" \", n[200, 200], \" \", m[200, 200])
+";
+    let (code, out, _) = same("whole_copies", src);
+    assert_eq!(code, 0, "{}", out);
+    assert!(out.starts_with("99 45000150098 300.0 0.0"), "{}", out);
+}

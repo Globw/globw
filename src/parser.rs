@@ -21,8 +21,12 @@ pub(crate) struct Parser {
 /// Deeper nesting would overflow the stack of the later phases.
 const MAX_DEPTH: u32 = 80;
 const MAX_OPS: u32 = 1000;
-const MAX_ELEMENTS: usize = 10_000_000;
-const TOO_BIG: &str = "an array can have at most 10000000 elements";
+/// Arrays are as big as the memory allows (an array that does not fit gives a
+/// clean error when it is made); this bound only keeps sizes far from overflow.
+const MAX_ELEMENTS: usize = if usize::BITS >= 64 { (1u64 << 48) as usize } else { u32::MAX as usize };
+/// Each side of a matrix.
+const MAX_SIDE: usize = u32::MAX as usize;
+
 
 /// Human-readable description of a token, for error messages.
 pub fn describe(t: &Tok) -> String {
@@ -446,8 +450,11 @@ impl Parser {
         let a = self.dimension()?;
         let (shape, full) = if self.accept(&Tok::Comma) {
             let b = self.dimension()?;
-            if a * b > MAX_ELEMENTS {
-                return self.fail(TOO_BIG);
+            if a > MAX_SIDE || b > MAX_SIDE {
+                return self.fail("each side of a matrix can be at most 4294967295");
+            }
+            if a.saturating_mul(b) > MAX_ELEMENTS {
+                return self.fail(format!("an array can have at most {} elements", MAX_ELEMENTS));
             }
             (Shape::Matrix(a, b), Type::Matrix(Some(ty)))
         } else {
@@ -529,7 +536,7 @@ impl Parser {
 
     fn dimension(&mut self) -> Result<usize, Error> {
         match *self.tok() {
-            Tok::Int(n) if n > MAX_ELEMENTS as i64 => self.fail(TOO_BIG),
+            Tok::Int(n) if n > MAX_ELEMENTS as i64 => self.fail(format!("an array can have at most {} elements", MAX_ELEMENTS)),
             Tok::Int(n) if n > 0 => {
                 self.advance();
                 Ok(n as usize)
@@ -1981,10 +1988,13 @@ end function
 
     #[test]
     fn huge_arrays_are_rejected() {
-        let msg = "an array can have at most 10000000 elements";
-        assert_eq!(err("variables:\n    v as int[4294967297]\n").message, msg);
-        assert_eq!(err("variables:\n    m as int[100000, 100000]\n").message, msg);
-        assert!(parse_src("variables:\n    v as bool[10000000]\n").is_ok());
+        let msg = "an array can have at most 281474976710656 elements";
+        assert_eq!(err("variables:\n    v as int[281474976710657]\n").message, msg);
+        assert_eq!(err("variables:\n    m as int[20000000, 20000000]\n").message, msg);
+        assert!(parse_src("variables:\n    v as bool[5000000000]\n").is_ok());
+        assert!(parse_src("variables:
+    m as int[100000, 100000]
+").is_ok());
     }
 
     #[test]

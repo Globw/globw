@@ -66,6 +66,15 @@ program without it is interpreted, as before: the JIT is for when speed matters.
   and exits that write back only what the interpreter reads.
 - `gw --bytecode` prints a program's compiled instructions.
 
+**Language**
+
+- Arrays and matrices are as big as the memory allows (they were limited to 10
+  million elements): `flags as bool[5000000000]` is 5 GB. One that does not fit
+  is a clean run-time error at its declaration, not a crash.
+- `b = a` copies a whole array or matrix into another of the same element type
+  and size; changing `b` afterwards leaves `a` as it was.
+- No compiler warnings in the native or the web build.
+
 **Faster start.** On Windows the graphics DLLs are loaded only when the GPU is
 used: every program starts in about 45 ms instead of 105 ms.
 

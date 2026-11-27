@@ -328,7 +328,8 @@ impl<'p> Checker<'p> {
             Shape::Array(_) | Shape::List | Shape::Dict => 1,
             Shape::Matrix(..) => 2,
         };
-        if indices.len() == needed || (matches!(shape, Shape::List | Shape::Dict | Shape::Set) && indices.is_empty()) {
+        // a whole array or matrix (`b = a`) takes a copy of the elements
+        if indices.len() == needed || (matches!(shape, Shape::List | Shape::Dict | Shape::Set | Shape::Array(_) | Shape::Matrix(..)) && indices.is_empty()) {
             return Some(TTarget { place: p, indices, pos: t.pos });
         }
         let err = match (&shape, indices.len()) {

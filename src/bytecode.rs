@@ -74,10 +74,13 @@ pub enum Op {
     GetGlobal(Reg, u16),
     SetGlobal(u16, Reg),
     /// new array of n empty elements
-    NewArray(Reg, u32),
+    NewArray(Reg, u64),
     /// new compact array of n elements of one kind (0 int, 1 float, 2 bool), all
     /// without a value yet
-    NewPacked(Reg, u32, u8),
+    NewPacked(Reg, u64, u8),
+    /// copies every element of the array or matrix in the second register into
+    /// the one in the first (same size), in place: `b = a`
+    CopyInto(Reg, Reg),
     /// new rows × cols matrix
     NewMatrix(Reg, u32, u32),
     NewList(Reg),
@@ -189,6 +192,7 @@ impl Op {
             Op::SetGlobal(..) => "SetGlobal",
             Op::NewArray(..) => "NewArray",
             Op::NewPacked(..) => "NewPacked",
+            Op::CopyInto(..) => "CopyInto",
             Op::NewMatrix(..) => "NewMatrix",
             Op::NewList(..) => "NewList",
             Op::NewDict(..) => "NewDict",

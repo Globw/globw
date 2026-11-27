@@ -78,7 +78,7 @@ variables:
 
 - `variables:` stands alone on its line. Each following line, **indented** more than the line where the block starts (the one with `variables:` or `global variables:`), declares one or more variables (separated by commas) and their type after `as`. The block ends at the first line that is not indented more, or that is not a declaration (an indented `x = 1` is simply the first statement). For indentation a tab counts as moving to the next multiple of 4 columns.
 - Every variable used must be declared. A scope may have several `variables:` blocks, all at its top.
-- `T[N]` is an array of N elements, where N is an integer literal > 0. An array or matrix has at most 10,000,000 elements. `T[N, M]` is an N×M matrix. `list of T` is a dynamic list, initially empty. `dict of K to V` is a dictionary, initially empty.
+- `T[N]` is an array of N elements, where N is an integer literal > 0. An array or matrix can be as big as the memory allows (each side of a matrix up to 4,294,967,295); one that does not fit gives a run-time error at its declaration. `T[N, M]` is an N×M matrix. `list of T` is a dynamic list, initially empty. `dict of K to V` is a dictionary, initially empty.
 - `global variables:` (only at the very start of the program) makes those variables visible everywhere, functions included. The main program's own variables are **not** visible inside functions.
 - Inside a function or procedure, a `variables:` block declares local variables. A local variable with the same name as a global one hides it.
 - Declaring the same name twice in a scope is an error. So is a main variable with the same name as a global, a variable named like a function, or a variable named like a built-in.
@@ -161,7 +161,7 @@ x = 5
 grades[i] = 7
 grid[i, j] = 0
 ```
-A whole array or matrix cannot be assigned at once. A whole list or dictionary can, by reference, from a value of the same type: `words = split(s, " ")`, `row = [1, 2, 3]`. Characters of a string cannot be changed.
+A whole array or matrix can be assigned from another of the same element type and size: `b = a` **copies** the elements, so changing `b` later does not change `a` (a different size is a run-time error; for a parameter, the caller's array receives the copy). A whole list or dictionary can be assigned by reference, from a value of the same type: `words = split(s, " ")`, `row = [1, 2, 3]`. Characters of a string cannot be changed.
 
 ```
 grid2[1][2] = 9          ' element 2 of the first inner list

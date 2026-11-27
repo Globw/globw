@@ -599,6 +599,8 @@ pub struct Slot {
     pub ty: Type,
     pub shape: Shape,
     pub is_param: bool,
+    /// where it is declared (an array too big for the memory is reported there)
+    pub pos: Pos,
 }
 
 #[derive(Debug, Clone, PartialEq)]

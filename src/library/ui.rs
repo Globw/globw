@@ -44,6 +44,7 @@ pub(super) fn ui_app(url: &str) -> Result<(), String> {
 
 /// Decodes `%XX` escapes in a URL piece (and `+` as a space, for query strings).
 /// Invalid escapes are kept as written; invalid UTF-8 is replaced.
+#[cfg_attr(not(feature = "native"), allow(dead_code))]
 pub(super) fn url_unescape(s: &str, plus_is_space: bool) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());

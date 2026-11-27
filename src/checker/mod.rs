@@ -432,7 +432,7 @@ fn conflict_error(v: &Var, declared: BaseType, new: BaseType, pos: Pos) -> Error
 }
 
 fn slot(v: &Var) -> Slot {
-    Slot { name: v.name.clone(), ty: v.full_type(), shape: v.shape.clone(), is_param: v.is_param }
+    Slot { name: v.name.clone(), ty: v.full_type(), shape: v.shape.clone(), is_param: v.is_param, pos: v.origin.unwrap_or_default() }
 }
 
 /// True if every path through `body` ends in RETURN.

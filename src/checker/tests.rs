@@ -144,7 +144,9 @@ fn index_errors() {
         first_error("variables:\n    m as int[2, 2]\nm[1] = 0\n").message,
         "\"m\" is a matrix: it needs 2 indices, like m[i, j]"
     );
-    assert_eq!(first_error("variables:\n    v as int[2]\nv = 1\n").message, "a whole array or list cannot be assigned at once");
+    assert_eq!(first_error("variables:\n    v as int[2]\nv = 1\n").message, "cannot assign an int to \"v\", which is an array of ints");
+    // a whole array takes a copy of another of the same kind
+    assert!(check_src("variables:\n    v, w as int[2]\nw[1] = 1\nw[2] = 2\nv = w\n").is_ok());
     assert_eq!(
         first_error("variables:\n    x as int\nx = 1\nx[1] = 2\n").message,
         "\"x\" is not an array: [ ] cannot be used on it"

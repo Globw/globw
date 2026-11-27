@@ -16,7 +16,9 @@ pub fn compile(p: &TProgram) -> Module {
         .enumerate()
         .map(|(k, f)| {
             let globals = if k == 0 { Some(&p.globals[..]) } else { None };
-            FnCompiler::new(f, globals, &mut strings).finish()
+            let mut c = FnCompiler::new(f, globals, &mut strings);
+            c.all_globals = &p.globals[..];
+            c.finish()
         })
         .collect();
     let n_classes = crate::tir::class_count() as u16;
@@ -57,10 +59,10 @@ fn alloc(shape: &Shape, ty: &crate::tir::Type, dst: Reg) -> Option<Op> {
     match *shape {
         // arrays of numbers or bools are compact: one machine value per element
         Shape::Array(n) => Some(match ty {
-            Type::Array(Some(BaseType::Int)) => Op::NewPacked(dst, n as u32, 0),
-            Type::Array(Some(BaseType::Real)) => Op::NewPacked(dst, n as u32, 1),
-            Type::Array(Some(BaseType::Bool)) => Op::NewPacked(dst, n as u32, 2),
-            _ => Op::NewArray(dst, n as u32),
+            Type::Array(Some(BaseType::Int)) => Op::NewPacked(dst, n as u64, 0),
+            Type::Array(Some(BaseType::Real)) => Op::NewPacked(dst, n as u64, 1),
+            Type::Array(Some(BaseType::Bool)) => Op::NewPacked(dst, n as u64, 2),
+            _ => Op::NewArray(dst, n as u64),
         }),
         Shape::Matrix(r, c) => Some(Op::NewMatrix(dst, r as u32, c as u32)),
         Shape::List => Some(Op::NewList(dst)),
@@ -126,6 +128,8 @@ struct FnCompiler<'a> {
     f: &'a TFunction,
     /// only for the main program, which allocates global collections
     globals: Option<&'a [Slot]>,
+    /// every global (their shapes)
+    all_globals: &'a [Slot],
     strings: &'a mut Strings,
     code: Vec<Op>,
     positions: Vec<Pos>,
@@ -152,6 +156,7 @@ impl<'a> FnCompiler<'a> {
         FnCompiler {
             f,
             globals,
+            all_globals: &[],
             strings,
             code: Vec::new(),
             positions: Vec::new(),
@@ -169,7 +174,7 @@ impl<'a> FnCompiler<'a> {
             for (g, slot) in globals.iter().enumerate() {
                 let t = self.temp();
                 if let Some(op) = alloc(&slot.shape, &slot.ty, t) {
-                    self.emit(op, start);
+                    self.emit(op, slot.pos);
                     self.emit(Op::SetGlobal(g as u16, t), start);
                 }
                 self.next -= 1;
@@ -179,7 +184,7 @@ impl<'a> FnCompiler<'a> {
         for (k, slot) in f.locals.iter().enumerate() {
             if !slot.is_param {
                 if let Some(op) = alloc(&slot.shape, &slot.ty, k as Reg) {
-                    self.emit(op, start);
+                    self.emit(op, slot.pos);
                 }
             }
         }
@@ -761,6 +766,19 @@ impl<'a> FnCompiler<'a> {
     }
 
     fn assign(&mut self, t: &TTarget, v: &TExpr) {
+        // a whole array or matrix: copy the elements into it
+        if t.indices.is_empty() {
+            let shape = match t.place {
+                Place::Local(r) => self.f.locals.get(r as usize).map(|s| s.shape.clone()),
+                Place::Global(g) => self.all_globals.get(g as usize).map(|s| s.shape.clone()),
+            };
+            if matches!(shape, Some(Shape::Array(_)) | Some(Shape::Matrix(..))) {
+                let src = self.operand(v);
+                let c = self.collection(t.place, t.pos);
+                self.emit(Op::CopyInto(c, src), t.pos);
+                return;
+            }
+        }
         match (t.place, t.indices.is_empty()) {
             (Place::Local(r), true) => self.expr_into(v, r),
             _ => {

@@ -1863,7 +1863,6 @@ impl Jit {
                 clob: &[],
                 bumps: None,
                 fresh: &[],
-                par: &HashMap::new(),
                 heads: &HashMap::new(),
                 fastv: &HashMap::new(),
                 in_fast: std::cell::Cell::new(None),
@@ -1982,7 +1981,6 @@ impl Jit {
         let fc = self.module.isa().frontend_config();
         let empty_calls = HashMap::new();
         let empty_helpers = HashMap::new();
-        let no_par = HashMap::new();
         let all_fresh = vec![true; code.len()];
         let no_clob = vec![false; n_regs];
         {
@@ -2081,7 +2079,6 @@ impl Jit {
                 clob: &no_clob,
                 bumps: None,
                 fresh: &all_fresh,
-                par: &no_par,
                 heads: &HashMap::new(),
                 fastv: &HashMap::new(),
                 in_fast: std::cell::Cell::new(None),
@@ -2393,7 +2390,6 @@ impl Jit {
                 clob: &clob,
                 bumps: if pass == 0 { Some(&bumps) } else { None },
                 fresh: &fresh,
-                par: &par_hooks,
                 heads: &heads,
                 fastv: &fastv,
                 in_fast: std::cell::Cell::new(None),
@@ -2708,8 +2704,6 @@ struct Gen<'a> {
     bumps: Option<&'a std::cell::RefCell<Vec<bool>>>,
     /// the second pass: instructions where the entry views are surely valid
     fresh: &'a [bool],
-    /// for loops that may run in parallel, by their ForInit
-    par: &'a HashMap<usize, ParHook>,
     /// their heads (first body instruction): the block that tries the parallel
     /// run once, and the "tried" flag
     heads: &'a HashMap<usize, (Block, Variable)>,
