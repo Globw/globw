@@ -1,30 +1,30 @@
 class Globw < Formula
   desc "Statically-typed language with its own syntax and a fast Rust engine, in a single file"
   homepage "https://globw.org"
-  version "0.1.3"
+  version "0.1.7m"
   license "Apache-2.0"
 
   on_macos do
     on_arm do
-      url "https://github.com/Globw/globw/releases/download/v0.1.3/globw-macos-aarch64.tar.gz"
-      sha256 "d0c95480a7093aa8d7e9680746633810b6b569640222a13b54f5eb3ba6d2d6b2"
+      url "https://github.com/Globw/globw/releases/download/v0.1.7m/globw-macos-aarch64.tar.gz"
+      sha256 "df2d411e8223d8f83a6e8c2112fae366f386b88468baad07d336e833f5edb48c"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/Globw/globw/releases/download/v0.1.3/globw-linux-x86_64.tar.gz"
-      sha256 "8b5259473004c78d5a4e0997b675ef5abb1f96cea18b68246c0f094290e3c419"
+      url "https://github.com/Globw/globw/releases/download/v0.1.7m/globw-linux-x86_64.tar.gz"
+      sha256 "c20ec24fe926133e3e681a578752ba8794fe62e6703165f4634a7aaa5d8c55cf"
     end
     on_arm do
-      url "https://github.com/Globw/globw/releases/download/v0.1.3/globw-linux-aarch64.tar.gz"
-      sha256 "87ccf42a58be4a3923971b86a73310977b695b5fa1f66a3fe61965bb903cb2ad"
+      url "https://github.com/Globw/globw/releases/download/v0.1.7m/globw-linux-aarch64.tar.gz"
+      sha256 "90422086efbf68ebe190cc11b6f9d028a504e23d75a993c87a3a0ca99f575f97"
     end
   end
 
   def install
     bin.install "gw", "gwget"
-    # syntax highlighting for nano, vim and micro (archives from 0.1.7m on)
+    # syntax highlighting for nano, vim and micro
     pkgshare.install "editors" if File.directory?("editors")
   end
 
