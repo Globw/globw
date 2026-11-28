@@ -115,6 +115,10 @@ edit token you keep to update the library later. See
 The [`vscode-globw`](vscode-globw) extension gives `.gw` files syntax
 highlighting, a Run button (F5) and live error checking in VS Code.
 
+In the terminal, **nano**, **vim** and **micro** colour `.gw` files too: the Linux
+packages install the nano and vim files by themselves, and
+[`editors/`](editors) explains the rest.
+
 ## Documentation
 
 The language reference is in [`docs/spec.md`](docs/spec.md): structure, types,

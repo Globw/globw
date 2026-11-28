@@ -7,7 +7,7 @@ platform: linux
 version: ${PKG_VERSION}
 section: devel
 priority: optional
-maintainer: Globw <60625041+Globw@users.noreply.github.com>
+maintainer: Globw <160625041+Globw@users.noreply.github.com>
 description: |
   Globw is a statically-typed language with its own syntax and a fast Rust
   engine, in a single file. Graphics, databases, networking, audio, an AI
@@ -21,3 +21,16 @@ contents:
     dst: /usr/bin/gw
   - src: ./target/release/gwget
     dst: /usr/bin/gwget
+  # syntax highlighting for terminal editors (see editors/README.md)
+  - src: ./editors/nano/globw.nanorc
+    dst: /usr/share/nano/globw.nanorc
+  - src: ./editors/vim/syntax/globw.vim
+    dst: /usr/share/vim/vimfiles/syntax/globw.vim
+  - src: ./editors/vim/ftdetect/globw.vim
+    dst: /usr/share/vim/vimfiles/ftdetect/globw.vim
+  - src: ./editors/vim/ftplugin/globw.vim
+    dst: /usr/share/vim/vimfiles/ftplugin/globw.vim
+  - src: ./editors/micro/globw.yaml
+    dst: /usr/share/globw/editors/micro/globw.yaml
+  - src: ./editors/README.md
+    dst: /usr/share/globw/editors/README.md

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8 — unreleased
+
+- **Terminal editors**: syntax highlighting for `.gw` files in nano, vim and
+  micro (`editors/`), with the VS Code extension's rules. The `.deb` and `.rpm`
+  packages install the nano and vim files where those editors find them by
+  themselves; the `tar.gz` archives carry the `editors/` folder.
+- The Linux packages name the right maintainer address.
+
 ## 0.1.7 — 2026-11-27
 
 **A JIT.** `import jit` and the program's hot code becomes machine code

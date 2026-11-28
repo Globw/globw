@@ -77,7 +77,7 @@ jobs:
       # so the website can link to releases/latest/download/<asset>.
       - name: Package (Unix)
         if: runner.os != 'Windows'
-        run: tar -C target/release -czf "${{ matrix.asset }}" gw gwget
+        run: tar -czf "${{ matrix.asset }}" -C target/release gw gwget -C ../.. editors
 
       # Build Linux .deb and .rpm packages (gw + gwget -> /usr/bin) with nfpm.
       - name: Linux packages (deb + rpm)

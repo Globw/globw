@@ -24,6 +24,8 @@ class Globw < Formula
 
   def install
     bin.install "gw", "gwget"
+    # syntax highlighting for nano, vim and micro (archives from 0.1.8 on)
+    pkgshare.install "editors" if File.directory?("editors")
   end
 
   test do

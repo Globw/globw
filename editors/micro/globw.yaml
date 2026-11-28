@@ -1,0 +1,28 @@
+# Globw syntax highlighting for micro (https://globw.org)
+# Copy to ~/.config/micro/syntax/globw.yaml
+filetype: globw
+
+detect:
+    filename: "\\.gw$"
+
+rules:
+    - identifier: "\\b[A-Za-z_][A-Za-z0-9_]*\\s*\\("
+    - statement: "\\b(lazy|import|break|continue|in|if|else|while|for|from|to|step|repeat|return|class|new|is|try|catch|always|fail|gives|const|match|when|enum|function|procedure|global)\\b"
+    - statement: "\\bend\\s+(if|loop|function|procedure|class|try|match|enum)\\b"
+    - statement: "\\bvariables\\s*:"
+    - type: "\\b(int|float|string|bool|as)\\b"
+    - type: "\\b(list|dict|set|tuple|nungw)\\s+of\\b"
+    - symbol.operator: "\\b(and|or|not|div|mod)\\b"
+    - constant.bool: "\\b(true|false|none)\\b"
+    - identifier.var: "\\b(self|parent)\\b"
+    - constant.number: "\\b[0-9]+(\\.[0-9]+)?\\b"
+    - constant.string:
+        start: "\""
+        end: "\""
+        skip: "\\\\."
+        rules:
+            - constant.specialChar: "\\\\[n\"\\\\$]"
+    - comment:
+        start: "'"
+        end: "$"
+        rules: []
