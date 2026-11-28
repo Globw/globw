@@ -60,6 +60,12 @@ gw hello.gw
   run on every core by themselves, with the same results and errors. On par with
   Go, 10-850× CPython. Every number, the machine and how to reproduce it:
   [`bench/README.md`](bench/README.md).
+- **Tests built in** — `gw test` runs every `test_...` procedure of your
+  `*_test.gw` files, each on its own, with `expect` and `expect_equal`.
+- **Machine learning without installs** — `nungw` has what a neural network
+  needs (`relu`, `softmax`, `argmax_axis`, matrix products, `save`/`load`,
+  `read_image`): [`examples/demos/digits.gw`](examples/demos/digits.gw) learns
+  to read handwritten digits in seconds, then reads the ones you draw.
 - **A real package manager** — [`gwget`](#packages-with-gwget) installs and
   publishes community libraries.
 - **Cross-platform** — Windows, macOS and Linux.
