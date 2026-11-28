@@ -2,6 +2,11 @@
 
 ## 0.1.8 — unreleased
 
+- **Tests**: `gw test` runs every procedure named `test_...` in the `*_test.gw`
+  and `test_*.gw` files of a folder, each on its own (the file's main part
+  first, to set things up), with `expect(condition)` and
+  `expect_equal(got, wanted)`. A failure shows its line, the two values and
+  what the test printed; the status is 1 when a test fails, for CI.
 - `nungw.read_bytes(path, skip, count)`: the bytes of a file as an array of
   numbers 0 to 255, for images and binary datasets; a `.gz` file is unpacked
   first. Needs `--allow-read`.

@@ -1532,6 +1532,30 @@ The project is a Cargo project at the repository root, with one module per phase
 
 **Saving the window.** `screenshot("file.png")` saves what the graphics window shows as a PNG image (it needs `--allow-write`, like any file written).
 
+**Testing.** A test is a procedure whose name starts with `test_` and takes no parameters, in a file whose name ends in `_test.gw` or starts with `test_`. Inside it, `expect(condition)` checks that a condition holds, and `expect_equal(got, wanted)` that two values are equal (numbers by value, so `3` equals `3.0`; text, lists and dictionaries as they print). `gw test` finds the test files in the current folder and the ones below it (or in the files and folders named after it) and runs every test on its own: a fresh run of the file, its main part first (the place to set things up), then the test. A failed expectation, or any run-time error, fails the test with its line and the two values; what a failing test printed is shown under it.
+
+```
+' math_test.gw
+function half(x as int) as int
+    return x div 2
+end function
+
+procedure test_half()
+    expect_equal(half(8), 4)
+    expect(half(1) == 0)
+end procedure
+```
+
+```
+$ gw test
+math_test.gw
+  ok    test_half
+
+1 passed, 0 failed (0.01 s)
+```
+
+`gw test` ends with status 1 when a test fails, so it can stop a CI job. Tests get no permissions unless given: `gw test --allow-read`.
+
 **Command line** (the binary is `gw`)
 ```
 gw program.gw            run the program
@@ -1539,6 +1563,8 @@ gw --repl                start an interactive REPL (declarations, assignments an
                          function/class definitions persist across lines, a bare
                          expression prints its value, and multi-line blocks such as
                          for/if/function are read until their matching end)
+gw test [paths]          run the tests (procedures test_... in *_test.gw and test_*.gw
+                         files), each on its own; status 1 if one fails
 gw fmt program.gw        re-indent the file in place (four spaces per block level);
                          with no file, format standard input to standard output
 gw --check program.gw    type-check only, do not run (prints "No errors found.")

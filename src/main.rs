@@ -48,6 +48,9 @@ fn main() -> ExitCode {
     if args.first().map(String::as_str) == Some("fmt") {
         return globw_fmt(&args[1..]);
     }
+    if args.first().map(String::as_str) == Some("test") {
+        return globw_test(&args[1..]);
+    }
     if args.first().map(String::as_str) == Some("--dap") {
         // the debugger for editors: Debug Adapter Protocol on stdin/stdout
         return dap::serve();
@@ -107,7 +110,7 @@ fn main() -> ExitCode {
         (false, Some(f)) => f,
         _ => {
             eprintln!(
-                "Usage: gw [options] program.gw\n\nOptions:\n  --repl           start an interactive session (REPL)\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --symbols        print this file's definitions as JSON (for editors)\n  --profile        run with an opcode profile\n  --trace          run, printing each source line as it executes\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw fmt [files]   re-indent .gw files (or standard input to standard output)\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
+                "Usage: gw [options] program.gw\n\nOptions:\n  --repl           start an interactive session (REPL)\n  --check          type-check only, do not run\n  --json           report errors as JSON (for editors/CI)\n  --builtins       print the builtin catalogue as JSON (for editors)\n  --symbols        print this file's definitions as JSON (for editors)\n  --profile        run with an opcode profile\n  --trace          run, printing each source line as it executes\n  --allow-run      permit shell.run and the proc module\n  --allow-net      permit the web/serve/net modules and ai requests\n  --allow-read     permit reading files and databases\n  --allow-write    permit writing files, charts and databases\n  --allow-all      permit everything (use with care)\n\n  gw fmt [files]   re-indent .gw files (or standard input to standard output)\n  gw test [paths]  run the tests: procedures test_... in *_test.gw / test_*.gw files\n  gw add <url>     download one .gw module into libs/\n\nWithout any --allow-* flag the program cannot touch the shell, network or\nfiles. For catalogue libraries use gwget, e.g. gwget install <name>."
             );
             return ExitCode::from(3);
         }
@@ -368,6 +371,172 @@ fn repl_eval(src: &str) -> Result<String, String> {
     let mut input = io::Cursor::new(Vec::<u8>::new());
     globw::run(&module, &mut input, &mut out).map_err(|e| e.render_in(&files))?;
     Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// `gw test [--allow-...] [files or folders]`: finds the test files (`*_test.gw`,
+/// `test_*.gw`; a file named on the command line is taken whatever its name),
+/// and runs each procedure `test_...` with no parameters on its own: a fresh run
+/// of the program, its main part first, then the test. A failing `expect`, or any
+/// run-time error, fails the test with its line. The program's output is shown
+/// for failing tests only.
+fn globw_test(args: &[String]) -> ExitCode {
+    let mut caps = globw::library::Caps::none();
+    let mut paths: Vec<std::path::PathBuf> = Vec::new();
+    for a in args {
+        let (key, val) = match a.split_once('=') {
+            Some((k, v)) => (k, Some(v)),
+            None => (a.as_str(), None),
+        };
+        match key {
+            "--allow-run" => caps.allow_run(),
+            "--allow-net" => caps.allow_net(val),
+            "--allow-read" => caps.allow_read(val),
+            "--allow-write" => caps.allow_write(val),
+            "--allow-all" => caps.allow_all(),
+            s if s.starts_with("--") => {
+                eprintln!("unknown option for gw test: {}", a);
+                return ExitCode::from(3);
+            }
+            _ => paths.push(std::path::PathBuf::from(a)),
+        }
+    }
+    globw::library::set_caps(caps);
+    if paths.is_empty() {
+        paths.push(std::path::PathBuf::from("."));
+    }
+    let is_test = |p: &std::path::Path| {
+        let n = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        n.ends_with(".gw") && (n.ends_with("_test.gw") || n.starts_with("test_"))
+    };
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, is_test: &dyn Fn(&std::path::Path) -> bool) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+        entries.sort();
+        for p in entries {
+            let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            if p.is_dir() {
+                if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    walk(&p, out, is_test);
+                }
+            } else if is_test(&p) {
+                out.push(p);
+            }
+        }
+    }
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for p in &paths {
+        if p.is_dir() {
+            walk(p, &mut files, &is_test);
+        } else if p.exists() {
+            files.push(p.clone());
+        } else {
+            eprintln!("gw test: \"{}\" does not exist", p.display());
+            return ExitCode::from(3);
+        }
+    }
+    let home = std::env::current_dir().unwrap_or_default();
+    let started = std::time::Instant::now();
+    let (mut passed, mut failed) = (0usize, 0usize);
+    for file in &files {
+        let abs = home.join(file);
+        // shown as typed, with / and without a leading ./
+        let shown = file
+            .components()
+            .filter(|c| !matches!(c, std::path::Component::CurDir))
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        let source = match std::fs::read_to_string(&abs) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("{}\n  FAIL  cannot read the file: {}", shown, e);
+                failed += 1;
+                continue;
+            }
+        };
+        // like gw, relative paths start from the program's folder
+        if let Some(dir) = abs.parent() {
+            let _ = std::env::set_current_dir(dir);
+        }
+        let name = abs.file_name().map_or(shown.clone(), |n| n.to_string_lossy().into_owned());
+        let source_file = || globw::SourceFile { name: name.clone(), text: source.clone() };
+        let (files_seen, names) = globw::test_names(source_file(), std::path::Path::new("."));
+        println!("{}", shown);
+        match names {
+            Err(errors) => {
+                let text: Vec<String> = errors.iter().map(|e| e.render_in(&files_seen)).collect();
+                println!("  FAIL  the file does not compile\n{}", indent(&text.join("\n")));
+                failed += 1;
+            }
+            Ok(names) if names.is_empty() => println!("  (no procedures named test_...)"),
+            Ok(names) => {
+                for test in names {
+                    let (files_seen, compiled) = globw::compile_test(source_file(), std::path::Path::new("."), &test);
+                    let outcome = match compiled {
+                        Err(errors) => Err((errors.iter().map(|e| e.render_in(&files_seen)).collect::<Vec<_>>().join("\n"), Vec::new())),
+                        Ok(module) => {
+                            let mut out: Vec<u8> = Vec::new();
+                            let mut input = io::empty();
+                            match globw::run(&module, &mut input, &mut out) {
+                                Ok(()) => Ok(()),
+                                Err(e) => Err((without_runner_frame(&e.render_in(&files_seen)), out)),
+                            }
+                        }
+                    };
+                    match outcome {
+                        Ok(()) => {
+                            println!("  ok    {}", test);
+                            passed += 1;
+                        }
+                        Err((why, out)) => {
+                            println!("  FAIL  {}", test);
+                            println!("{}", indent(why.trim_end()));
+                            let out = String::from_utf8_lossy(&out);
+                            if !out.trim().is_empty() {
+                                println!("        its output:\n{}", indent(out.trim_end()));
+                            }
+                            failed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = std::env::set_current_dir(&home);
+    }
+    if files.is_empty() {
+        println!("no test files found (names ending in _test.gw or starting with test_)");
+    }
+    println!(
+        "\n{} passed, {} failed ({:.2} s)",
+        passed,
+        failed,
+        started.elapsed().as_secs_f64()
+    );
+    if failed > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// A test's error without the call `gw test` added at the end of the program:
+/// the last "called from main()" line goes, and the whole call stack when only
+/// the test itself is left in it (the error line already says where).
+fn without_runner_frame(text: &str) -> String {
+    let mut lines: Vec<&str> = text.lines().collect();
+    if lines.last().is_some_and(|l| l.trim_start().starts_with("called from main()")) {
+        lines.pop();
+    }
+    if let Some(at) = lines.iter().position(|l| l.trim_start().starts_with("Call stack")) {
+        if lines.len() == at + 2 {
+            lines.truncate(at);
+        }
+    }
+    lines.join("\n")
+}
+
+fn indent(text: &str) -> String {
+    text.lines().map(|l| format!("        {}", l)).collect::<Vec<_>>().join("\n")
 }
 
 fn repl(caps: globw::library::Caps) -> ExitCode {

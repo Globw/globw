@@ -359,6 +359,21 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), Type::Grid)
         }
+        Expect => {
+            arity(1)?;
+            if a[0] != Type::Base(Bool) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Bool) });
+            }
+            ok(none(1), Type::Unknown)
+        }
+        ExpectEqual => {
+            arity(2)?;
+            let number = |t: &Type| t.base().is_some_and(numeric);
+            if !(number(&a[0]) && number(&a[1])) && a[0] != a[1] && a[0] != Type::Unknown && a[1] != Type::Unknown {
+                return other(format!("expect_equal compares two values of the same type, here {} and {}", a[0].full_name(), a[1].full_name()));
+            }
+            ok(none(2), Type::Unknown)
+        }
         GridSave => {
             arity(2)?;
             if a[0] != Type::Grid {
@@ -10032,6 +10047,23 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
         GridArgminAxis => arg_axis(&args[0], int(&args[1]), false, "argmin_axis")?,
         GridSave => {
             grid_save(&args[0], text(&args[1]))?;
+            Value::Null
+        }
+        Expect => {
+            if !boolv(&args[0]) {
+                return Err("expected true, got false".to_string());
+            }
+            Value::Null
+        }
+        ExpectEqual => {
+            let (got, want) = (&args[0], &args[1]);
+            let equal = match (got, want) {
+                (Value::Int(_) | Value::Real(_), Value::Int(_) | Value::Real(_)) => real(got) == real(want),
+                _ => crate::vm::repr(got) == crate::vm::repr(want),
+            };
+            if !equal {
+                return Err(format!("expected {}, got {}", crate::vm::repr(want), crate::vm::repr(got)));
+            }
             Value::Null
         }
         GridLoad => grid_load(text(&args[0]))?,

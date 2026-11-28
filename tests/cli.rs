@@ -1453,3 +1453,59 @@ output(nungw.shape(img), nungw.at(img, 1, 1, 1), nungw.at(img, 1, 4, 2), nungw.a
     assert_ne!(code, 0);
     assert!(stderr.contains("not a file made by nungw.save"), "{}", stderr);
 }
+
+#[test]
+fn gw_test_runs_each_test_alone() {
+    let dir = std::env::temp_dir().join("globw_gw_test");
+    let _ = std::fs::create_dir_all(dir.join("sub"));
+    std::fs::write(
+        dir.join("math_test.gw"),
+        "global variables:
+    base as int
+function half(x as int) as int
+    return x div 2
+end function
+procedure test_setup_ran()
+    expect_equal(base, 10)
+    base = 99
+end procedure
+procedure test_fresh_each_time()
+    expect_equal(base, 10)
+end procedure
+procedure test_wrong()
+    output(\"checking half\")
+    expect_equal(half(7), 4)
+end procedure
+procedure test_false()
+    expect(half(2) == 3)
+end procedure
+base = 10
+",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("sub").join("test_text.gw"),
+        "procedure test_text()
+    expect_equal(uppercase(\"globw\"), \"GLOBW\")
+    expect_equal([1, 2, 3], [1, 2, 3])
+    expect_equal(3, 3.0)
+end procedure
+",
+    )
+    .unwrap();
+    std::fs::write(dir.join("not_a_test_file.gw"), "output(\"should not run\")\n").unwrap();
+    let d = dir.display().to_string();
+    let (code, stdout, _) = globw(&["test", &d]);
+    assert_eq!(code, 1, "{}", stdout);
+    assert!(stdout.contains("  ok    test_setup_ran"), "{}", stdout);
+    assert!(stdout.contains("  ok    test_fresh_each_time"), "{}", stdout);
+    assert!(stdout.contains("  FAIL  test_wrong") && stdout.contains("expected 4, got 3") && stdout.contains("checking half"), "{}", stdout);
+    assert!(stdout.contains("  FAIL  test_false") && stdout.contains("expected true, got false"), "{}", stdout);
+    assert!(stdout.contains("  ok    test_text"), "{}", stdout);
+    assert!(!stdout.contains("should not run"), "{}", stdout);
+    assert!(stdout.contains("3 passed, 2 failed"), "{}", stdout);
+    // a folder where everything passes
+    let (code, stdout, _) = globw(&["test", &dir.join("sub").display().to_string()]);
+    assert_eq!(code, 0, "{}", stdout);
+    assert!(stdout.contains("1 passed, 0 failed"), "{}", stdout);
+}

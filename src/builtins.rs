@@ -111,6 +111,7 @@ pub enum Builtin {
     Values,
     // files
     ReadFile,
+    Expect, ExpectEqual,
     ReadLines,
     WriteFile,
     AppendFile,
@@ -1088,6 +1089,8 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     (Keys, "keys", Sig::Flexible { function: true }),
     (Values, "values", Sig::Flexible { function: true }),
     (ReadFile, "read_file", Sig::Fixed(&[S], Some(Str))),
+    (Expect, "expect", Sig::Flexible { function: false }),
+    (ExpectEqual, "expect_equal", Sig::Flexible { function: false }),
     (ReadLines, "read_lines", Sig::Flexible { function: true }),
     (WriteFile, "write_file", Sig::Fixed(&[S, S], None)),
     (AppendFile, "append_file", Sig::Fixed(&[S, S], None)),
