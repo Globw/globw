@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.8 — unreleased
+
+- `nungw.read_bytes(path, skip, count)`: the bytes of a file as an array of
+  numbers 0 to 255, for images and binary datasets; a `.gz` file is unpacked
+  first. Needs `--allow-read`.
+- New demo, `examples/demos/digits.gw`: a neural network written in Globw
+  downloads MNIST, learns to read handwritten digits from 60,000 of them in
+  about 4 seconds (97% right on 10,000 it never saw), then reads the digits you
+  draw with the mouse, showing its confidence in each one live.
+
 ## 0.1.7m — 2026-11-28
 
 - **Terminal editors**: syntax highlighting for `.gw` files in nano, vim and

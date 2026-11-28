@@ -751,6 +751,7 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 |---|---|
 | `nungw.range(n)`, `nungw.zeros(n)`, `nungw.fill(n, v)`, `nungw.of(list)` | build one |
 | `nungw.size(g)`, `nungw.get(g, i)`, `nungw.set(g, i, v)`, `nungw.to_list(g)` | inspect, read, change, read back |
+| `nungw.read_bytes(path, skip, count)` | `count` bytes of a file after the first `skip`, as numbers 0 to 255: images, binary datasets. A name ending in `.gz` is unpacked first. Needs `--allow-read` |
 | `nungw.sqrt/square/abs(g)` | element-wise, giving a new array (same as the operators) |
 | `nungw.exp/exp2/expm1/log/log2/log10/log1p(g)` | exponentials and logarithms, element-wise |
 | `nungw.sin/cos/tan/asin/acos/atan(g)`, `nungw.sinh/cosh/tanh/asinh/acosh/atanh(g)` | trigonometry and hyperbolics, element-wise |

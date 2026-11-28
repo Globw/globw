@@ -359,6 +359,18 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), Type::Grid)
         }
+        GridReadBytes => {
+            arity(3)?;
+            if a[0] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Str) });
+            }
+            for k in 1..3 {
+                if a[k] != Type::Base(Int) {
+                    return Err(CheckError::Arg { index: k, expected: Type::Base(Int) });
+                }
+            }
+            ok(none(3), Type::Grid)
+        }
         GridFill => {
             arity(2)?;
             if a[0] != Type::Base(Int) {
@@ -2983,6 +2995,27 @@ fn shape_of(v: &Value) -> Rc<Vec<usize>> {
 }
 
 /// Build a 1-D nungw from a flat buffer.
+/// A file's bytes; a name ending in ".gz" is unpacked (gzip).
+fn read_file_bytes(path: &str) -> Result<Vec<u8>, String> {
+    let raw = std::fs::read(path).map_err(|e| format!("cannot read the file \"{}\": {}", path, e))?;
+    if !path.to_ascii_lowercase().ends_with(".gz") {
+        return Ok(raw);
+    }
+    #[cfg(feature = "native")]
+    {
+        use std::io::Read;
+        let mut out = Vec::new();
+        flate2::read::MultiGzDecoder::new(&raw[..])
+            .read_to_end(&mut out)
+            .map_err(|e| format!("cannot unpack \"{}\" (gzip): {}", path, e))?;
+        Ok(out)
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        Err(format!("cannot unpack \"{}\": gzip is not available here", path))
+    }
+}
+
 fn grid_val(data: Vec<f64>) -> Value {
     let shape = Rc::new(vec![data.len()]);
     Value::Floats(Rc::new(RefCell::new(data)), shape)
@@ -5176,6 +5209,7 @@ pub(crate) fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
             }
         }
         ReadFile => check_path(&c.read, text(&args[0]), "reading files", "--allow-read")?,
+        GridReadBytes => check_path(&c.read, text(&args[0]), "nungw.read_bytes", "--allow-read")?,
         ModelLoad => check_path(&c.read, text(&args[0]), "loading a 3D model", "--allow-read")?,
         DbValue | DbQuery => {
             if !c.read.granted() {
@@ -9740,6 +9774,24 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
 
         // module "grid": fast contiguous float arrays (the grid value is a Value::Floats)
         GridRange => grid_val((0..int(&args[0]).max(0)).map(|i| i as f64).collect()),
+        GridReadBytes => {
+            let (path, skip, count) = (text(&args[0]), int(&args[1]), int(&args[2]));
+            if skip < 0 || count < 0 {
+                return Err("nungw.read_bytes: skip and count cannot be negative".to_string());
+            }
+            let bytes = read_file_bytes(path)?;
+            let (skip, count) = (skip as usize, count as usize);
+            if skip.saturating_add(count) > bytes.len() {
+                return Err(format!(
+                    "nungw.read_bytes: \"{}\" has {} bytes, not {} after skipping {}",
+                    path,
+                    bytes.len(),
+                    count,
+                    skip
+                ));
+            }
+            grid_val(bytes[skip..skip + count].iter().map(|&b| b as f64).collect())
+        }
         GridZeros => grid_val(vec![0.0; int(&args[0]).max(0) as usize]),
         GridFill => grid_val(vec![real(&args[1]); int(&args[0]).max(0) as usize]),
         GridOf => grid_val(seq(&args[0]).borrow().iter().map(real).collect()),

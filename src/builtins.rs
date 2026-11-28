@@ -484,7 +484,7 @@ pub enum Builtin {
     AprToMonthly, AprToAnnual,
 
     // ---- module "grid": fast contiguous float arrays (the array engine) ----
-    GridRange, GridZeros, GridFill, GridOf,
+    GridRange, GridZeros, GridFill, GridOf, GridReadBytes,
     GridSize, GridGet, GridSet, GridFree, GridToList,
     GridAdd, GridSub, GridMul, GridDiv, GridScale, GridOffset,
     GridSubScalar, GridScalarSub, GridDivScalar, GridScalarDiv,
@@ -1546,6 +1546,7 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
 
     // ---- module "grid": fast contiguous float arrays (grid type at the checker; int handle at run time) ----
     (GridRange, "nungw.range", Sig::Flexible { function: true }),
+    (GridReadBytes, "nungw.read_bytes", Sig::Flexible { function: true }),
     (GridZeros, "nungw.zeros", Sig::Flexible { function: true }),
     (GridFill, "nungw.fill", Sig::Flexible { function: true }),
     (GridOf, "nungw.of", Sig::Flexible { function: true }),

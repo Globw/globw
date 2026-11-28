@@ -1373,3 +1373,34 @@ fn screenshot_needs_allow_write() {
     assert!(stderr.contains("--allow-write"), "{}", stderr);
     assert!(!png.exists());
 }
+
+#[test]
+fn nungw_reads_bytes_plain_and_gzip() {
+    let dir = std::env::temp_dir().join("globw_read_bytes");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("plain.bin"), [9u8, 1, 2, 3, 250, 255]).unwrap();
+    // gzip of the bytes 1, 2, 3, 250, 255
+    let gz: [u8; 25] = [31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 99, 100, 98, 254, 245, 31, 0, 197, 78, 92, 144, 5, 0, 0, 0];
+    std::fs::write(dir.join("packed.gz"), gz).unwrap();
+    let plain = dir.join("plain.bin").display().to_string().replace('\\', "/");
+    let packed = dir.join("packed.gz").display().to_string().replace('\\', "/");
+    let src = format!(
+        "import nungw\noutput(nungw.to_list(nungw.read_bytes(\"{}\", 1, 5)))\noutput(nungw.to_list(nungw.read_bytes(\"{}\", 2, 3)))\n",
+        plain, packed
+    );
+    let prog = dir.join("read.gw");
+    std::fs::write(&prog, &src).unwrap();
+    let prog = prog.display().to_string();
+    let (code, stdout, stderr) = globw(&["--allow-read", &prog]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(stdout, "[1.0, 2.0, 3.0, 250.0, 255.0]\n[3.0, 250.0, 255.0]\n");
+    // without --allow-read it is refused
+    let (code, _, stderr) = globw(&[&prog]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("--allow-read"), "{}", stderr);
+    // asking for more bytes than there are
+    std::fs::write(dir.join("short.gw"), format!("import nungw\noutput(nungw.size(nungw.read_bytes(\"{}\", 4, 9)))\n", plain)).unwrap();
+    let (code, _, stderr) = globw(&["--allow-read", &dir.join("short.gw").display().to_string()]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("has 6 bytes"), "{}", stderr);
+}

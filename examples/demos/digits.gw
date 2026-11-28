@@ -1,0 +1,281 @@
+' digits.gw: a neural network learns to read handwritten digits, then reads yours.
+'
+' It downloads MNIST once (70,000 digits written by hand), learns from 60,000 of
+' them in a few seconds, checks itself on the other 10,000, and opens a window:
+' draw a digit with the mouse, and watch what the network thinks it is.
+'
+' Run:  gw --allow-read --allow-write --allow-net examples/demos/digits.gw
+' (the data goes into a folder "mnist" next to this file)
+' Keys: C or SPACE clears the drawing, ESCAPE quits.
+import nungw
+import jit
+import web
+import dir
+
+variables:
+    x, y, xt, yt, labels as nungw of float
+    w1, b1, w2, b2, vw1, vb1, vw2, vb2 as nungw of float
+    xb, yb, z1, h, z2, m, e, p as nungw of float
+    dz2, dw2, db2, dh, dz1, dw1, db1 as nungw of float
+    seen as nungw of float
+    names as list of string
+    name, folder, url, shade as string
+    px, py as list of float
+    sees as float[784]
+    chance as float[10]
+    i, k, epoch, start, n, nt, batch, best, gray as int
+    rate, accuracy, mx, my, lx, ly, steps, t0 as float
+    drawing, changed as bool
+
+' ---------------------------------------------------------------- reading a drawing
+' The points of the strokes (in window pixels) become a 28 x 28 image the way MNIST
+' made its digits: the drawing fitted in a 20 x 20 box, soft strokes, centred by
+' its centre of mass. Then the network gives a chance to each digit 0 to 9.
+procedure read_drawing(px as list of float, py as list of float, w1 as nungw of float, b1 as nungw of float, w2 as nungw of float, b2 as nungw of float, sees as float[], chance as float[])
+    variables:
+        k, cx, cy, c0, c1, r0, r1, d, dx, dy as int
+        minx, maxx, miny, maxy, side, scale, mx, my, gx, gy, rr, dist, v, sw, sx, sy as float
+        img as float[784]
+        inp, z, q as nungw of float
+    minx = px[1]
+    maxx = px[1]
+    miny = py[1]
+    maxy = py[1]
+    for(k from 2 to length(px))
+        minx = minimum(minx, px[k])
+        maxx = maximum(maxx, px[k])
+        miny = minimum(miny, py[k])
+        maxy = maximum(maxy, py[k])
+    end loop
+    side = maximum(maxx - minx, maxy - miny) + 24.0
+    scale = 20.0 / side
+    mx = (minx + maxx) / 2.0
+    my = (miny + maxy) / 2.0
+    rr = 12.0 * scale
+    for(k from 1 to 784)
+        img[k] = 0.0
+    end loop
+    ' each point of a stroke paints a soft disc
+    for(k from 1 to length(px))
+        gx = 14.0 + (px[k] - mx) * scale
+        gy = 14.0 + (py[k] - my) * scale
+        c0 = maximum(0, floor(gx - rr - 1.0))
+        c1 = minimum(27, floor(gx + rr + 1.0))
+        r0 = maximum(0, floor(gy - rr - 1.0))
+        r1 = minimum(27, floor(gy + rr + 1.0))
+        for(cy from r0 to r1)
+            for(cx from c0 to c1)
+                dist = sqrt((cx + 0.5 - gx) * (cx + 0.5 - gx) + (cy + 0.5 - gy) * (cy + 0.5 - gy))
+                v = minimum(1.0, maximum(0.0, (rr * 1.5 - dist) / rr))
+                img[cy * 28 + cx + 1] = maximum(img[cy * 28 + cx + 1], v)
+            end loop
+        end loop
+    end loop
+    ' centre of mass to the middle of the image
+    sw = 0.0
+    sx = 0.0
+    sy = 0.0
+    for(cy from 0 to 27)
+        for(cx from 0 to 27)
+            v = img[cy * 28 + cx + 1]
+            sw = sw + v
+            sx = sx + v * cx
+            sy = sy + v * cy
+        end loop
+    end loop
+    dx = round(13.5 - sx / sw)
+    dy = round(13.5 - sy / sw)
+    for(cy from 0 to 27)
+        for(cx from 0 to 27)
+            r0 = cy - dy
+            c0 = cx - dx
+            if(r0 >= 0 and r0 <= 27 and c0 >= 0 and c0 <= 27)
+                sees[cy * 28 + cx + 1] = img[r0 * 28 + c0 + 1]
+            else
+                sees[cy * 28 + cx + 1] = 0.0
+            end if
+        end loop
+    end loop
+    ' the network: 784 -> 128 (relu) -> 10 (softmax)
+    inp = nungw.zeros(784)
+    for(k from 1 to 784)
+        nungw.set(inp, k, sees[k])
+    end loop
+    inp = nungw.reshape(inp, [1, 784])
+    z = nungw.matmul(nungw.clip(nungw.matmul(inp, w1) + b1, 0.0, 1000000.0), w2) + b2
+    q = nungw.exp(z - nungw.max(z))
+    q = q / nungw.sum(q)
+    for(d from 1 to 10)
+        chance[d] = nungw.get(q, d)
+    end loop
+end procedure
+
+' ---------------------------------------------------------------- the data
+folder = "mnist/"
+url = "https://storage.googleapis.com/cvdf-datasets/mnist/"
+names = ["train-images-idx3-ubyte.gz", "train-labels-idx1-ubyte.gz", "t10k-images-idx3-ubyte.gz", "t10k-labels-idx1-ubyte.gz"]
+if(not dir.exists("mnist"))
+    dir.make("mnist")
+end if
+for(name in names)
+    if(not file_exists(folder + name))
+        output("downloading ", name, " ...")
+        web.download(url + name, folder + name)
+    end if
+end loop
+
+n = 60000
+nt = 10000
+' the images, 0 to 1, one per row; the labels as rows with a 1 at the digit
+x = nungw.reshape(nungw.read_bytes(folder + names[1], 16, n * 784) / 255.0, [n, 784])
+xt = nungw.reshape(nungw.read_bytes(folder + names[3], 16, nt * 784) / 255.0, [nt, 784])
+labels = nungw.read_bytes(folder + names[2], 8, n)
+y = nungw.zeros(n * 10)
+for(i from 1 to n)
+    nungw.set(y, (i - 1) * 10 + round(nungw.get(labels, i)) + 1, 1.0)
+end loop
+y = nungw.reshape(y, [n, 10])
+labels = nungw.read_bytes(folder + names[4], 8, nt)
+yt = nungw.zeros(nt * 10)
+for(i from 1 to nt)
+    nungw.set(yt, (i - 1) * 10 + round(nungw.get(labels, i)) + 1, 1.0)
+end loop
+yt = nungw.reshape(yt, [nt, 10])
+
+' ---------------------------------------------------------------- learning
+window(680, 400, "Globw reads your digits")
+w1 = nungw.reshape(nungw.randn(784 * 128) * 0.0505, [784, 128])
+b1 = nungw.reshape(nungw.zeros(128), [1, 128])
+w2 = nungw.reshape(nungw.randn(128 * 10) * 0.125, [128, 10])
+b2 = nungw.reshape(nungw.zeros(10), [1, 10])
+vw1 = w1 * 0.0
+vb1 = b1 * 0.0
+vw2 = w2 * 0.0
+vb2 = b2 * 0.0
+batch = 100
+rate = 0.05
+accuracy = 0.0
+t0 = time()
+for(epoch from 1 to 8)
+    clear("#101010")
+    text(40, 170, "Learning from 60,000 handwritten digits...  round " + to_text(epoch) + " of 8", "white")
+    if(epoch > 1)
+        text(40, 200, "right on " + to_text(round(accuracy * 1000.0) / 10.0) + "% of 10,000 digits it has never seen", "gray")
+    end if
+    show()
+    for(start from 1 to n step batch)
+        xb = nungw.rows(x, start, start + batch - 1)
+        yb = nungw.rows(y, start, start + batch - 1)
+        z1 = nungw.matmul(xb, w1) + b1
+        h = nungw.clip(z1, 0.0, 1000000.0)
+        z2 = nungw.matmul(h, w2) + b2
+        m = nungw.reshape(nungw.max_axis(z2, 1), [batch, 1])
+        e = nungw.exp(z2 - m)
+        p = e / nungw.reshape(nungw.sum_axis(e, 1), [batch, 1])
+        dz2 = (p - yb) / batch
+        dw2 = nungw.matmul_ta(h, dz2)
+        db2 = nungw.reshape(nungw.sum_axis(dz2, 0), [1, 10])
+        dh = nungw.matmul_tb(dz2, w2)
+        dz1 = dh * nungw.sign(h)
+        dw1 = nungw.matmul_ta(xb, dz1)
+        db1 = nungw.reshape(nungw.sum_axis(dz1, 0), [1, 128])
+        vw2 = 0.9 * vw2 + dw2
+        vb2 = 0.9 * vb2 + db2
+        vw1 = 0.9 * vw1 + dw1
+        vb1 = 0.9 * vb1 + db1
+        w2 = w2 - rate * vw2
+        b2 = b2 - rate * vb2
+        w1 = w1 - rate * vw1
+        b1 = b1 - rate * vb1
+    end loop
+    ' how many of the 10,000 test digits it gets right
+    z2 = nungw.matmul(nungw.clip(nungw.matmul(xt, w1) + b1, 0.0, 1000000.0), w2) + b2
+    accuracy = nungw.sum(nungw.sign(nungw.sum_axis(z2 * yt, 1) - nungw.max_axis(z2, 1)) + 1.0) / nt
+end loop
+output("learned in ", round((time() - t0) * 10.0) / 10.0, " s: right on ", round(accuracy * 1000.0) / 10.0, "% of the test digits")
+
+' ---------------------------------------------------------------- your digits
+drawing = false
+changed = false
+lx = 0.0
+ly = 0.0
+for(k from 1 to 10)
+    chance[k] = 0.0
+end loop
+for(k from 1 to 784)
+    sees[k] = 0.0
+end loop
+while(open() and not key("ESCAPE"))
+    if(key("C") or key("SPACE"))
+        clear_list(px)
+        clear_list(py)
+        for(k from 1 to 10)
+            chance[k] = 0.0
+        end loop
+    end if
+    mx = mouse_x()
+    my = mouse_y()
+    if(click() and mx >= 30 and mx <= 310 and my >= 60 and my <= 340)
+        if(drawing)
+            ' fill the gap since the last frame, so fast strokes stay whole
+            steps = maximum(1.0, floor(sqrt((mx - lx) * (mx - lx) + (my - ly) * (my - ly)) / 3.0))
+            for(k from 1 to round(steps))
+                append(px, lx + (mx - lx) * k / steps)
+                append(py, ly + (my - ly) * k / steps)
+            end loop
+        else
+            append(px, mx)
+            append(py, my)
+        end if
+        lx = mx
+        ly = my
+        drawing = true
+        changed = true
+    else
+        drawing = false
+    end if
+    if(changed and length(px) > 0)
+        read_drawing(px, py, w1, b1, w2, b2, sees, chance)
+        changed = false
+    end if
+
+    clear("#101010")
+    text(30, 22, "Draw a digit", "white")
+    text(140, 22, "(C clears)", "gray")
+    rect(30, 60, 280, 280, "#000000")
+    for(k from 1 to length(px))
+        circle(px[k], py[k], 12, "white")
+    end loop
+    ' what the network sees: the 28 x 28 image
+    text(30, 352, "what it sees", "gray")
+    for(i from 0 to 27)
+        for(k from 0 to 27)
+            gray = round(sees[i * 28 + k + 1] * 255.0)
+            if(gray > 8)
+                shade = to_hex(gray)
+                if(length(shade) == 1)
+                    shade = "0" + shade
+                end if
+                rect(130 + k * 2, 346 + i * 2, 2, 2, "#" + shade + shade + shade)
+            end if
+        end loop
+    end loop
+    ' the network's chances, 0 to 9
+    best = 1
+    for(k from 2 to 10)
+        if(chance[k] > chance[best])
+            best = k
+        end if
+    end loop
+    for(k from 1 to 10)
+        text(360, 48 + k * 30, to_text(k - 1), if(k == best and length(px) > 0) "white" else "gray")
+        rect(385, 50 + k * 30, 260, 16, "#1d1d1d")
+        if(chance[k] > 0.0)
+            rect(385, 50 + k * 30, 260 * chance[k], 16, if(k == best) "#c81e1e" else "#5a5a5a")
+        end if
+    end loop
+    if(length(px) > 0)
+        text(360, 22, "It is a " + to_text(best - 1) + "  (" + to_text(round(chance[best] * 100.0)) + "% sure)", "white")
+    end if
+    show()
+end loop

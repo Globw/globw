@@ -3,3 +3,7 @@
 .superpowers/
 /installer/output/
 tmp_www/
+
+# data the digits demo downloads next to itself
+examples/demos/mnist/
+examples/mnist/

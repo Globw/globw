@@ -844,6 +844,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "crc32fast",
+ "flate2",
  "font8x8",
  "fontdue",
  "getrandom 0.2.17",
