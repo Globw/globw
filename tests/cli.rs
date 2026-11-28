@@ -1404,3 +1404,52 @@ fn nungw_reads_bytes_plain_and_gzip() {
     assert_ne!(code, 0);
     assert!(stderr.contains("has 6 bytes"), "{}", stderr);
 }
+
+#[test]
+fn nungw_for_neural_networks() {
+    let dir = std::env::temp_dir().join("globw_nungw_ml");
+    std::fs::create_dir_all(&dir).unwrap();
+    // a 4 x 3 PNG: (10, 20, 30) everywhere, red top-left, green top-right, blue bottom-right
+    let png: [u8; 88] = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 4, 0, 0, 0, 3, 8, 2, 0, 0, 0, 59, 150, 57, 145, 0, 0, 0, 31,
+        73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 192, 37, 34, 199, 37, 34, 199, 240, 159, 129, 17, 68, 193, 0, 19, 156, 245, 237, 205,
+        67, 0, 92, 84, 5, 121, 82, 37, 34, 35, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    std::fs::write(dir.join("t.png"), png).unwrap();
+    let folder = dir.display().to_string().replace('\\', "/");
+    let src = format!(
+        "import nungw
+variables:
+    a, b, c, img as nungw of float
+a = nungw.reshape(nungw.of([1.0, -2.0, 3.0, 0.5, 4.0, -1.0]), [2, 3])
+output(nungw.to_list(nungw.relu(a)))
+output(nungw.to_list(nungw.softmax(nungw.of([1000.0, 1000.0]), 0)))
+output(round(nungw.sum(nungw.softmax(a, 1)) * 1000.0))
+output(nungw.to_list(nungw.argmax_axis(a, 1)), nungw.to_list(nungw.argmax_axis(a, 0)), nungw.to_list(nungw.argmin_axis(a, 1)))
+b = nungw.reshape(nungw.range(24), [2, 3, 4]) * 0.1
+nungw.save(b, \"{0}/b.gwng\")
+c = nungw.load(\"{0}/b.gwng\")
+output(nungw.shape(c), nungw.sum(nungw.abs(c - b)) == 0.0)
+img = nungw.read_image(\"{0}/t.png\")
+output(nungw.shape(img), nungw.at(img, 1, 1, 1), nungw.at(img, 1, 4, 2), nungw.at(img, 3, 4, 3), nungw.at(img, 2, 2, 3))
+",
+        folder
+    );
+    let prog = dir.join("ml.gw");
+    std::fs::write(&prog, src).unwrap();
+    let prog = prog.display().to_string();
+    let (code, stdout, stderr) = globw(&["--allow-read", "--allow-write", &prog]);
+    assert_eq!(code, 0, "{}", stderr);
+    assert_eq!(
+        stdout,
+        "[1.0, 0.0, 3.0, 0.5, 4.0, 0.0]\n[0.5, 0.5]\n2000\n[3.0, 2.0][1.0, 2.0, 1.0][2.0, 3.0]\n[2, 3, 4]true\n[3, 4, 3]255.0255.0255.030.0\n"
+    );
+    // saving needs --allow-write; a file that is not nungw's is refused
+    let (code, _, stderr) = globw(&["--allow-read", &prog]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("--allow-write"), "{}", stderr);
+    std::fs::write(dir.join("load.gw"), format!("import nungw\noutput(nungw.size(nungw.load(\"{}/t.png\")))\n", folder)).unwrap();
+    let (code, _, stderr) = globw(&["--allow-read", &dir.join("load.gw").display().to_string()]);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("not a file made by nungw.save"), "{}", stderr);
+}

@@ -359,6 +359,23 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
             }
             ok(none(1), Type::Grid)
         }
+        GridSave => {
+            arity(2)?;
+            if a[0] != Type::Grid {
+                return Err(CheckError::Arg { index: 0, expected: Type::Grid });
+            }
+            if a[1] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 1, expected: Type::Base(Str) });
+            }
+            ok(none(2), Type::Unknown)
+        }
+        GridLoad | GridReadImage => {
+            arity(1)?;
+            if a[0] != Type::Base(Str) {
+                return Err(CheckError::Arg { index: 0, expected: Type::Base(Str) });
+            }
+            ok(none(1), Type::Grid)
+        }
         GridReadBytes => {
             arity(3)?;
             if a[0] != Type::Base(Str) {
@@ -503,7 +520,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
         | GridFloor | GridCeil | GridRound | GridTrunc
         | GridSign | GridCbrt | GridRecip | GridNeg | GridDegrees | GridRadians
         | GridFft | GridIfft | GridCabs
-        | GridCumsum | GridCumprod | GridSort | GridArgsort => {
+        | GridCumsum | GridCumprod | GridSort | GridArgsort | GridRelu => {
             arity(1)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -809,7 +826,7 @@ pub fn check(b: Builtin, a: &[Type]) -> Result<Checked, CheckError> {
                 _ => other("nungw.reshape needs a nungw and a list of sizes"),
             }
         }
-        GridSumAxis | GridMeanAxis | GridMaxAxis | GridMinAxis | GridProdAxis => {
+        GridSumAxis | GridMeanAxis | GridMaxAxis | GridMinAxis | GridProdAxis | GridSoftmax | GridArgmaxAxis | GridArgminAxis => {
             arity(2)?;
             if a[0] != Type::Grid {
                 return Err(CheckError::Arg { index: 0, expected: Type::Grid });
@@ -2995,6 +3012,168 @@ fn shape_of(v: &Value) -> Rc<Vec<usize>> {
 }
 
 /// Build a 1-D nungw from a flat buffer.
+/// Positions (outer, middle, inner) of an axis of a shape: data[(o * mid + k) * inner + i].
+fn axis_split(shape: &[usize], axis: i64, name: &str) -> Result<(usize, usize, usize), String> {
+    let ndim = shape.len();
+    if axis < 0 || axis as usize >= ndim {
+        return Err(format!("nungw.{name}: axis {axis} is out of range for a {ndim}-D nungw"));
+    }
+    let axis = axis as usize;
+    Ok((shape[..axis].iter().product(), shape[axis], shape[axis + 1..].iter().product()))
+}
+
+/// Softmax along an axis: each slice becomes positive numbers adding up to 1
+/// (the largest is taken away first, so big values do not overflow).
+fn softmax_axis(v: &Value, axis: i64) -> Result<Value, String> {
+    let shape = shape_of(v);
+    let (outer, mid, inner) = axis_split(&shape, axis, "softmax")?;
+    let data = floats(v).borrow();
+    let mut out = vec![0.0; data.len()];
+    for o in 0..outer {
+        for i in 0..inner {
+            let at = |k: usize| (o * mid + k) * inner + i;
+            let top = (0..mid).map(|k| data[at(k)]).fold(f64::NEG_INFINITY, f64::max);
+            let mut total = 0.0;
+            for k in 0..mid {
+                let e = (data[at(k)] - top).exp();
+                out[at(k)] = e;
+                total += e;
+            }
+            for k in 0..mid {
+                out[at(k)] /= total;
+            }
+        }
+    }
+    Ok(grid_val_shaped(out, shape.to_vec()))
+}
+
+/// The 1-based position of the largest (or smallest) value along an axis; the
+/// axis goes away, as with max_axis. The first one wins a tie.
+fn arg_axis(v: &Value, axis: i64, largest: bool, name: &str) -> Result<Value, String> {
+    let shape = shape_of(v);
+    let (outer, mid, inner) = axis_split(&shape, axis, name)?;
+    if mid == 0 {
+        return Err(format!("nungw.{name}: the axis is empty"));
+    }
+    let data = floats(v).borrow();
+    let mut out = vec![0.0; outer * inner];
+    for o in 0..outer {
+        for i in 0..inner {
+            let (mut best, mut bv) = (0usize, data[o * mid * inner + i]);
+            for k in 1..mid {
+                let x = data[(o * mid + k) * inner + i];
+                if (largest && x > bv) || (!largest && x < bv) {
+                    best = k;
+                    bv = x;
+                }
+            }
+            out[o * inner + i] = (best + 1) as f64;
+        }
+    }
+    let axis = axis as usize;
+    let mut out_shape: Vec<usize> = shape[..axis].to_vec();
+    out_shape.extend_from_slice(&shape[axis + 1..]);
+    if out_shape.is_empty() {
+        out_shape.push(1);
+    }
+    Ok(grid_val_shaped(out, out_shape))
+}
+
+/// The file format of nungw.save: "GWNG", a format number (1), the number of
+/// dimensions, each size (all little-endian u64 after the magic), then the
+/// values as little-endian f64.
+const GRID_MAGIC: &[u8; 4] = b"GWNG";
+
+fn grid_save(v: &Value, path: &str) -> Result<(), String> {
+    let shape = shape_of(v);
+    let data = floats(v).borrow();
+    let mut bytes = Vec::with_capacity(4 + 8 * (2 + shape.len() + data.len()));
+    bytes.extend_from_slice(GRID_MAGIC);
+    bytes.extend_from_slice(&1u64.to_le_bytes());
+    bytes.extend_from_slice(&(shape.len() as u64).to_le_bytes());
+    for &d in shape.iter() {
+        bytes.extend_from_slice(&(d as u64).to_le_bytes());
+    }
+    for &x in data.iter() {
+        bytes.extend_from_slice(&x.to_le_bytes());
+    }
+    std::fs::write(path, bytes).map_err(|e| format!("cannot write the file \"{}\": {}", path, e))
+}
+
+fn grid_load(path: &str) -> Result<Value, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read the file \"{}\": {}", path, e))?;
+    let bad = || format!("nungw.load: \"{}\" is not a file made by nungw.save", path);
+    let word = |k: usize| -> Option<u64> { bytes.get(k..k + 8).map(|b| u64::from_le_bytes(b.try_into().unwrap())) };
+    if bytes.get(..4) != Some(&GRID_MAGIC[..]) || word(4) != Some(1) {
+        return Err(bad());
+    }
+    let ndim = word(12).ok_or_else(bad)? as usize;
+    if ndim == 0 || ndim > 32 {
+        return Err(bad());
+    }
+    let mut shape = Vec::with_capacity(ndim);
+    for d in 0..ndim {
+        shape.push(word(20 + 8 * d).ok_or_else(bad)? as usize);
+    }
+    let start = 20 + 8 * ndim;
+    let count = shape.iter().try_fold(1usize, |a, &d| a.checked_mul(d)).ok_or_else(bad)?;
+    if bytes.len() != start + 8 * count {
+        return Err(bad());
+    }
+    let data = bytes[start..].chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect();
+    Ok(grid_val_shaped(data, shape))
+}
+
+/// A PNG or JPEG picture as a [height, width, 3] nungw of its red, green and
+/// blue values, 0 to 255, as they are in the file (gray pictures repeat the
+/// gray; transparency is dropped).
+fn read_image(path: &str) -> Result<Value, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read the file \"{}\": {}", path, e))?;
+    let (w, h, rgb) = decode_rgb(&bytes).map_err(|e| format!("nungw.read_image: \"{}\": {}", path, e))?;
+    Ok(grid_val_shaped(rgb.into_iter().map(|b| b as f64).collect(), vec![h, w, 3]))
+}
+
+fn decode_rgb(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>), String> {
+    #[cfg(feature = "native")]
+    {
+        if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+            let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
+            dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+            let mut reader = dec.read_info().map_err(|e| e.to_string())?;
+            let mut buf = vec![0; reader.output_buffer_size().ok_or("the picture is too big")?];
+            let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
+            let (w, h) = (info.width as usize, info.height as usize);
+            let n = match info.color_type {
+                png::ColorType::Grayscale => 1,
+                png::ColorType::GrayscaleAlpha => 2,
+                png::ColorType::Rgb => 3,
+                png::ColorType::Rgba => 4,
+                png::ColorType::Indexed => return Err("an indexed PNG that could not be expanded".to_string()),
+            };
+            let rgb = buf[..w * h * n].chunks_exact(n).flat_map(|c| if n < 3 { [c[0], c[0], c[0]] } else { [c[0], c[1], c[2]] }).collect();
+            return Ok((w, h, rgb));
+        }
+        if bytes.starts_with(&[0xFF, 0xD8]) {
+            let mut dec = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
+            let data = dec.decode().map_err(|e| e.to_string())?;
+            let info = dec.info().ok_or("no picture information")?;
+            let (w, h) = (info.width as usize, info.height as usize);
+            let rgb = match info.pixel_format {
+                jpeg_decoder::PixelFormat::L8 => data.iter().flat_map(|&g| [g, g, g]).collect(),
+                jpeg_decoder::PixelFormat::RGB24 => data,
+                _ => return Err("this kind of JPEG is not supported (CMYK or 16-bit)".to_string()),
+            };
+            return Ok((w, h, rgb));
+        }
+        Err("only PNG and JPEG pictures can be read".to_string())
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = bytes;
+        Err("pictures cannot be read here".to_string())
+    }
+}
+
 /// A file's bytes; a name ending in ".gz" is unpacked (gzip).
 fn read_file_bytes(path: &str) -> Result<Vec<u8>, String> {
     let raw = std::fs::read(path).map_err(|e| format!("cannot read the file \"{}\": {}", path, e))?;
@@ -5210,6 +5389,9 @@ pub(crate) fn cap_check(b: Builtin, args: &[Value]) -> Result<(), String> {
         }
         ReadFile => check_path(&c.read, text(&args[0]), "reading files", "--allow-read")?,
         GridReadBytes => check_path(&c.read, text(&args[0]), "nungw.read_bytes", "--allow-read")?,
+        GridLoad => check_path(&c.read, text(&args[0]), "nungw.load", "--allow-read")?,
+        GridReadImage => check_path(&c.read, text(&args[0]), "nungw.read_image", "--allow-read")?,
+        GridSave => check_path(&c.write, text(&args[1]), "nungw.save", "--allow-write")?,
         ModelLoad => check_path(&c.read, text(&args[0]), "loading a 3D model", "--allow-read")?,
         DbValue | DbQuery => {
             if !c.read.granted() {
@@ -9844,6 +10026,16 @@ pub fn call(b: Builtin, args: &[Value]) -> Result<Value, String> {
             grid_map(&args[0], move |x| k / x)
         }
         GridSqrt => grid_map(&args[0], |x| x.sqrt()),
+        GridRelu => grid_map(&args[0], |x| if x > 0.0 { x } else { 0.0 }),
+        GridSoftmax => softmax_axis(&args[0], int(&args[1]))?,
+        GridArgmaxAxis => arg_axis(&args[0], int(&args[1]), true, "argmax_axis")?,
+        GridArgminAxis => arg_axis(&args[0], int(&args[1]), false, "argmin_axis")?,
+        GridSave => {
+            grid_save(&args[0], text(&args[1]))?;
+            Value::Null
+        }
+        GridLoad => grid_load(text(&args[0]))?,
+        GridReadImage => read_image(text(&args[0]))?,
         GridSquare => grid_map(&args[0], |x| x * x),
         GridAbs => grid_map(&args[0], |x| x.abs()),
         GridSum => {

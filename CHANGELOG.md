@@ -5,6 +5,14 @@
 - `nungw.read_bytes(path, skip, count)`: the bytes of a file as an array of
   numbers 0 to 255, for images and binary datasets; a `.gz` file is unpacked
   first. Needs `--allow-read`.
+- Neural networks read the way they are written: `nungw.relu(g)`,
+  `nungw.softmax(g, axis)` (stable with large values), and
+  `nungw.argmax_axis(g, axis)` / `nungw.argmin_axis(g, axis)` for each row's
+  answer, on arrays of any number of dimensions.
+- `nungw.save(g, path)` and `nungw.load(path)` keep an array in a file with its
+  shape and read it back exactly, for example a trained network.
+- `nungw.read_image(path)`: a PNG or JPEG picture as a `[height, width, 3]`
+  array of red, green and blue values.
 - New demo, `examples/demos/digits.gw`: a neural network written in Globw
   downloads MNIST, learns to read handwritten digits from 60,000 of them in
   about 4 seconds (97% right on 10,000 it never saw), then reads the digits you

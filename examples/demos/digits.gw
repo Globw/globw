@@ -15,7 +15,7 @@ import dir
 variables:
     x, y, xt, yt, labels as nungw of float
     w1, b1, w2, b2, vw1, vb1, vw2, vb2 as nungw of float
-    xb, yb, z1, h, z2, m, e, p as nungw of float
+    xb, yb, z1, h, z2, p as nungw of float
     dz2, dw2, db2, dh, dz1, dw1, db1 as nungw of float
     seen as nungw of float
     names as list of string
@@ -102,9 +102,8 @@ procedure read_drawing(px as list of float, py as list of float, w1 as nungw of 
         nungw.set(inp, k, sees[k])
     end loop
     inp = nungw.reshape(inp, [1, 784])
-    z = nungw.matmul(nungw.clip(nungw.matmul(inp, w1) + b1, 0.0, 1000000.0), w2) + b2
-    q = nungw.exp(z - nungw.max(z))
-    q = q / nungw.sum(q)
+    z = nungw.matmul(nungw.relu(nungw.matmul(inp, w1) + b1), w2) + b2
+    q = nungw.softmax(z, 1)
     for(d from 1 to 10)
         chance[d] = nungw.get(q, d)
     end loop
@@ -167,11 +166,9 @@ for(epoch from 1 to 8)
         xb = nungw.rows(x, start, start + batch - 1)
         yb = nungw.rows(y, start, start + batch - 1)
         z1 = nungw.matmul(xb, w1) + b1
-        h = nungw.clip(z1, 0.0, 1000000.0)
+        h = nungw.relu(z1)
         z2 = nungw.matmul(h, w2) + b2
-        m = nungw.reshape(nungw.max_axis(z2, 1), [batch, 1])
-        e = nungw.exp(z2 - m)
-        p = e / nungw.reshape(nungw.sum_axis(e, 1), [batch, 1])
+        p = nungw.softmax(z2, 1)
         dz2 = (p - yb) / batch
         dw2 = nungw.matmul_ta(h, dz2)
         db2 = nungw.reshape(nungw.sum_axis(dz2, 0), [1, 10])
@@ -189,8 +186,9 @@ for(epoch from 1 to 8)
         b1 = b1 - rate * vb1
     end loop
     ' how many of the 10,000 test digits it gets right
-    z2 = nungw.matmul(nungw.clip(nungw.matmul(xt, w1) + b1, 0.0, 1000000.0), w2) + b2
-    accuracy = nungw.sum(nungw.sign(nungw.sum_axis(z2 * yt, 1) - nungw.max_axis(z2, 1)) + 1.0) / nt
+    z2 = nungw.matmul(nungw.relu(nungw.matmul(xt, w1) + b1), w2) + b2
+    ' its answer for each digit is the place of its highest score
+    accuracy = 1.0 - nungw.sum(nungw.sign(nungw.abs(nungw.argmax_axis(z2, 1) - nungw.argmax_axis(yt, 1)))) / nt
 end loop
 output("learned in ", round((time() - t0) * 10.0) / 10.0, " s: right on ", round(accuracy * 1000.0) / 10.0, "% of the test digits")
 

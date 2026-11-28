@@ -485,6 +485,7 @@ pub enum Builtin {
 
     // ---- module "grid": fast contiguous float arrays (the array engine) ----
     GridRange, GridZeros, GridFill, GridOf, GridReadBytes,
+    GridRelu, GridSoftmax, GridArgmaxAxis, GridArgminAxis, GridSave, GridLoad, GridReadImage,
     GridSize, GridGet, GridSet, GridFree, GridToList,
     GridAdd, GridSub, GridMul, GridDiv, GridScale, GridOffset,
     GridSubScalar, GridScalarSub, GridDivScalar, GridScalarDiv,
@@ -1547,6 +1548,13 @@ const TABLE: &[(Builtin, &str, Sig)] = &[
     // ---- module "grid": fast contiguous float arrays (grid type at the checker; int handle at run time) ----
     (GridRange, "nungw.range", Sig::Flexible { function: true }),
     (GridReadBytes, "nungw.read_bytes", Sig::Flexible { function: true }),
+    (GridRelu, "nungw.relu", Sig::Flexible { function: true }),
+    (GridSoftmax, "nungw.softmax", Sig::Flexible { function: true }),
+    (GridArgmaxAxis, "nungw.argmax_axis", Sig::Flexible { function: true }),
+    (GridArgminAxis, "nungw.argmin_axis", Sig::Flexible { function: true }),
+    (GridSave, "nungw.save", Sig::Flexible { function: false }),
+    (GridLoad, "nungw.load", Sig::Flexible { function: true }),
+    (GridReadImage, "nungw.read_image", Sig::Flexible { function: true }),
     (GridZeros, "nungw.zeros", Sig::Flexible { function: true }),
     (GridFill, "nungw.fill", Sig::Flexible { function: true }),
     (GridOf, "nungw.of", Sig::Flexible { function: true }),

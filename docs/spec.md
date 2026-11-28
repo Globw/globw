@@ -751,6 +751,8 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 |---|---|
 | `nungw.range(n)`, `nungw.zeros(n)`, `nungw.fill(n, v)`, `nungw.of(list)` | build one |
 | `nungw.size(g)`, `nungw.get(g, i)`, `nungw.set(g, i, v)`, `nungw.to_list(g)` | inspect, read, change, read back |
+| `nungw.save(g, path)`, `nungw.load(path)` | keep an array in a file, with its shape, and read it back exactly (e.g. a trained network's weights). Need `--allow-write` / `--allow-read` |
+| `nungw.read_image(path)` | a PNG or JPEG picture as a `[height, width, 3]` array of its red, green and blue values, 0 to 255. Needs `--allow-read` |
 | `nungw.read_bytes(path, skip, count)` | `count` bytes of a file after the first `skip`, as numbers 0 to 255: images, binary datasets. A name ending in `.gz` is unpacked first. Needs `--allow-read` |
 | `nungw.sqrt/square/abs(g)` | element-wise, giving a new array (same as the operators) |
 | `nungw.exp/exp2/expm1/log/log2/log10/log1p(g)` | exponentials and logarithms, element-wise |
@@ -767,6 +769,8 @@ output(c[1], " ", nungw.sum(c))      ' index (1-based) and a reduction
 | `nungw.shape(g)`, `nungw.ndim(g)`, `nungw.reshape(g, [dims])` | a nungw is N-dimensional: read its shape, its number of dimensions, or give it a new shape |
 | `nungw.at(g, i, j, ...)` | read one element by N-dimensional index (1-based) |
 | `nungw.sum_axis / mean_axis / max_axis / min_axis / prod_axis(g, axis)` | reduce along one dimension (0-based `axis`), removing it |
+| `nungw.argmax_axis(g, axis)`, `nungw.argmin_axis(g, axis)` | the 1-based position of the largest / smallest value along a dimension, removing it: for a network's output, `nungw.argmax_axis(scores, 1)` gives each row's answer |
+| `nungw.relu(g)`, `nungw.softmax(g, axis)` | for neural networks: negative values to 0; and each slice along `axis` turned into positive numbers adding up to 1 |
 | `nungw.rand(n)`, `nungw.randn(n)`, `nungw.eye(n)` | random uniform `[0, 1)`, standard-normal, and the n×n identity |
 | `nungw.cumsum(g)`, `nungw.cumprod(g)`, `nungw.sort(g)`, `nungw.argsort(g)` | running sum/product, sorted values, and the 1-based sort order (all flattened) |
 | `nungw.clip(g, lo, hi)`, `nungw.concat(a, b)`, `nungw.where(cond, a, b)` | clamp to a range; join two arrays (flat); pick from `a` where `cond` ≠ 0, else `b` |
