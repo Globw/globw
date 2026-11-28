@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.8 — unreleased
+## 0.1.7m — 2026-11-28
 
 - **Terminal editors**: syntax highlighting for `.gw` files in nano, vim and
   micro (`editors/`), with the VS Code extension's rules. The `.deb` and `.rpm`

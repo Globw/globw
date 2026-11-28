@@ -8,6 +8,10 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+; the .exe's version metadata takes numbers only (AppVersion may be 0.1.7m)
+#ifndef AppNumVersion
+  #define AppNumVersion "0.0.0"
+#endif
 #define AppName "Globw"
 #define AppPublisher "Globw"
 #define AppURL "https://globw.org"
@@ -18,6 +22,7 @@ AppId={{B7A3F1C2-9E4D-4A6B-8C2F-1D5E7A9B3C4D}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
+VersionInfoVersion={#AppNumVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}

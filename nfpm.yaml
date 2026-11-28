@@ -5,6 +5,9 @@ name: globw
 arch: ${PKG_ARCH}
 platform: linux
 version: ${PKG_VERSION}
+# taken as it is: versions like 0.1.7m are not semver (dpkg and rpm order them
+# right: 0.1.7 < 0.1.7m < 0.1.8)
+version_schema: none
 section: devel
 priority: optional
 maintainer: Globw <160625041+Globw@users.noreply.github.com>

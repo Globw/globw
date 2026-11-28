@@ -126,7 +126,10 @@ jobs:
           choco install innosetup --no-progress -y
           $ref = "${{ github.ref_name }}"
           if ($ref -match '^v[0-9]') { $v = $ref.TrimStart('v') } else { $v = '0.0.0-dev' }
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=$v installer\globw.iss
+          # numbers only for the .exe's version metadata (0.1.7m -> 0.1.7)
+          $num = ($v -replace '[^0-9.]', '').Trim('.')
+          if (-not $num) { $num = '0.0.0' }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=$v /DAppNumVersion=$num installer\globw.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup (ISCC) failed with exit $LASTEXITCODE" }
 
       - name: Upload installer artifact (Windows)
